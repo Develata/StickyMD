@@ -29,6 +29,10 @@ fn verify_file(path: &Path, kind: Kind, pin: &Pin<'_>) -> Result<(), String> {
 }
 
 pub(super) fn publish(root: &Path, kind: Kind, input: &Path, pin: &Pin<'_>) -> Result<(), String> {
+    // The cache path is fixed, but a link among its ancestors could still lead into reserved
+    // storage: it is checked like any caller-chosen output, before any work.
+    let destination = pin.path(root, kind);
+    crate::output_guard::Guard::new(root)?.check_file(&destination)?;
     let temporary = TemporaryDirectory::new("syft-download")?;
     let snapshot = temporary.path().join(pin.name(kind));
     fs::copy(input, &snapshot)
@@ -37,7 +41,7 @@ pub(super) fn publish(root: &Path, kind: Kind, input: &Path, pin: &Pin<'_>) -> R
     let bytes = fs::read(&snapshot).map_err(|error| error.to_string())?;
     temporary.close()?;
     // Cache replacement is atomic; failed downloads/checks never replace old bytes.
-    atomic::write(&pin.path(root, kind), &bytes)
+    atomic::write(&destination, &bytes)
 }
 
 pub(super) fn snapshot(

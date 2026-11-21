@@ -689,7 +689,7 @@ ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
 
 macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文件、SBOM、候选收据、staging 目录与 resolver。
 
-- **构建：** `release-macos` workflow 只接受 `workflow_dispatch`，运行在 `xcode-27` runner 上，候选提交必须在 `origin/main` 上。它先以
+- **构建：** `release-macos` workflow 只接受 `workflow_dispatch`，三个发布 job 运行在 `xcode-27` runner 上（依赖策略 job 在 `ubuntu-latest`），候选提交必须在 `origin/main` 上。它先以
   `xcode-select` 选定 Xcode 27.2（SDK macOS 27.2），再用 `build-app.sh` 构建并 ad-hoc 签名，并留一份构建记录：`sw_vers`、Xcode 与 SDK 版本、
   `cargo -V`、`rustc -vV`、产品输入指纹（#phase-16-macos-host）、`codesign -dv` 的结果、架构与 `LC_BUILD_VERSION`。签名维持 ad-hoc（`02` macOS 节）。
 - **打包：** Rust CLI 生成包目录，`ditto -c -k --norsrc --keepParent` 打包：
@@ -776,13 +776,13 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
       `build.rs`，且该目录计入 Windows 指纹（Windows 以 workspace 构建，会运行每个成员的构建脚本）。
     - **Rust 代码：** 打包 crate 的 Rust 就是它自己的 `.rs` 文件：任何写法的 `include!`、`#[path]` 与带 `path` 的 `cfg_attr` 都被拒绝；`include_str!` 与
       `include_bytes!` 是普通字面量，从所在文件的目录解析后按 Git 索引中的原样拼写命中两个平台都计入的路径。构建脚本自成一体：不声明外部模块文件、
-      不以 `include!` 或 `#[path]` 引入代码（内联模块可以），字符串字面量中没有 `..` 路径分量与绝对路径，引入的数据须两个平台都计入（两个平台都计入每个成员的 `build.rs`）。宏、属性与
+      不以 `include!` 或 `#[path]` 引入代码（内联模块可以），字符串字面量中没有 `..` 路径分量，开头与 `=` 之后没有绝对路径，引入的数据须两个平台都计入（两个平台都计入每个成员的 `build.rs`）。宏、属性与
       模块声明在去掉字面量内容的 token 上按标识符识别（含 raw identifier 与路径前缀）。打包 crate 与各成员 `build.rs` 的代码（注释除外，词法区分注释与
       字符串、原始字符串、字节与 C 字符串、字符字面量）任何位置都不出现验证工具的包名或 crate 名；打包 crate 启动的脚本只以文件名指名。
-    - **脚本：** 打包 crate 启动的脚本、Windows 产出字节的脚本与发布 workflow `build-package` job 运行的脚本，以及它们引用的脚本，引用须绑定到
-      `tools/release`（`Join-Path $PSScriptRoot '<名>'`、`$PSScriptRoot/<名>` 或仓库路径；点源须以这几种形式开头），按 Git 索引中的原样拼写被跟踪，
-      并计入调用方平台的指纹，绑定不了即拒绝。macOS 不计入 `tools/release`，所以 `build-app.sh` 与 `release-macos` 的 `build-package` job 不引用任何
-      PowerShell 脚本。这些脚本、`build-app.sh` 与两个 `build-package` job 都不以包名、crate 名或目录名点到 `stickymd-smoke`。
+    - **脚本：** 打包 crate 启动的脚本、Windows 产出字节的脚本与发布 workflow `build-package` job 运行的脚本，以及它们引用的脚本，其中的 PowerShell
+      脚本引用（以小写 `.ps1` 结尾）须绑定到 `tools/release`（`Join-Path $PSScriptRoot '<名>'`、`$PSScriptRoot/<名>` 或仓库路径；每个点源的目标都须
+      是这几种形式之一），按 Git 索引中的原样拼写被跟踪，并计入调用方平台的指纹，绑定不了即拒绝。macOS 不计入 `tools/release`，所以 `build-app.sh` 与 `release-macos` 的 `build-package` job 不引用任何
+      PowerShell 脚本。这些脚本、`build-app.sh` 与两个 `build-package` job 都不以包名、crate 名、目录名或 PowerShell 包装函数名（不分大小写）点到 `stickymd-smoke`。
 
     因此产出字节的代码既不运行验证工具，也不读它计入范围之外的文件（版本规范化按根清单的成员表读取每个成员的清单，其中的
     `tools/stickymd-smoke/Cargo.toml` 是计入的输入）。检查是词法的：在运行时拼出名字、经变量运行脚本这类有意绕开的写法由代码审查承担。

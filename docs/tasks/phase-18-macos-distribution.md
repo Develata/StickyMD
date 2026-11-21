@@ -28,7 +28,7 @@ Windows 的产品行为、发布文件名与字节不变。
 | M3 | 代码完成（两轮审查修正），workflow 未 dispatch | `release-macos.yml`、按平台的第三方声明、macOS SBOM 与 checksum、候选收据与本地晋升、`promote-release.yml` 的完整附件比对、平台构建输入指纹与沿用 |
 | M4 | 本机基线与 `mac-test` 完成，候选包上的验证等 dispatch（[验证记录](../report/2026-11-20-phase-18-verification.md)） | 本机 fmt、clippy、测试；`mac-test` 中的 `mac-gui`；候选包上的下载路径 |
 | M5 | 待开始 | macOS 就绪核对（`11` #macos-release-gate），下一版本发布前完成；2026-11-21 起包括“R 上的源码测试”一行（合同已落盘，核对程序与收据格式未实现） |
-| 构建输入收窄 | 实现完成（分支 `feat/package-crate-split`，未合入） | USER 2026-11-21：产出发布字节的代码迁入 `tools/stickymd-package`，Platform Build Input Fingerprint 只计入它，验证工具除清单外不计入（算法 v2）；矩阵 P18-P05、P18-P10 |
+| 构建输入收窄 | 实现完成（分支 `feat/package-crate-split`，未合入） | USER 2026-11-21：产出发布字节的代码迁入 `tools/stickymd-package`，Platform Build Input Fingerprint 计入它，验证工具除 `Cargo.toml`、`build.rs` 与分类器 `src/release/platform_inputs.rs` 外不计入（算法 v2）；矩阵 P18-P05、P18-P10 |
 
 ## Deliverables
 

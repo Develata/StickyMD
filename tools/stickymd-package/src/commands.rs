@@ -256,25 +256,64 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    /// The package directory is refused before the executable or the plan is looked at, as the
-    /// pre-split order was: a reserved directory is the error even with no build present.
+    /// The order of the errors with no build present: a named package directory in reserved
+    /// storage first (a directory that was reserved before the split too, which then also
+    /// checked a named directory first), then the missing executable, before the plan, which
+    /// here could not be made either (no workspace).
     #[test]
-    fn a_reserved_package_directory_is_refused_before_the_build_is_looked_at() {
+    fn package_errors_come_directory_then_executable_then_plan() {
         let root =
             std::env::temp_dir().join(format!("stickymd-release-order-{}", std::process::id()));
-        fs::create_dir_all(root.join("dist/evidence")).unwrap();
-        let command = Command::BuildPackage(crate::cli::PackageBuildOptions {
-            directory: Some(root.join("dist/evidence/package")),
-            ..Default::default()
-        });
-        let error = super::execute(&root, &command).unwrap_err();
+        fs::create_dir_all(root.join("dist/evidence/manual-archive")).unwrap();
+        let build = |directory: PathBuf| {
+            let command = Command::BuildPackage(crate::cli::PackageBuildOptions {
+                directory: Some(directory),
+                ..Default::default()
+            });
+            super::execute(&root, &command).unwrap_err()
+        };
+        let error = build(root.join("dist/evidence/manual-archive/package"));
         assert!(error.contains("coordinator-owned"), "{error}");
+        let error = build(root.join("dist"));
+        assert!(
+            error.contains("Release executable does not exist"),
+            "{error}"
+        );
+        // Created exclusively by this test under the temp directory.
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// The Syft cache's path is fixed, but a link among its ancestors could lead into reserved
+    /// storage: the cache writer refuses before it reads the download.
+    #[cfg(unix)]
+    #[test]
+    fn the_syft_cache_cannot_be_led_into_reserved_storage() {
+        let root =
+            std::env::temp_dir().join(format!("stickymd-release-cache-{}", std::process::id()));
+        fs::create_dir_all(root.join("dist/evidence/cache")).unwrap();
+        fs::create_dir_all(root.join("target")).unwrap();
+        std::os::unix::fs::symlink(
+            root.join("dist/evidence/cache"),
+            root.join("target/release-tools"),
+        )
+        .unwrap();
+        let error =
+            crate::syft::publish_cached(&root, crate::syft::Kind::Archive, &root.join("absent"))
+                .unwrap_err();
+        assert!(error.contains("coordinator-owned"), "{error}");
+        assert_eq!(
+            fs::read_dir(root.join("dist/evidence/cache"))
+                .unwrap()
+                .count(),
+            0
+        );
         // Created exclusively by this test under the temp directory.
         let _ = fs::remove_dir_all(root);
     }
 
     /// A link in the evidence tree that does not resolve hides where it points, so no release
-    /// output can be shown to avoid it: every writing command refuses.
+    /// output can be shown to avoid it: a writing command refuses (every writer builds the same
+    /// guard first).
     #[cfg(unix)]
     #[test]
     fn a_dangling_link_in_the_evidence_tree_refuses_release_writers() {

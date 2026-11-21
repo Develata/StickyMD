@@ -519,3 +519,55 @@ fn the_build_job_runs_no_verification_code_and_the_jobs_are_ordered() {
         assert!(error.contains(reason), "{reason}: {error}");
     }
 }
+/// A packaging target the check does not read, however Cargo names it, is refused; the root
+/// package's manifest is `Cargo.toml` in the empty directory.
+#[test]
+fn every_packaging_target_is_a_file_the_check_reads() {
+    let sources = ["tools/stickymd-package/src/lib.rs".to_owned()];
+    let tracked = [
+        "tools/stickymd-package/src/lib.rs",
+        "tools/stickymd-package/src/entry.in",
+    ];
+    let is_tracked = |path: &str| tracked.contains(&path);
+    check_targets(&sources, &sources, &is_tracked).unwrap();
+    let entry = ["tools/stickymd-package/src/entry.in".to_owned()];
+    let error = check_targets(&entry, &sources, &is_tracked).unwrap_err();
+    assert!(
+        error.contains("not one of the crate's .rs files"),
+        "{error}"
+    );
+    let gone = ["tools/stickymd-package/src/gone.rs".to_owned()];
+    let error = check_targets(&gone, &sources, &is_tracked).unwrap_err();
+    assert!(error.contains("Git does not track"), "{error}");
+    let root = r#"{"name":"root","manifest_path":"/r/Cargo.toml","dependencies":[],"targets":[{"kind":["lib"],"name":"root","src_path":"/r/src/lib.rs"},{"kind":["custom-build"],"name":"build-script-build","src_path":"/r/build.rs"}]}"#;
+    let workspace = check_metadata(&metadata(&format!("{PACKAGE},{root}"))).unwrap();
+    assert_eq!(workspace.build_scripts, ["build.rs"]);
+}
+
+/// Each dot-source of a line is bound on its own, a repository path included; the tool's crate
+/// name and its wrapper are refused in any letter case.
+#[test]
+fn every_dot_source_on_a_line_is_bound() {
+    let origin = "tools/release/package.ps1";
+    assert_eq!(
+        check_script(". ./tools/release/invoke-package.ps1\n", origin).unwrap(),
+        ["invoke-package.ps1"]
+    );
+    for bad in [
+        ". \"$PSScriptRoot/a.ps1\"; . $helper\n",
+        "if ($x) { . $helper }\n",
+    ] {
+        let error = check_script(bad, origin).unwrap_err();
+        assert!(error.contains("cannot follow"), "{bad}: {error}");
+    }
+    for bad in [
+        "& $exe -m STICKYMD_SMOKE\n",
+        "invoke-stickymdreleasetool -x\n",
+    ] {
+        let error = check_script(bad, origin).unwrap_err();
+        assert!(
+            error.contains("calls the verification tool"),
+            "{bad}: {error}"
+        );
+    }
+}

@@ -27,7 +27,8 @@ const COMMON_EXCLUDED_PREFIXES: &[&str] = &[
     // Pictures in the repository README.
     "assets/readme/",
     // The verification tool. The release bytes come from `tools/stickymd-package`, which it
-    // depends on and which cannot depend on it; its manifest stays an input (see below).
+    // depends on and which cannot depend on it; its manifest, its `build.rs` and this
+    // classifier stay inputs (`COUNTED_DESPITE_EXCLUSION`).
     "tools/stickymd-smoke/",
 ];
 const COMMON_EXCLUDED_FILES: &[&str] = &[

@@ -188,7 +188,7 @@ macOS（Windows artifact 名不带 attempt）；workspace 中出现过程宏成�
   引入的数据须被计入该脚本的每个平台计入。两个平台都计入每个成员的 `build.rs`，所以 Windows 宿主的构建脚本实际上不能引入自己的数据（目前也没有）。
 - **名字：** 验证工具的包名与 crate 名在去掉注释后的代码中任何位置出现都被拒，不再区分字面量内外。
 - **脚本：** 引用按调用方平台检查是否计入，macOS 不计入 `tools/release`，所以 macOS 的构建不能引用任何 PowerShell 脚本；点源须以绑定形式开头；块注释
-  结束后的同行代码照常检查；`.PS1` 等大小写变体按 Git 的拼写判定；扫描按字符而非字节，多字节空白不会出错。
+  结束后的同行代码照常检查；扩展名须为小写 `.ps1`，文件名按 Git 的拼写判定；扫描按字符而非字节，多字节空白不会出错。
 - **workflow：** 按 job 与步骤结构解析：job 直属的 `needs`、步骤自身的 `uses`（`- uses:` 列表项与步骤字段都认，环境变量块中的文字不算），缺
   `dependency-policy`、job 重复定义都被拒。合同与 workflow 头部注释写明依赖策略 job 在三个发布 job 之前。
 
@@ -201,7 +201,7 @@ macOS（Windows artifact 名不带 attempt）；workspace 中出现过程宏成�
 提交 `326f01a` 之后的自查又改了四处（同一轮，另行提交）：
 
 - `governance/package_boundary.rs` 达到 635 行，超过 `AGENTS.md` 的 500 行审视线，按职责拆出 `package_boundary/scripts.rs`（PowerShell 引用）与
-  `package_boundary/workflow.rs`（job 与步骤），代码未改，测试文件不动。
+  `package_boundary/workflow.rs`（job 与步骤），搬动的函数体未改，测试没有搬动（路径规则另增了用例）。
 - 构建脚本引入数据的条件一度写成“计入该脚本的每个平台都计入”；两个平台都计入每个成员的 `build.rs`，这与“两个平台都计入”等价，改回后者。
 - 构建脚本字面量中的 `..` 原先只按 `/`、`\` 切分，`cargo:rerun-if-changed=../x` 会漏过；改为按非路径字符切分，并拒绝开头或 `=` 之后的绝对路径。
 - Info.plist 只接受 `build-app.sh` 写出的 UTF-8 XML：UTF-16 或二进制形式中重复的键看不出来，plutil 会取其中一个值；新增 UTF-16、二进制与非 UTF-8
@@ -216,3 +216,52 @@ macOS（Windows artifact 名不带 attempt）；workspace 中出现过程宏成�
 已验证（本次提交的工作树，macOS 27.2 arm64）：fmt、Clippy（workspace 除 `stickymd-win` 外的 macOS 目标；两个工具 crate 的 Windows 目标）通过；
 workspace 测试（不含 `stickymd-win`，它在 macOS 上不编译）1853 项通过，0 失败；`phase 00` PASS。未验证：Windows 上的编译与 PowerShell 包装测试、
 真实 dispatch。`326f01a` 与本次提交都未经过跨模型复审。
+
+## 第五轮复审（`326f01a`、`aedc98b`）：两份都不通过，需要 Develata 决定（2026-11-22）
+
+用户要求“再审一轮”。按路径分两份跨模型复审：A 审边界检查器（`governance/package_boundary*`），B 审打包 crate、合同、workflow 与验收行。
+两份都判为不通过：A 九项 BLOCKER、六项 SHOULD_FIX，B 五项 BLOCKER、四项 SHOULD_FIX。
+
+**判断：词法检查这条路不收敛。** 检查器是开放世界的：它解析任意 Rust、PowerShell 与 YAML，再设法认出坏的写法。前五轮每轮都扩了解析面，
+每次扩面都带来新的绕过。复审的 BLOCKER 标准（“验证代码影响发布字节而检查不失败”）是本报告作者在复审说明中写的，比合同承诺的
+（词法检查，有意绕开由代码审查承担）更强，任何拒绝表都达不到。所以本轮只修与设计无关的项，其余停下来等决定。
+
+**本轮已修（与设计无关）：**
+
+- Info.plist：键元素须为 `<key>` + 普通名字 + `</key>`（无实体、CDATA、注释、属性或空白），因此重复的键按字节可数；缺键由结构判定（字节中没有
+  该键才是旧 bundle），写了键却读不出顶层字符串即报错，不再把 plutil 的失败当作缺键。新增实体、CDATA、`<key >`、两个不同摘要、真实键加注释、
+  损坏文档、声明为 UTF-16 的文档、完整二进制 plist 的负例，各自断言拒绝原因。（B 阻断 1、SHOULD_FIX 3）
+- 打包 crate 的每个 target 须是检查实际读过的 `.rs` 文件（`path = "src/entry.in"` 被拒）；根 package 的清单 `Cargo.toml` 不再报错。（A B2 前半、A S4、B 阻断 2 前半）
+- Syft 缓存写入前也经输出守卫，祖先中的链接不能把它引进保留存储。（B SHOULD_FIX 1）
+- 顺序测试改用拆分前后都保留的目录，并补“缺可执行文件先于包计划”。（B SHOULD_FIX 2）
+- 脚本：验证工具的 crate 名 `stickymd_smoke` 与包装函数名按不分大小写匹配；同一行的每个点源分别检查，仓库路径形式的点源允许。（A B8 ①③、B 阻断 4 ①②）
+- 合同措辞对齐实现：构建脚本的绝对路径只检查开头与 `=` 之后；PowerShell 规则只管 `.ps1` 引用；报告中 `.PS1` 与“测试文件不动”两句改正。
+  README、阶段任务表、分类器注释与 macOS runner 一句同步。（B 阻断 3、4 ③，B SHOULD_FIX 4，B NICE_TO_HAVE）
+- **B 阻断 5（CLI 提示文字是 Windows 行为变化）不成立：** `main` 上没有 `stickymd-package`（`git ls-tree -d main tools/stickymd-package` 为空），
+  这两条提示属于本分支新增的二进制；与 `main` 相比，正常打包路径、拒绝结果与退出码都未变。
+
+**未修，留给决定：** `build-package` 中加入 `cargo test --workspace` 不被发现（A B1）；成员目录按单个探针判定是否计入（A B3）；Unicode 标识符与
+Rust 特有空白（A B4）；`use` 给 include 宏起别名、宏展开处与定义处目录不同（A B5、B 阻断 2 后半）；经排除区符号链接的 `..`（A B6）；
+引号中的 `<#`（A B7）；`ps1_tokens` 不以 `|` 分隔、点后用制表符（A B8 ② 与 ③ 余项）；`working-directory` 与 `Set-Location`（A B9）；YAML 缩进与
+`needs` 的列表写法（A S1）；workflow 检查比合同的运行要求窄（A S2）；大写 `.PS1` 的正例（A S3）；shebang 与转义字符的误报（A S5）；部分负例
+没有只破坏一个条件（A S6）；`cfg_attr` 无界递归（A NEEDS_VERIFICATION）。
+
+**闭合世界方案的可行性（实测数量）：** 打包 crate 中 `include_str!` 只有 2 处，都是 `include_str!("package_readme.txt")`；`cfg_attr` 2 处，都是
+`allow(dead_code)`；两个 `build-package` job 的 `run`/`uses` 步骤分别为 8 与 11 个；打包 crate 的注释中提到验证工具名 8 处，Windows 产出字节的
+四个脚本中 0 处；打包 crate 有 14 个文件含非 ASCII 字符（是否都在注释与字面量中未核对）。
+
+**选项：**
+
+1. **闭合世界（推荐）：** 检查改为精确清单：固定的 include 位置、固定的 `build-package` 步骤文本、固定的脚本集合，清单之外一律拒绝；注释与字面量之外
+   不允许非 ASCII，验证工具名连注释中也不允许，两个注释词法器随之删除。合同的“边界的证明”按实际执行的规则重写，复审标准与合同对齐。代价：改
+   `build-package` 的步骤或新增 include 都要同时改清单（清单本身在 `stickymd-smoke` 中，不计入指纹，但改动可见、可审）。
+2. **保留词法守卫：** 合同写明它是尽力而为的守卫，拦住常见写法；完整性由代码审查承担；复审不再按“任何依赖都须被检查拦住”的标准判定。
+
+**一并待确认的三项收紧**（第四轮写入合同，尚未得到确认）：Windows 不计入的成员目录（`apps/stickymd-mac/`、`crates/stickymd-posix/`、
+`tools/stickymd-smoke/`）不能有构建脚本；Windows 宿主的 `build.rs` 不能引入自己目录中的数据，也不能指名成员之外的路径；打包 crate 永远不能
+使用 `include!` 与 `#[path]`。在决定之前，这三项与“边界的证明”的现行文字都按待批准的提案对待，本分支不合入。
+
+
+已验证（本次提交的工作树，macOS 27.2 arm64）：fmt、Clippy（workspace 除 `stickymd-win` 外的 macOS 目标；两个工具 crate 的 Windows 目标）通过；
+workspace 测试（不含 `stickymd-win`）1856 项通过，0 失败；`phase 00` PASS。未验证：Windows 上的编译与 PowerShell 包装测试、真实 dispatch。
+本次提交未经跨模型复审；在上面的决定作出之前不再发起复审。

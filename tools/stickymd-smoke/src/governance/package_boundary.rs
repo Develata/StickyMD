@@ -64,13 +64,6 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
     let tracked = git_index(root)?;
     let is_tracked = |path: &str| tracked.contains(path);
     let workspace = check_metadata(&cargo_metadata(root)?)?;
-    for target in &workspace.package_targets {
-        if !is_tracked(target) {
-            return Err(format!(
-                "{target}: a packaging target that Git does not track"
-            ));
-        }
-    }
     let mut sources = Vec::new();
     collect_rust(root, &root.join(CRATE), &mut sources)?;
     if sources.is_empty() {
@@ -79,6 +72,7 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
         ));
     }
     sources.sort();
+    check_targets(&workspace.package_targets, &sources, &is_tracked)?;
     let mut scripts: Vec<String> = BYTE_SCRIPTS.iter().map(|name| (*name).to_owned()).collect();
     for file in &sources {
         let lexed = lex_file(root, file)?;
@@ -186,6 +180,29 @@ struct Workspace {
     build_scripts: Vec<String>,
 }
 
+/// Every target of the packaging crate is tracked and is one of the `.rs` files the check reads:
+/// a target may name any path (`path = "src/entry.in"`), and a file the check does not read is
+/// a file it does not prove.
+fn check_targets(
+    targets: &[String],
+    sources: &[String],
+    is_tracked: &dyn Fn(&str) -> bool,
+) -> Result<(), String> {
+    for target in targets {
+        if !is_tracked(target) {
+            return Err(format!(
+                "{target}: a packaging target that Git does not track"
+            ));
+        }
+        if !sources.contains(target) {
+            return Err(format!(
+                "{target}: a packaging target that is not one of the crate's .rs files this check reads"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Cargo's decoded view, so no TOML spelling (a quoted table or key) can hide a dependency, a
 /// target or a build script.
 fn check_metadata(metadata: &Value) -> Result<Workspace, String> {
@@ -212,9 +229,21 @@ fn check_metadata(metadata: &Value) -> Result<Workspace, String> {
     for package in metadata.field("packages")?.array()? {
         let name = package.field("name")?.string()?;
         let manifest = relative(package.field("manifest_path")?.string()?)?;
-        let directory = manifest
-            .strip_suffix("/Cargo.toml")
-            .ok_or_else(|| format!("{name}: manifest path {manifest} is not a Cargo.toml"))?;
+        // The root package's manifest is `Cargo.toml` itself, in the empty directory.
+        let directory = if manifest == "Cargo.toml" {
+            ""
+        } else {
+            manifest
+                .strip_suffix("/Cargo.toml")
+                .ok_or_else(|| format!("{name}: manifest path {manifest} is not a Cargo.toml"))?
+        };
+        let beside = |file: &str| {
+            if directory.is_empty() {
+                file.to_owned()
+            } else {
+                format!("{directory}/{file}")
+            }
+        };
         let packaging = name == "stickymd-package";
         if packaging {
             found = true;
@@ -246,7 +275,7 @@ fn check_metadata(metadata: &Value) -> Result<Workspace, String> {
                 if packaging {
                     return Err("stickymd-package has a build script".to_owned());
                 }
-                if source != format!("{directory}/build.rs") {
+                if source != beside("build.rs") {
                     return Err(format!(
                         "{name}'s build script is {source}; only the build.rs beside a member's manifest is counted"
                     ));
@@ -254,7 +283,7 @@ fn check_metadata(metadata: &Value) -> Result<Workspace, String> {
                 // The Windows workspace build runs it, so all it can read must count for Windows.
                 if !crate::release::platform_inputs::is_input(
                     Platform::WindowsX64,
-                    &format!("{directory}/src/probe.rs"),
+                    &beside("src/probe.rs"),
                 ) {
                     return Err(format!(
                         "{name} has a build script, but its directory is not counted for Windows, whose workspace build runs it"

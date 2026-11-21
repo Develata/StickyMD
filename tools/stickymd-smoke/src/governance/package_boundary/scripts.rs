@@ -6,13 +6,16 @@ use super::{Path, Platform, read};
 use std::collections::BTreeSet;
 
 pub(super) const SCRIPTS: &str = "tools/release";
-/// How a script or a workflow step reaches the verification tool: by name, through its
-/// PowerShell wrapper, or through its per-phase entry points.
+/// How a script or a workflow step reaches the verification tool: by package or crate name,
+/// through its PowerShell wrapper, or through its per-phase entry points. Matched in any letter
+/// case, as PowerShell resolves commands and Windows resolves paths.
 pub(super) const SCRIPT_TOOL_NAMES: &[&str] = &[
     "stickymd-smoke",
+    "stickymd_smoke",
     "invoke-smoke.ps1",
-    "Invoke-StickyMdReleaseTool",
+    "invoke-stickymdreleasetool",
     "tools/smoke/",
+    "tools\\smoke\\",
 ];
 
 pub(super) fn is_script_name(name: &str) -> bool {
@@ -150,6 +153,38 @@ fn script_code(line: &str, in_block: &mut bool) -> String {
     code
 }
 
+/// Where `code` dot-sources something: a `.` followed by a space, at the start or after a
+/// space, `{`, `(` or `;`. A sentence's full stop inside a string can match too, which only
+/// makes the check stricter.
+fn dot_sources(code: &str) -> impl Iterator<Item = &str> {
+    code.match_indices(". ").filter_map(move |(at, _)| {
+        let opens = code[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| c.is_whitespace() || matches!(c, '{' | '(' | ';'));
+        let target = code[at + 2..].trim_start();
+        (opens && !target.is_empty()).then_some(target)
+    })
+}
+
+/// Whether a dot-source's own target is a script this check binds: it starts with
+/// `(Join-Path $PSScriptRoot`, `$PSScriptRoot` (quoted or not), or is itself a `*.ps1` path
+/// (quoted or not), which the reference rule then binds to `tools/release`.
+fn dot_source_bound(target: &str) -> bool {
+    let tokens = ps1_tokens(target);
+    let through_root = [
+        "(Join-Path $PSScriptRoot",
+        "\"$PSScriptRoot",
+        "$PSScriptRoot",
+    ]
+    .iter()
+    .any(|form| target.starts_with(form));
+    let unquoted = target.strip_prefix(['"', '\'']).unwrap_or(target);
+    let offset = target.len() - unquoted.len();
+    let a_path = tokens.first().is_some_and(|&(start, _)| start == offset);
+    (through_root && !tokens.is_empty()) || a_path
+}
+
 /// A script, `build-app.sh` or a workflow job that builds release bytes: no call to the
 /// verification tool, and every script reference bound to `tools/release` (returned by file
 /// name). An unbound reference, and a dot-source whose own target is not bound, is refused.
@@ -163,8 +198,9 @@ pub(super) fn check_script(text: &str, origin: &str) -> Result<Vec<String>, Stri
         if code.is_empty() {
             continue;
         }
+        let lower = code.to_ascii_lowercase();
         for name in SCRIPT_TOOL_NAMES {
-            if code.contains(name) {
+            if lower.contains(name) {
                 return Err(format!(
                     "line {} calls the verification tool (`{name}`); building release bytes calls stickymd-package",
                     index + 1
@@ -181,22 +217,11 @@ pub(super) fn check_script(text: &str, origin: &str) -> Result<Vec<String>, Stri
             })?;
             references.push(name);
         }
-        if let Some(target) = code.strip_prefix(". ") {
-            let target = target.trim_start();
-            let bound = [
-                "(Join-Path $PSScriptRoot",
-                "\"$PSScriptRoot",
-                "$PSScriptRoot",
-            ]
-            .iter()
-            .any(|form| target.starts_with(form))
-                && !ps1_tokens(target).is_empty();
-            if !bound {
-                return Err(format!(
-                    "line {}: a dot-source this check cannot follow; name the script through $PSScriptRoot",
-                    index + 1
-                ));
-            }
+        if dot_sources(code).any(|target| !dot_source_bound(target)) {
+            return Err(format!(
+                "line {}: a dot-source this check cannot follow; name the script through $PSScriptRoot or by its repository path",
+                index + 1
+            ));
         }
     }
     Ok(references)
