@@ -151,8 +151,8 @@ artifact 并在它上面校验。`11` #platform-artifact-reuse、`release_workfl
 - **算法版本不再升：** 本分支内的分类器改动（例外改为大小写不敏感、`build.rs` 与分类器计入）都发生在 v2 合入之前；本仓库与本机的 ignored
   证据中未发现记录了 v2 值的候选收据或沿用记录（其他机器上的 ignored 目录无法从 Git 证明），所以 v2 指合入时的分类器。合入之后再改分类器或序列化，按合同升版本。
 - **未改：** Windows `build-package` 仍以 `cargo build --workspace` 构建，与已资格化版本的 feature 合并方式相同；被排除成员在构建时能运行的代码，
-  由 Cargo metadata 与边界检查限于各成员计入且自成一体的 `build.rs`（workspace 中没有过程宏成员，二进制名唯一）。只构建 `stickymd-win` 是否会实际改变
-  产品的 feature 图没有比对，按 Cargo 规则可能改变。改为只构建 `stickymd-win` 会改变 feature 合并，属于 Windows 行为变化，不在本次范围。
+  由 Cargo metadata 与边界检查限于各成员计入且自成一体的 `build.rs`（workspace 中没有过程宏成员，二进制名唯一）。改为只构建 `stickymd-win` 是否会实际改变
+  产品的 feature 合并没有比对；按 Cargo 规则可能改变，即可能是 Windows 行为变化，所以不在本次范围。
 
 ## 第三轮窄范围复审（`69f0f41`）的处理（2026-11-21）
 
@@ -177,3 +177,27 @@ macOS（Windows artifact 名不带 attempt）；workspace 中出现过程宏成�
 
 已验证（`5da88fe` 的工作树，macOS 27.2 arm64）：fmt、Clippy（workspace 的 macOS 目标与两个工具 crate 的 Windows 目标）通过；workspace 测试 1850 项通过，
 0 失败；`phase 00` PASS。`5da88fe` 本身尚未经过跨模型复审。
+
+## 第四轮窄范围复审（`5da88fe`）的处理（2026-11-21）
+
+用户要求“再审一轮”。复审判为不通过。这一轮不再逐个补漏洞，而是把边界规则收少、收严，使每一条都能完整检查：
+
+- **打包 crate 不再以路径引入 Rust：** 任何写法的 `include!`、`#[path]` 与带 `path` 的 `cfg_attr` 一律拒绝（上一轮的递归检查随之删除），打包 crate 的
+  Rust 就是它自己的 `.rs` 文件。数据 include 识别 raw identifier 与路径前缀（`r#include_str!`、`core::include_str!`），已跟踪但两平台都排除的目标被拒。
+- **构建脚本：** 只能是成员目录下的 `build.rs`，该目录须计入 Windows 指纹（smoke、mac 目录中的构建脚本被拒）；字符串字面量中不得有 `..` 路径分量；
+  引入的数据须被计入该脚本的每个平台计入。两个平台都计入每个成员的 `build.rs`，所以 Windows 宿主的构建脚本实际上不能引入自己的数据（目前也没有）。
+- **名字：** 验证工具的包名与 crate 名在去掉注释后的代码中任何位置出现都被拒，不再区分字面量内外。
+- **脚本：** 引用按调用方平台检查是否计入，macOS 不计入 `tools/release`，所以 macOS 的构建不能引用任何 PowerShell 脚本；点源须以绑定形式开头；块注释
+  结束后的同行代码照常检查；`.PS1` 等大小写变体按 Git 的拼写判定；扫描按字符而非字节，多字节空白不会出错。
+- **workflow：** 按 job 与步骤结构解析：job 直属的 `needs`、步骤自身的 `uses`（`- uses:` 列表项与步骤字段都认，环境变量块中的文字不算），缺
+  `dependency-policy`、job 重复定义都被拒。合同与 workflow 头部注释写明依赖策略 job 在三个发布 job 之前。
+
+打包 crate：Info.plist 的重名键检查改为在字节上进行（非 UTF-8 的 plist 交给 plutil 判定）；新增两个测试：保留目录的错误先于可执行文件与包计划
+（与拆分前的顺序相同：先目录、再可执行文件、再计划），证据树中悬空的链接使写文件的命令拒绝且不创建输出目录。命令行中误给验证工具参数的提示
+改为指名所属命令。
+
+合同、P18-P10 的描述与锚点、本报告中关于 feature 合并的一句（原先前后矛盾）随之更新。
+
+
+已验证（本轮提交的工作树，macOS 27.2 arm64）：fmt、Clippy（workspace 除 Windows 宿主外的 macOS 目标；两个工具 crate 的 Windows 目标）通过；workspace 测试
+1853 项通过，0 失败；`phase 00` PASS。未验证：Windows 上的 PowerShell 包装测试、真实 dispatch。本轮修改尚未经过跨模型复审。

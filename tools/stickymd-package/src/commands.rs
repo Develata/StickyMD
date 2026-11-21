@@ -255,4 +255,42 @@ mod tests {
         assert!(error.contains("coordinator-owned"), "{error}");
         let _ = fs::remove_dir_all(root);
     }
+
+    /// The package directory is refused before the executable or the plan is looked at, as the
+    /// pre-split order was: a reserved directory is the error even with no build present.
+    #[test]
+    fn a_reserved_package_directory_is_refused_before_the_build_is_looked_at() {
+        let root =
+            std::env::temp_dir().join(format!("stickymd-release-order-{}", std::process::id()));
+        fs::create_dir_all(root.join("dist/evidence")).unwrap();
+        let command = Command::BuildPackage(crate::cli::PackageBuildOptions {
+            directory: Some(root.join("dist/evidence/package")),
+            ..Default::default()
+        });
+        let error = super::execute(&root, &command).unwrap_err();
+        assert!(error.contains("coordinator-owned"), "{error}");
+        // Created exclusively by this test under the temp directory.
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A link in the evidence tree that does not resolve hides where it points, so no release
+    /// output can be shown to avoid it: every writing command refuses.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_in_the_evidence_tree_refuses_release_writers() {
+        let root =
+            std::env::temp_dir().join(format!("stickymd-release-dangling-{}", std::process::id()));
+        fs::create_dir_all(root.join("dist/evidence")).unwrap();
+        std::os::unix::fs::symlink(root.join("gone"), root.join("dist/evidence/archive")).unwrap();
+        let command = Command::Checksums(ChecksumOptions {
+            zip: PathBuf::from("dist/release/x"),
+            sbom: None,
+            output: root.join("dist/release/SHA256SUMS.txt"),
+        });
+        let error = super::execute(&root, &command).unwrap_err();
+        assert!(error.contains("does not resolve"), "{error}");
+        assert!(!root.join("dist/release").exists());
+        // Created exclusively by this test under the temp directory.
+        let _ = fs::remove_dir_all(root);
+    }
 }

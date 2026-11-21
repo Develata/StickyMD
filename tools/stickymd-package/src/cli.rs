@@ -185,10 +185,14 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     let mut tokens = tokenize(args)?;
     let (exact, allow_dirty) = (tokens.exact, tokens.allow_dirty);
     if tokens.runtime {
-        return Err("--runtime belongs to stickymd-smoke release verify-package".to_owned());
+        return Err(
+            "--runtime belongs to the verification tool (release verify-package)".to_owned(),
+        );
     }
     if tokens.allow_missing {
-        return Err("--allow-missing belongs to stickymd-smoke release verify-remote-state".into());
+        return Err(
+            "--allow-missing belongs to the verification tool (release verify-remote-state)".into(),
+        );
     }
     let parsed = match command.as_str() {
         "notices" => Command::Notices {

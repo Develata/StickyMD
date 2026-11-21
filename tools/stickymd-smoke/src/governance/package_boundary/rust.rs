@@ -3,19 +3,16 @@
 //! module declarations.
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse
 
-use super::{CRATE, counted_by_both, resolve};
+use super::{counted_like, resolve};
 
-/// How Rust code names the verification tool: its package, its crate and its directory.
-const TOOL_NAMES: &[&str] = &[
-    "\"stickymd-smoke\"",
-    "-p stickymd-smoke",
-    "stickymd_smoke",
-    "stickymd-smoke/",
-];
+/// The verification tool's package and crate names: neither may appear in code (comments aside),
+/// in a literal or out of one.
+const TOOL_NAMES: &[&str] = &["stickymd-smoke", "stickymd_smoke"];
 
 /// A Rust source with its comments removed (`code`: literals kept as written) and, byte for byte
-/// aligned with it, the same text with every literal's contents masked (`tokens`), plus the
-/// contents of its string literals as written.
+/// aligned with it, the same text with every literal's contents masked by `_` (`tokens`), plus the
+/// contents of its string literals as written. A masked run can read as an identifier made of
+/// underscores; it never spells a keyword or a macro name.
 pub(super) struct Lexed {
     pub(super) code: String,
     pub(super) tokens: String,
@@ -24,8 +21,8 @@ pub(super) struct Lexed {
 
 /// Lexes Rust source. Comments (line, nested block) become spaces with newlines kept; string
 /// literals (plain, byte, C, raw in each form) and character literals (`'x'`, `b'x'`, escapes)
-/// are kept in `code` and masked in `tokens`; a lifetime stays code. An unterminated literal or
-/// comment is an error.
+/// are kept in `code` and masked in `tokens`; a `'` that opens no character literal is read as a
+/// lifetime. An unterminated string or block comment is an error.
 pub(super) fn lex(text: &str) -> Result<Lexed, String> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Lexed {
@@ -187,7 +184,7 @@ fn raw_string_start(chars: &[char], i: usize) -> Option<(usize, usize)> {
     (chars.get(j) == Some(&'"')).then_some((j, hashes))
 }
 
-/// Refuses code that names the verification tool.
+/// Refuses code that names the verification tool, in a literal or not.
 pub(super) fn check_names(code: &str) -> Result<(), String> {
     for (index, line) in code.lines().enumerate() {
         for name in TOOL_NAMES {
@@ -204,18 +201,15 @@ pub(super) fn check_names(code: &str) -> Result<(), String> {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum Source {
-    /// A `.rs` file of the packaging crate: its Rust includes stay in the crate.
+    /// A file of the packaging crate.
     Packaging,
-    /// A packaging-crate file reached only by `include!` or `#[path]` (any extension): as above,
-    /// and no out-of-line module, whose file would not be enumerated.
-    Fragment,
-    /// A member's build script: self-contained, data includes only.
+    /// A member's build script.
     BuildScript,
 }
 
-/// Identifier tokens of `tokens`: (start, end, text), raw identifiers (`r#name`) with their
-/// prefix. Literals are masked, so no identifier is read from inside one.
-fn identifiers(tokens: &str) -> Vec<(usize, usize, &str)> {
+/// Identifier tokens of `tokens`: (start, end, name), a raw identifier (`r#name`) named without
+/// its prefix and flagged. Literals are masked, so none is read from inside one.
+fn identifiers(tokens: &str) -> Vec<(usize, usize, &str, bool)> {
     let bytes = tokens.as_bytes();
     let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     let mut found = Vec::new();
@@ -224,13 +218,15 @@ fn identifiers(tokens: &str) -> Vec<(usize, usize, &str)> {
         if (bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') && (i == 0 || !ident(bytes[i - 1]))
         {
             let start = i;
-            if bytes[i] == b'r' && bytes.get(i + 1) == Some(&b'#') {
+            let raw = bytes[i] == b'r' && bytes.get(i + 1) == Some(&b'#');
+            if raw {
                 i += 2;
             }
+            let name_start = i;
             while i < bytes.len() && ident(bytes[i]) {
                 i += 1;
             }
-            found.push((start, i, &tokens[start..i]));
+            found.push((start, i, &tokens[name_start..i], raw));
         } else {
             i += 1;
         }
@@ -242,43 +238,52 @@ fn skip_space(tokens: &str, at: usize) -> usize {
     at + tokens[at..].len() - tokens[at..].trim_start().len()
 }
 
-/// The include and `#[path]` targets of a file, each checked, and its other module rules:
-/// - `include!` and `#[path]` stay inside the packaging crate (none in a build script);
-/// - `include_str!` and `include_bytes!` name a path in the Git index exactly as spelled that
-///   both platforms count;
-/// - each argument is a plain string literal;
-/// - `cfg_attr` carries no `path`; a build script or fragment declares no out-of-line module.
+/// Whether the identifier at `start` is the name of an attribute: `#[name` or `#![name`, with any
+/// whitespace (comments are already blank) between the marks.
+fn is_attribute(tokens: &str, start: usize) -> bool {
+    let Some(rest) = tokens[..start].trim_end().strip_suffix('[') else {
+        return false;
+    };
+    let rest = rest.trim_end();
+    let rest = rest.strip_suffix('!').map_or(rest, str::trim_end);
+    rest.ends_with('#')
+}
+
+/// A file's include and module rules:
+/// - no `include!` and no `#[path]`: the packaging crate's Rust is its own `.rs` files, which the
+///   check enumerates, and a build script keeps its code in itself;
+/// - `include_str!` and `include_bytes!` take a plain string literal naming a path in the Git
+///   index exactly as spelled that every platform counting `file` counts (both, for the
+///   packaging crate);
+/// - `cfg_attr` carries no `path`;
+/// - a build script declares no out-of-line module and names no path with a `..` component.
 ///
-/// Returns the Rust files (`include!`, `#[path]`) the file reaches, to be checked in turn.
+/// Macro and attribute names are read as identifiers, a raw identifier (`r#include_str`) by its
+/// name, under any path prefix (`core::include_str!`).
 pub(super) fn check_includes(
     file: &str,
     lexed: &Lexed,
     source: Source,
     is_tracked: &dyn Fn(&str) -> bool,
-) -> Result<Vec<String>, String> {
+) -> Result<(), String> {
     let directory = file.rsplit_once('/').map_or("", |(directory, _)| directory);
     let tokens = &lexed.tokens;
     let line_of = |at: usize| tokens[..at].matches('\n').count() + 1;
-    let mut reached = Vec::new();
     let idents = identifiers(tokens);
-    for (index, &(start, end, name)) in idents.iter().enumerate() {
-        let marker = match name {
-            "include" | "include_str" | "include_bytes" => {
-                let bang = skip_space(tokens, end);
-                if tokens[bang..].starts_with('!') {
-                    let open = skip_space(tokens, bang + 1);
-                    Some((format!("{name}!"), open, true))
-                } else {
-                    None
-                }
+    for (index, &(start, end, name, raw)) in idents.iter().enumerate() {
+        let macro_call = tokens[skip_space(tokens, end)..].starts_with('!');
+        match name {
+            "include" if macro_call => {
+                return Err(format!(
+                    "line {}: `include!` brings in Rust by path; keep the code in the crate's own .rs files",
+                    line_of(start)
+                ));
             }
-            "path" => {
-                // `#[path = "…"]`: the identifier right after `#` and `[`.
-                let before = tokens[..start].trim_end();
-                let attribute = before.strip_suffix('[').is_some_and(|rest| {
-                    rest.trim_end().ends_with('#') || rest.trim_end().ends_with("#!")
-                });
-                attribute.then(|| ("#[path".to_owned(), skip_space(tokens, end), false))
+            "path" if is_attribute(tokens, start) => {
+                return Err(format!(
+                    "line {}: `#[path]` brings in Rust by path; keep the code in the crate's own .rs files",
+                    line_of(start)
+                ));
             }
             "cfg_attr" => {
                 if let Some(at) = cfg_attr_path(tokens, end) {
@@ -287,84 +292,69 @@ pub(super) fn check_includes(
                         line_of(at)
                     ));
                 }
-                None
             }
-            "mod" if source != Source::Packaging => {
-                let declared = idents.get(index + 1).is_some_and(|&(next, next_end, _)| {
-                    skip_space(tokens, end) == next
-                        && tokens[skip_space(tokens, next_end)..].starts_with(';')
-                });
+            "mod" if !raw && source == Source::BuildScript => {
+                let declared = idents
+                    .get(index + 1)
+                    .is_some_and(|&(next, next_end, _, _)| {
+                        skip_space(tokens, end) == next
+                            && tokens[skip_space(tokens, next_end)..].starts_with(';')
+                    });
                 if declared {
                     return Err(format!(
-                        "line {}: declares an out-of-line module; keep the code in this file",
+                        "line {}: declares an out-of-line module; keep the code in build.rs",
                         line_of(start)
                     ));
                 }
-                None
             }
-            _ => None,
-        };
-        let Some((marker, open, call)) = marker else {
-            continue;
-        };
-        // A call opens with a delimiter; an attribute with `=`.
-        let literal = if call {
-            tokens[open..]
-                .starts_with(['(', '[', '{'])
-                .then(|| skip_space(tokens, open + 1))
-        } else {
-            tokens[open..]
-                .starts_with('=')
-                .then(|| skip_space(tokens, open + 1))
-        };
-        let argument = literal
-            .filter(|&at| lexed.code[at..].starts_with('"'))
-            .and_then(|at| lexed.code[at + 1..].split_once('"'))
-            .map(|(value, _)| value)
-            .ok_or_else(|| {
-                format!(
-                    "line {}: `{marker}` takes a plain string literal here",
-                    line_of(start)
-                )
-            })?;
-        let rust = matches!(marker.as_str(), "include!" | "#[path");
-        if rust && source == Source::BuildScript {
-            return Err(format!(
-                "line {}: a build script uses `{marker}`; keep its code in build.rs",
-                line_of(start)
-            ));
-        }
-        let resolved = resolve(directory, argument).ok_or_else(|| {
-            format!(
-                "line {}: `{marker}` reaches `{argument}` outside the repository",
-                line_of(start)
-            )
-        })?;
-        let allowed = if rust {
-            resolved.starts_with(&format!("{CRATE}/")) && is_tracked(&resolved)
-        } else {
-            is_tracked(&resolved) && counted_by_both(&resolved)
-        };
-        if !allowed {
-            return Err(format!(
-                "line {}: `{marker}` reaches `{argument}`, which is not {}",
-                line_of(start),
-                if rust {
-                    "a tracked file of the packaging crate"
-                } else {
-                    "a tracked build input of both platforms, spelled as Git records it"
+            "include_str" | "include_bytes" if macro_call => {
+                let marker = format!("{name}!");
+                let bang = skip_space(tokens, end);
+                let open = skip_space(tokens, bang + 1);
+                let argument = tokens[open..]
+                    .starts_with(['(', '[', '{'])
+                    .then(|| skip_space(tokens, open + 1))
+                    .filter(|&at| lexed.code[at..].starts_with('"'))
+                    .and_then(|at| lexed.code[at + 1..].split_once('"'))
+                    .map(|(value, _)| value)
+                    .ok_or_else(|| {
+                        format!(
+                            "line {}: `{marker}` takes a plain string literal here",
+                            line_of(start)
+                        )
+                    })?;
+                let resolved = resolve(directory, argument).ok_or_else(|| {
+                    format!(
+                        "line {}: `{marker}` reaches `{argument}` outside the repository",
+                        line_of(start)
+                    )
+                })?;
+                if !(is_tracked(&resolved) && counted_like(file, &resolved)) {
+                    return Err(format!(
+                        "line {}: `{marker}` reaches `{argument}`, which is not a tracked build input of every platform that builds this file, spelled as Git records it",
+                        line_of(start)
+                    ));
                 }
-            ));
-        }
-        if rust {
-            reached.push(resolved);
+            }
+            _ => {}
         }
     }
-    Ok(reached)
+    if source == Source::BuildScript
+        && let Some(literal) = lexed
+            .strings
+            .iter()
+            .find(|literal| literal.split(['/', '\\']).any(|part| part == ".."))
+    {
+        return Err(format!(
+            "names the path {literal:?}, which leaves the member's directory; a build script reads only its own member's files"
+        ));
+    }
+    Ok(())
 }
 
 /// Where a `cfg_attr(predicate, attribute, …)` starting after `after` carries a `path = …`
-/// attribute, nested `cfg_attr` included; the predicate itself may mention `path`.
+/// attribute, nested `cfg_attr` included; the predicate itself may mention `path`. Unbalanced
+/// delimiters end the scan (rustc refuses such code).
 fn cfg_attr_path(tokens: &str, after: usize) -> Option<usize> {
     let open = skip_space(tokens, after);
     if !tokens[open..].starts_with('(') {
@@ -395,13 +385,14 @@ fn cfg_attr_path(tokens: &str, after: usize) -> Option<usize> {
         let item = &tokens[start..end];
         let trimmed = item.trim_start();
         let at = start + item.len() - trimmed.len();
-        if let Some(rest) = trimmed.strip_prefix("path")
+        let name = trimmed.strip_prefix("r#").unwrap_or(trimmed);
+        if let Some(rest) = name.strip_prefix("path")
             && rest.trim_start().starts_with('=')
         {
             return Some(at);
         }
-        if trimmed.starts_with("cfg_attr")
-            && let Some(nested) = cfg_attr_path(tokens, at + "cfg_attr".len())
+        if let Some(rest) = name.strip_prefix("cfg_attr")
+            && let Some(nested) = cfg_attr_path(tokens, end - rest.len())
         {
             return Some(nested);
         }
@@ -409,18 +400,19 @@ fn cfg_attr_path(tokens: &str, after: usize) -> Option<usize> {
     None
 }
 
-/// The PowerShell scripts the packaging crate launches: string literals that name a `*.ps1`,
-/// which must be a bare file name (its Windows adapter resolves it in `tools/release`).
+/// The PowerShell scripts the packaging crate launches: string literals that name a `*.ps1`
+/// (any letter case), which must be a bare file name (its Windows adapter resolves it in
+/// `tools/release`).
 pub(super) fn scripts_launched(lexed: &Lexed) -> Result<Vec<String>, String> {
     let mut names = Vec::new();
     for literal in lexed
         .strings
         .iter()
-        .filter(|literal| literal.contains(".ps1"))
+        .filter(|literal| literal.to_ascii_lowercase().contains(".ps1"))
     {
         if !super::is_script_name(literal) {
             return Err(format!(
-                "names the script {literal:?} by a path; the packaging crate launches scripts of tools/release by file name"
+                "names the script {literal:?} other than by its file name; the packaging crate launches scripts of tools/release by file name"
             ));
         }
         names.push(literal.clone());

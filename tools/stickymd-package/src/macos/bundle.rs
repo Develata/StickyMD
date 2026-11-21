@@ -87,8 +87,15 @@ fn inputs_in_plist_bytes(bytes: &[u8]) -> Result<Option<String>, String> {
 /// the bundle's value. A list `plutil` cannot lint, the key element written twice anywhere, or a
 /// value that is not one SHA-256 string is an error.
 fn plist_inputs(path: &Path) -> Result<Option<String>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    if text.matches(&format!("<key>{INPUTS_KEY}</key>")).count() > 1 {
+    // Bytes, not text: a binary or non-UTF-8 property list is plutil's to judge.
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let key = format!("<key>{INPUTS_KEY}</key>");
+    if bytes
+        .windows(key.len())
+        .filter(|window| *window == key.as_bytes())
+        .count()
+        > 1
+    {
         return Err(format!("Info.plist names {INPUTS_KEY} twice"));
     }
     let plutil = |arguments: &[&str]| {
