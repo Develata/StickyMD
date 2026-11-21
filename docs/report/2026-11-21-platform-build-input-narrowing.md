@@ -174,3 +174,6 @@ macOS（Windows artifact 名不带 attempt）；workspace 中出现过程宏成�
 保持不变：顶层同名键在原始 XML 中出现两次即拒绝（注释或嵌套字典中的重名也会被拒，偏保守；`build-app.sh` 的模板没有这种写法）；未结束的 raw string
 现在报错（不再退化为普通字符串）。
 
+
+已验证（`5da88fe` 的工作树，macOS 27.2 arm64）：fmt、Clippy（workspace 的 macOS 目标与两个工具 crate 的 Windows 目标）通过；workspace 测试 1850 项通过，
+0 失败；`phase 00` PASS。`5da88fe` 本身尚未经过跨模型复审。
