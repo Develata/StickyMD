@@ -7,8 +7,9 @@
 
 产出发布字节的代码已迁入 `tools/stickymd-package`（std-only，库加二进制 `stickymd-package`），`stickymd-smoke` 改为依赖它。
 Platform Build Input Fingerprint 升为算法 v2：`tools/stickymd-smoke/` 除清单外不再计入，`tools/stickymd-package/` 整体计入两个平台。
-发布 workflow、Windows 打包脚本与 `build-app.sh` 中产出字节的调用点只调用打包工具，governance 检查编译器看不到的边。macOS 本机基线见下文。
-M5 的“R 上的源码测试”只写进了合同，核对程序未实现。
+发布 workflow、Windows 打包脚本与 `build-app.sh` 中产出字节的调用点只调用打包工具。编译器看不到的边，按 Develata 2026-11-22 的决定
+（“改成闭合世界”）以闭合世界的清单检查：rustc 的 dep-info、固定清单、整份 workflow 的固定副本、原样的名字搜索与 Git 索引，不解析任何语法；
+详见文末“Resolution（2026-11-22）：闭合世界”及其后各节，当前状态见最后一节。M5 的“R 上的源码测试”只写进了合同，核对程序未实现。
 
 ## 提交
 
@@ -346,4 +347,20 @@ SHOULD_FIX 与 NICE_TO_HAVE 已改：两个保守纳入脚本的调用方向分�
 - **脚本的编码与名字边界（合同 B4、实现 9）：** 清单中的脚本须是合法 UTF-8；`.ps1` 名前一个字节须是 ASCII 且不是路径分隔符。
 - **SHOULD_FIX：** Cargo 一律取 PATH 上的 `cargo`（rustup 按 `rust-toolchain.toml` 选择工具链），不再取继承的 `CARGO`；拒绝环境读取时只报告变量名；
   编译失败时附上 stdout 中的编译错误。非 UTF-8 的无关索引路径仍使检查失败（偏保守，未改）。
+
+### 当前状态（`30c26b2` 之后，2026-11-22）
+
+自查补了一条：前提中“固定 workflow 不设置这些变量”原先没有检查，现在是对两份固定副本的原样搜索（不分大小写），出现改变编译的变量即拒绝。
+
+**已验证（macOS 27.2 arm64，本节所在提交的工作树）：** fmt；Clippy（workspace 除 `stickymd-win` 外的 macOS 目标；两个工具 crate 的 Windows
+目标）；workspace 测试（不含 `stickymd-win`）全部通过；`phase 00` PASS；真实仓库上闭合世界检查通过（dev 与 release 两个 profile 在新建私有目录中
+编译，44 个登记文件、无环境读取）；第三方声明的两个摘要与迁移前相同（`33c3b50` 上复核：Windows `360d0993…`、macOS `8c7875b2…`）。
+
+**推断：** 两处产品注释的改写（`b69f5b1`）不新增失效的收据：macOS 产品输入指纹覆盖 `apps/stickymd-mac/` 全部文件，本分支在 `fc6fc09` 已改
+`build-app.sh`；Windows 的模块收据已因改 `11` 全部失效。仓库没有 Dependabot 或 Renovate 配置，所以整份 workflow 的固定副本不会被自动更新打断。
+
+**未验证：** dep-info 读取与私有目录编译从未在 Windows 上运行（Windows 路径分隔符、`.rmeta` 命名、`CARGO_BUILD_BUILD_DIR` 的行为），第一次
+Windows `self-check` 就是证据；Windows 上的 PowerShell 包装测试；三个 job 的真实 dispatch；`30c26b2` 及其后的提交尚未经过跨模型复审。
+
+**留给后续：** 产品 crate 读取 `docs/` 等其他被排除区域的文件不属于本边界；`docs/` 的排除来自 Phase 18 的分类器，早于本次改动。
 

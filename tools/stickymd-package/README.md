@@ -8,10 +8,10 @@ dependency and never calls `stickymd-smoke`; `stickymd-smoke` depends on it to v
 builds. Plan 11 #platform-artifact-reuse therefore counts this crate, and not the verification
 tool, as a build input of both platforms: a change here rebuilds both platforms, a change to the
 verification tool alone does not. The governance check of `stickymd-smoke phase 00` covers the
-edges the compiler cannot see as a closed world (plan 11 "边界的证明"): no dependency or build
-script; every file rustc reads compiling this crate, as its dep-info lists them, is a regular
-tracked file inside this directory; the byte-producing scripts, build scripts and release
-`build-package` jobs are fixed lists or pinned copies; and none of these files, comments
+edges the compiler cannot see as a closed world (plan 11 "边界的证明"): no dependency, build
+script or feature; every file rustc registers compiling this crate, as its dep-info lists them, is
+a regular tracked file inside this directory; the byte-producing scripts and build scripts are
+fixed lists and the release workflows are pinned copies, whole; and none of these files, comments
 included, names the verification tool. Keep the tool's name out of this crate's sources.
 
 The release workflows, `tools/release/package.ps1`, `generate-sbom.ps1`,

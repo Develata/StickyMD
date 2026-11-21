@@ -805,8 +805,10 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
       不出现 `stickymd-smoke`、`stickymd_smoke`、`invoke-smoke.ps1`、`Invoke-StickyMdReleaseTool` 与 `tools/smoke/`（两种分隔符）。
 
     **前提：** `self-check` 与 `build-package` 运行同一份固定 workflow、同一 runner 标签、同一检出与工具链；两者的有效编译配置（runner 环境中的
-    `RUSTFLAGS`、`CARGO_BUILD_TARGET`、Cargo home 中的配置）相同。检查只能观察本 job 的编译，这一前提不由它证明；固定 workflow 不设置这些变量，
-    仓库内的 `.cargo/config.toml` 计入指纹。打包 crate 没有依赖与 feature，workspace 的 feature 合并改变不了它。
+    `RUSTFLAGS`、`CARGO_BUILD_TARGET`、Cargo home 中的配置）相同。检查只能观察本 job 的编译，这一前提不由它证明。固定副本中不出现改变编译的变量（原样搜索、不分
+    大小写：`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`CARGO_BUILD_TARGET`、`CARGO_BUILD_BUILD_DIR`、
+    `CARGO_TARGET_DIR`、`RUSTUP_TOOLCHAIN`，以及 `RUSTC:`、`RUSTC=`、`env:RUSTC`），仓库内的 `.cargo/config.toml` 计入指纹；runner 镜像与 Cargo home
+    的配置仍属前提。打包 crate 没有依赖与 feature，workspace 的 feature 合并改变不了它。
 
     **剩余：** 以下不能由这些事实证明，由代码审查承担：清单中的文件在运行时做什么，例如运行时拼出的名字或路径（`Join-Path` 的目录参数）、不含
     上述名字的命令，以及已审文件在运行时选择读取的被排除文件（之后只改被读文件时，指纹不变）；清单中构建脚本自己的模块与引入的文件读什么，

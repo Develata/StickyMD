@@ -40,6 +40,22 @@ pub(super) fn check_pinned_set(
 
 const BUILD_PACKAGE: &str = "  build-package:";
 const AFTER_BUILD_PACKAGE: &str = "  verify-artifact:";
+/// Environment variables that change what Cargo and rustc compile, or with which toolchain.
+const COMPILE_VARIABLES: &[&str] = &[
+    "RUSTFLAGS",
+    "CARGO_ENCODED_RUSTFLAGS",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "CARGO_BUILD_TARGET",
+    "CARGO_BUILD_BUILD_DIR",
+    "CARGO_TARGET_DIR",
+    "RUSTUP_TOOLCHAIN",
+    // `RUSTC` itself, as a YAML key, a shell or a PowerShell assignment (a bare `rustc` is the
+    // compiler's name in commands).
+    "RUSTC:",
+    "RUSTC=",
+    "env:RUSTC",
+];
 
 /// Checks a release workflow against its pinned copy and returns the copy's `build-package`
 /// section: the lines from the one line `  build-package:` up to the one line
@@ -51,6 +67,18 @@ pub(super) fn check(text: &str, pin: &str) -> Result<String, String> {
             "differs from its pinned copy in stickymd-smoke; review the change and update the copy"
                 .to_owned(),
         );
+    }
+    // The premise that self-check and build-package compile alike rests on the workflow setting
+    // none of the variables that change a compilation; Windows reads environment names in any
+    // letter case, so the search is too.
+    if let Some(variable) = COMPILE_VARIABLES.iter().find(|variable| {
+        pin.as_bytes()
+            .windows(variable.len())
+            .any(|window| window.eq_ignore_ascii_case(variable.as_bytes()))
+    }) {
+        return Err(format!(
+            "its pinned copy names `{variable}`, which could compile build-package unlike self-check"
+        ));
     }
     let lines: Vec<&str> = pin.lines().collect();
     let only = |wanted: &str| -> Result<usize, String> {

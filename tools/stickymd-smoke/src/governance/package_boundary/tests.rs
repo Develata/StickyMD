@@ -632,3 +632,41 @@ fn the_lists_are_the_contract_s() {
     assert!(bullet.contains("dev profile") && bullet.contains("release profile"));
     assert_eq!(compiled::PROFILES, ["dev", "release"]);
 }
+/// The premise that self-check and build-package compile alike: a pinned workflow sets none of the
+/// variables that change a compilation, in any letter case; naming the compiler in a command is
+/// fine.
+#[test]
+fn the_pins_set_no_compile_variables() {
+    let with = |line: &str| {
+        WORKFLOW.replace(
+            "    needs: self-check\n",
+            &format!("    needs: self-check\n    env:\n      {line}\n"),
+        )
+    };
+    let fine = WORKFLOW.replace("./tools/release/package.ps1", "rustc -vV");
+    workflow::check(&fine, &fine).unwrap();
+    for (line, variable) in [
+        ("rustflags: --cfg receipt_variant", "RUSTFLAGS"),
+        ("CARGO_ENCODED_RUSTFLAGS: x", "RUSTFLAGS"),
+        ("RUSTC_WRAPPER: x", "RUSTC_WRAPPER"),
+        ("RUSTC_WORKSPACE_WRAPPER: x", "RUSTC_WORKSPACE_WRAPPER"),
+        ("CARGO_BUILD_TARGET: x", "CARGO_BUILD_TARGET"),
+        ("CARGO_BUILD_BUILD_DIR: x", "CARGO_BUILD_BUILD_DIR"),
+        ("CARGO_TARGET_DIR: x", "CARGO_TARGET_DIR"),
+        ("RUSTUP_TOOLCHAIN: nightly", "RUSTUP_TOOLCHAIN"),
+        ("RUSTC: /opt/rustc", "RUSTC:"),
+    ] {
+        let text = with(line);
+        let error = workflow::check(&text, &text).unwrap_err();
+        assert!(error.contains(variable), "{line}: {error}");
+    }
+    let assigned = WORKFLOW.replace(
+        "./tools/release/package.ps1",
+        "$env:RUSTC = 'x'; cargo build",
+    );
+    assert!(
+        workflow::check(&assigned, &assigned)
+            .unwrap_err()
+            .contains("env:RUSTC")
+    );
+}
