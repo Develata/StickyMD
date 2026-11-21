@@ -110,3 +110,28 @@ USER 的回复（原话，经主会话转达）：
 按方案 A 实施：每个发布 workflow 拆成 `self-check` → `build-package` → `verify-artifact` 三个 job；`build-package` 只运行计入指纹的代码；
 PE import 门（`pe_dependencies.rs`）迁入打包 crate，打包二进制增加 `native-runtime` 与 `macos-verify-package` 命令；`verify-artifact` 下载刚上传的
 artifact 并在它上面校验。`11` #platform-artifact-reuse、`release_workflow` 测试与 governance 的 workflow 检查随之修改。
+
+## 方案 A 的实现与两份实现审查的处理（2026-11-21）
+
+提交 `09145d5`（实现）与本节所在提交（验收行号与本节）。
+
+- **workflow：** `release` 与 `release-macos` 各分为 `self-check` → `build-package` → `verify-artifact`。`build-package` 只运行 Git 的祖先核对、
+  产品构建、`stickymd-package native-runtime`（PE import 门，`pe_dependencies.rs` 已迁入打包 crate）、打包、SBOM、macOS 的
+  `stickymd-package macos-verify-package` 与构建记录，然后上传；`verify-artifact` 以 `actions/download-artifact`（v7.0.0，按 SHA 钉住）取回刚上传的
+  artifact，用 `stickymd-smoke` 校验（Windows `verify-package.ps1`，macOS `release macos-verify-package`），macOS 另在摘要中写平台指纹。
+  `stickymd-smoke qualification native-runtime` 与 `release macos-verify-package` 调用同一份库代码。
+- **打包 crate 审查（`fc6fc09`）：** 已修——证据目录内的链接（含 Windows junction）指向别处时从真实路径写入也被拒；默认输出目录也受检；
+  含反斜杠的 tracked 路径被拒；macOS 精确打包用归档内 bundle 的产品输入再比对一次，ZIP 以硬链接发布、同名已存在即失败；Info.plist 中注释或嵌套
+  字典里的键被拒；README 的 `workspace-version` 一段。未改：守卫仍拒绝整个 `dist/evidence/`，比拆分前严格（拆分前允许写到其中非协调者的诊断路径），
+  因为打包 crate 不知道协调者的具体文件，发布 workflow 与 runner 都写 `dist/`；库函数可被进程内调用而绕过 CLI 守卫，与拆分前相同（runner 的本地
+  预检以默认路径调用）。“读取 smoke 的清单”按合同属计入的输入，已在合同中写明。
+- **smoke 侧审查（`fc6fc09`）：** 已修——计入的例外按大小写不敏感匹配（`Build.rs`、`CARGO.TOML`）；边界检查改用区分注释与字符串的词法，
+  逐层检查被 `include!`/`#[path]` 引入的 Rust 文件，跟进脚本中单双引号与 `&` 调用的引用，读不出的 dot-source 被拒，workflow 按 job 解析
+  且注释不截断 job，依赖与构建脚本改由 `cargo metadata` 判定；Phase 18 发布工具任务与 P00-A07 的命令包含 `stickymd-package`；打包 crate 的改动
+  也选中 macOS 的 CI lane；`.gitattributes` 的 LF 规则随模板路径更新；主帮助与迁走命令的提示（测试断言 stderr）；Windows 包装测试从 Cargo 的
+  `compiler-artifact` 消息取打包可执行文件；分类器的测试移到 `platform_inputs/tests.rs`（不计入）；验收行 P18-P01、P02、P03、P05、P10 的行号按
+  测试函数重新核对，P18-P05 的“排除表逐项”收窄为实际覆盖的范围。
+- **已验证（macOS 27.2 arm64，`09145d5` 的工作树）：** fmt、Clippy（macOS 与两个工具 crate 的 Windows 目标）通过；workspace 测试 1848 项通过，
+  0 失败；`phase 00` PASS。第三方声明在 `fc6fc09` 的 tree 上新旧逐字节相同：Windows `360d0993…`、macOS `8c7875b2…`（SHA-256 前 16 位）。
+- **未验证：** 三个 job 的真实 dispatch（包括 `download-artifact` 取回的路径布局）、Windows 上的 PowerShell 包装测试与 CNG、Windows 打包字节在
+  同一 Windows 环境下新旧比对。
