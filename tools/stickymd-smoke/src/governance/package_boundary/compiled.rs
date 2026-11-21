@@ -14,10 +14,29 @@ pub(super) fn cargo() -> std::ffi::OsString {
     std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into())
 }
 
-/// Checks `package`'s lib and bin targets for the host in the workspace at `root`, with its own
-/// `target_dir` so that it never waits on the build directory of a caller's Cargo, and returns
-/// the union of their dep-info paths, sorted.
+/// The profiles the pinned release workflows compile the packaging crate in: `cargo run` (dev)
+/// runs it, the Windows workspace build (release) builds it too.
+const PROFILES: &[&str] = &["dev", "release"];
+
+/// Checks `package`'s lib and bin targets for the host in the workspace at `root`, in each of
+/// [`PROFILES`], with its own `target_dir` so that it never waits on the build directory of a
+/// caller's Cargo, and returns the union of their dep-info paths, sorted.
 pub(super) fn files(root: &Path, package: &str, target_dir: &Path) -> Result<Vec<String>, String> {
+    let mut files = Vec::new();
+    for profile in PROFILES {
+        files.extend(files_in(root, package, target_dir, profile)?);
+    }
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+fn files_in(
+    root: &Path,
+    package: &str,
+    target_dir: &Path,
+    profile: &str,
+) -> Result<Vec<String>, String> {
     let output = std::process::Command::new(cargo())
         .current_dir(root)
         .args([
@@ -29,6 +48,8 @@ pub(super) fn files(root: &Path, package: &str, target_dir: &Path) -> Result<Vec
             "--lib",
             "--bins",
             "--message-format=json",
+            "--profile",
+            profile,
         ])
         .arg("--target-dir")
         .arg(target_dir)
@@ -36,7 +57,7 @@ pub(super) fn files(root: &Path, package: &str, target_dir: &Path) -> Result<Vec
         .map_err(|error| format!("cannot start `cargo check`: {error}"))?;
     if !output.status.success() {
         return Err(format!(
-            "`cargo check -p {package}` failed: {}",
+            "`cargo check -p {package} --profile {profile}` failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
@@ -67,11 +88,9 @@ pub(super) fn files(root: &Path, package: &str, target_dir: &Path) -> Result<Vec
     }
     if artifacts == 0 || files.is_empty() {
         return Err(format!(
-            "`cargo check -p {package}` reported no compiled files; a check of nothing proves nothing"
+            "`cargo check -p {package} --profile {profile}` reported no compiled files; a check of nothing proves nothing"
         ));
     }
-    files.sort();
-    files.dedup();
     Ok(files)
 }
 

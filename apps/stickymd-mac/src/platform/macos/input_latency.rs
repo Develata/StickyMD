@@ -1,4 +1,4 @@
-//! Opt-in input-latency diagnostic for the VM driver (`stickymd-smoke mac-latency`). It is off
+//! Opt-in input-latency diagnostic for the VM driver (the verification tool's `mac-latency`). It is off
 //! unless `STICKYMD_DIAGNOSTIC_INPUT_LATENCY` names an output file, and then records timestamps
 //! only, never a key's identity or the note's text:
 //!

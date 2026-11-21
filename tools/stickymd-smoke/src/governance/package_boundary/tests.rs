@@ -22,8 +22,15 @@ const WIN: &str = r#"{"name":"stickymd-win","manifest_path":"/r/apps/stickymd-wi
 /// Cargo's decoded metadata decides, whatever the TOML spelling.
 #[test]
 fn the_workspace_is_read_from_cargo_metadata() {
+    let counted = |_: &str| true;
+    let check = |packages: &str| check_metadata(&metadata(packages), &counted);
+    // A test target ships nothing and is not among the targets returned.
+    let with_test = PACKAGING.replace(
+        r#"]}"#,
+        r#",{"kind":["test"],"name":"cli_exit","src_path":"/r/tools/stickymd-package/tests/cli_exit.rs"}]}"#,
+    );
     assert_eq!(
-        check_metadata(&metadata(&format!("{PACKAGING},{WIN}"))).unwrap(),
+        check(&format!("{with_test},{WIN}")).unwrap(),
         [
             "tools/stickymd-package/src/lib.rs",
             "tools/stickymd-package/src/main.rs"
@@ -31,7 +38,14 @@ fn the_workspace_is_read_from_cargo_metadata() {
     );
     // A root package (manifest `Cargo.toml`) without a build script is an ordinary member.
     let root_package = r#"{"name":"root","manifest_path":"/r/Cargo.toml","dependencies":[],"targets":[{"kind":["lib"],"name":"root","src_path":"/r/src/lib.rs"}]}"#;
-    check_metadata(&metadata(&format!("{PACKAGING},{WIN},{root_package}"))).unwrap();
+    check(&format!("{PACKAGING},{WIN},{root_package}")).unwrap();
+    // A member whose manifest a platform does not count.
+    let error = check_metadata(
+        &metadata(&format!("{PACKAGING},{WIN},{root_package}")),
+        &|path| path != "Cargo.toml",
+    )
+    .unwrap_err();
+    assert!(error.contains("not counted by both platforms"), "{error}");
     let dependency = PACKAGING.replace(
         r#""dependencies":[]"#,
         r#""dependencies":[{"name":"stickymd-smoke"}]"#,
@@ -67,7 +81,7 @@ fn the_workspace_is_read_from_cargo_metadata() {
         (format!("{PACKAGING},{unlisted}"), "plan 11 lists exactly"),
         (WIN.to_owned(), "lists no stickymd-package"),
     ] {
-        let error = check_metadata(&metadata(&packages)).unwrap_err();
+        let error = check(&packages).unwrap_err();
         assert!(error.contains(reason), "{reason}: {error}");
     }
 }
@@ -102,11 +116,11 @@ fn the_git_index_records_paths_with_their_modes() {
     directory.close().unwrap();
 }
 
-/// rustc lists, in its dep-info, every file it reads: an out-of-line module, a `#[path]` file,
-/// `include!`, a renamed `include_str!`, an include inside a macro, and an `include_bytes!` that
-/// leaves the crate, written as the code wrote it.
+/// rustc registers, in its dep-info, the local files it reads: an out-of-line module, a `#[path]`
+/// file, `include!`, a renamed `include_str!`, an include inside a macro, and an `include_bytes!`
+/// that leaves the crate, written as the code wrote it.
 #[test]
-fn rustc_lists_every_file_it_reads() {
+fn rustc_registers_the_files_it_reads() {
     let directory = stickymd_package::temporary::TemporaryDirectory::new("boundary-probe").unwrap();
     let workspace = directory.path().join("ws");
     std::fs::create_dir_all(workspace.join("src")).unwrap();
@@ -302,84 +316,79 @@ fn no_file_names_the_verification_tool_in_any_case_comments_included() {
     }
 }
 
-const HEADER: &str =
-    "name: release\n\non:\n  workflow_dispatch:\n\nenv:\n  CARGO_TERM_COLOR: always\n\n";
-const BUILD: &str = "  build-package:\n    needs: self-check\n    steps:\n      - run: cargo build --workspace --release --locked && echo done\n      - run: ./tools/release/package.ps1\n        with:\n          path: dist/*.zip\n\n";
-const PINS: workflow::Pins = workflow::Pins {
-    header: HEADER,
-    build_package: BUILD,
-};
-const SELF_CHECK: &str =
-    "  self-check:\n    needs: dependency-policy\n    steps:\n      - run: cargo test\n\n";
-const VERIFY: &str = "  verify-artifact:\n    needs: build-package\n    steps:\n      - name: Download\n        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0\n";
+const WORKFLOW: &str = "name: release\non:\n  workflow_dispatch:\njobs:\n  dependency-policy:\n    steps: []\n  self-check:\n    needs: dependency-policy\n    steps:\n      - run: cargo run -p stickymd-smoke -- release workspace-version\n  build-package:\n    needs: self-check\n    steps:\n      - run: ./tools/release/package.ps1\n  verify-artifact:\n    needs: build-package\n    steps:\n      - run: ./tools/release/verify-package.ps1\n";
 
-fn workflow_text(policy: &str, self_check: &str, build: &str, verify: &str) -> String {
-    format!("{HEADER}jobs:\n{policy}{self_check}{build}{verify}")
+/// The whole workflow equals its pin; the pin's `build-package` section is what the name search
+/// reads, so the tool named elsewhere in the workflow is fine and named in that job is not.
+#[test]
+fn a_release_workflow_equals_its_pin_whole() {
+    let section = workflow::check(WORKFLOW, WORKFLOW).unwrap();
+    assert_eq!(
+        section,
+        "  build-package:\n    needs: self-check\n    steps:\n      - run: ./tools/release/package.ps1\n"
+    );
+    check_names(section.as_bytes()).unwrap();
+    // Line endings are made LF on both sides.
+    workflow::check(&WORKFLOW.replace('\n', "\r\n"), WORKFLOW).unwrap();
+    let error =
+        workflow::check(&WORKFLOW.replace("steps: []", "steps: [ ]"), WORKFLOW).unwrap_err();
+    assert!(error.contains("differs from its pinned copy"), "{error}");
+    let smoke = WORKFLOW.replace(
+        "      - run: ./tools/release/package.ps1\n",
+        "      - run: ./tools/release/package.ps1\n      - run: cargo test -p stickymd-smoke\n",
+    );
+    let section = workflow::check(&smoke, &smoke).unwrap();
+    assert!(check_names(section.as_bytes()).is_err());
+    for (pin, reason) in [
+        (
+            WORKFLOW.replace("  build-package:\n", ""),
+            "0 lines `  build-package:`",
+        ),
+        (
+            WORKFLOW.replace(
+                "  verify-artifact:\n",
+                "  verify-artifact:\n  verify-artifact:\n",
+            ),
+            "2 lines `  verify-artifact:`",
+        ),
+        (
+            WORKFLOW
+                .replace("  build-package:\n", "  placeholder:\n")
+                .replace("  verify-artifact:\n", "  build-package:\n")
+                .replace("  placeholder:\n", "  verify-artifact:\n"),
+            "before",
+        ),
+    ] {
+        let error = workflow::check(&pin, &pin).unwrap_err();
+        assert!(error.contains(reason), "{reason}: {error}");
+    }
 }
 
-const POLICY: &str = "  dependency-policy:\n    steps: []\n\n";
-
+/// The real pins are the release workflows of plan 11: the dependency policy and the three
+/// release jobs, in order, each needing the one before.
 #[test]
-fn the_workflow_header_and_build_job_equal_their_pins_and_the_jobs_are_plan_11s() {
-    let good = workflow_text(POLICY, SELF_CHECK, BUILD, VERIFY);
-    assert_eq!(workflow::check(&good, &PINS).unwrap(), BUILD);
-    // Line endings are made LF; a comment at column zero inside the jobs is not a job.
-    workflow::check(&good.replace('\n', "\r\n"), &PINS).unwrap();
-    workflow::check(
-        &good.replace("  self-check:\n", "# note\n  self-check:\n"),
-        &PINS,
-    )
-    .unwrap();
-    for (text, reason) in [
-        (
-            good.replace("CARGO_TERM_COLOR: always", "RUSTC_WRAPPER: x"),
-            "before `jobs:` differs",
-        ),
-        (
-            good.replace("--release --locked", "--release"),
-            "`build-package` job differs",
-        ),
-        (
-            good.replace("    steps: []", "    steps: &steps []"),
-            "anchor, alias or merge key",
-        ),
-        (
-            good.replace("      - run: cargo test", "      - *steps"),
-            "anchor, alias or merge key",
-        ),
-        (
-            good.replace("    steps: []", "    <<: {}"),
-            "anchor, alias or merge key",
-        ),
-        (format!("{good}jobs:\n"), "`jobs:` lines"),
-        (format!("{good}env:\n  X: y\n"), "follows `jobs:`"),
-        (
-            format!("{good}  publish:\n    steps: []\n"),
-            "names only the jobs",
-        ),
-        (good.replace(POLICY, ""), "has no `dependency-policy` job"),
-        (format!("{good}{POLICY}"), "defined twice"),
-        (
-            good.replace("    needs: dependency-policy", "    needs: build-package"),
-            "`self-check` job's `needs`",
-        ),
-        (
-            good.replace(
-                "      - run: cargo test",
-                "      - run: cargo test\n        needs: x",
-            ),
-            "`self-check` job's `needs`",
-        ),
-        (
-            good.replace(
-                "    needs: build-package\n    steps:\n      - name",
-                "    needs: [build-package]\n    steps:\n      - name",
-            ),
-            "`verify-artifact` job's `needs`",
-        ),
-        (good.replace("37930b1c", "00000000"), "has no line"),
-    ] {
-        let error = workflow::check(&text, &PINS).unwrap_err();
-        assert!(error.contains(reason), "{reason}: {error}");
+fn the_pins_hold_the_jobs_of_plan_11() {
+    for (path, pin) in workflow::RELEASE_WORKFLOWS {
+        let order: Vec<usize> = [
+            "  dependency-policy:",
+            "  self-check:",
+            "    needs: dependency-policy",
+            "  build-package:",
+            "    needs: self-check",
+            "  verify-artifact:",
+            "    needs: build-package",
+            "        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0",
+        ]
+        .iter()
+        .map(|line| {
+            pin.lines()
+                .position(|candidate| candidate == *line)
+                .unwrap_or_else(|| panic!("{path}: no line `{line}`"))
+        })
+        .collect();
+        assert!(
+            order.windows(2).all(|pair| pair[0] < pair[1]),
+            "{path}: {order:?}"
+        );
     }
 }

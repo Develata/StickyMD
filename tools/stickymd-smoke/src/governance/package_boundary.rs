@@ -6,17 +6,18 @@
 //! list or a pinned copy, a raw search of a file's whole text, or a fact Cargo or rustc reports;
 //! nothing here parses Rust, PowerShell or YAML, and whatever is not on a list is refused:
 //! - Cargo metadata: the packaging crate has no dependency and no build script, and each of its
-//!   targets is a file rustc reads; no member is a procedural macro; no two targets share a
-//!   binary name; the workspace's build scripts are exactly [`BUILD_SCRIPTS`];
-//! - the files rustc reads compiling the packaging crate (its dep-info, `compiled` module) are
-//!   regular files of the Git index inside the crate, spelled as Git records them, that both
-//!   platforms count;
+//!   targets that builds release bytes is a file rustc reads; no member is a procedural macro; no
+//!   two targets share a binary name; every member's manifest is counted by both platforms; the
+//!   workspace's build scripts are exactly [`BUILD_SCRIPTS`];
+//! - the files rustc registers compiling the packaging crate in the dev and release profiles (its
+//!   dep-info, `compiled` module) are regular files of the Git index inside the crate, spelled as
+//!   Git records them, that both platforms count;
 //! - the listed build scripts name no parent directory;
 //! - the Windows scripts that build bytes are exactly [`BYTE_SCRIPTS`], and every `.ps1` name in
 //!   them or in the compiled files is one of them; `build-app.sh` names none;
-//! - each release workflow's header and `build-package` job equal pinned copies, and its jobs are
-//!   the four of plan 11 (`workflow` module);
-//! - none of these files names the verification tool, in any letter case, comments included.
+//! - each release workflow equals its pinned copy, whole (`workflow` module);
+//! - none of these files, no tracked file under `crates/` or `apps/` and no pinned `build-package`
+//!   job names the verification tool, in any letter case, comments included.
 //!
 //! What a listed file does at run time is not provable statically: the name search guards the
 //! ordinary ways, and review of these counted files covers the rest (plan 11 "剩余").
@@ -65,11 +66,11 @@ const REGULAR_MODES: &[&str] = &["100644", "100755"];
 
 pub(super) fn verify(root: &Path) -> Result<(), String> {
     let index = git_index(root)?;
-    let package_targets = check_metadata(&cargo_metadata(root)?)?;
+    let counted_by_both =
+        |file: &str| is_input(Platform::WindowsX64, file) && is_input(Platform::MacOsArm64, file);
+    let package_targets = check_metadata(&cargo_metadata(root)?, &counted_by_both)?;
     let compiled = compiled::files(root, PACKAGE, &root.join("target/package-boundary"))?;
-    check_compiled(&compiled, &index, &|file| {
-        is_input(Platform::WindowsX64, file) && is_input(Platform::MacOsArm64, file)
-    })?;
+    check_compiled(&compiled, &index, &counted_by_both)?;
     check_targets(&package_targets, &compiled)?;
     check_byte_scripts(SCRIPTS, BYTE_SCRIPTS, &index, Platform::WindowsX64)?;
 
@@ -98,11 +99,18 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
         ));
     }
     searched.push((BUILD_APP.to_owned(), build_app));
-    for (path, pins) in workflow::RELEASE_WORKFLOWS {
+    for (path, pin) in workflow::RELEASE_WORKFLOWS {
         let text =
             String::from_utf8(read(root, path)?).map_err(|_| format!("{path} is not UTF-8"))?;
-        let job = workflow::check(&text, pins).map_err(|e| format!("{path}: {e}"))?;
+        let job = workflow::check(&text, pin).map_err(|e| format!("{path}: {e}"))?;
         searched.push((format!("{path} (build-package)"), job.into_bytes()));
+    }
+    // The product crates and every build script, with any module a build script declares.
+    for path in index
+        .keys()
+        .filter(|path| path.starts_with("apps/") || path.starts_with("crates/"))
+    {
+        searched.push((path.clone(), read(root, path)?));
     }
     for (origin, bytes) in &searched {
         check_names(bytes).map_err(|e| format!("{origin}: {e}"))?;
@@ -172,7 +180,10 @@ fn cargo_metadata(root: &Path) -> Result<Value, String> {
 /// Cargo's decoded view, so no TOML spelling (a quoted table or key, a target `path`) can hide a
 /// dependency, a target or a build script. Returns the source files of the packaging crate's
 /// targets that build release bytes (all but tests, benches and examples), as repository paths.
-fn check_metadata(metadata: &Value) -> Result<Vec<String>, String> {
+fn check_metadata(
+    metadata: &Value,
+    counted_by_both: &dyn Fn(&str) -> bool,
+) -> Result<Vec<String>, String> {
     let workspace_root = format!(
         "{}/",
         metadata
@@ -193,6 +204,13 @@ fn check_metadata(metadata: &Value) -> Result<Vec<String>, String> {
     let mut package_targets = Vec::new();
     for package in metadata.field("packages")?.array()? {
         let name = package.field("name")?.string()?;
+        // Another member's manifest can change the features Cargo merges into the product.
+        let manifest = relative(package.field("manifest_path")?.string()?)?;
+        if !counted_by_both(&manifest) {
+            return Err(format!(
+                "{name}'s manifest {manifest} is not counted by both platforms; a member in an excluded tree needs the classifier changed first"
+            ));
+        }
         let packaging = name == PACKAGE;
         if packaging {
             found = true;
