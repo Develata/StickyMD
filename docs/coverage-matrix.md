@@ -5,9 +5,9 @@
 - **Plan：** `11` `platform-artifact-reuse`（排除表、打包 crate、边界的证明、只改验证工具时、构建 workflow 中的验证只是自检，算法 v2）、
   `macos-release-gate`（R 上的源码测试，M5 核对）、`phase-16-macos-host`（产品输入指纹改由 `stickymd-package app-inputs` 计算）；
   `01` Platform Build Input Fingerprint。
-- **验收：** [Phase 18](acceptance-cases/phase-18.md) P18-P05（指纹与沿用）、P18-P10（打包 crate 的边界）。
+- **验收：** [Phase 18](acceptance-cases/phase-18.md) P18-P05（指纹与沿用）、P18-P10（打包 crate 的边界）、P18-P11 与 P18-P12（产品发布图，macOS 与 Windows 主机）。
 - **代码：** `tools/stickymd-package`（产出发布字节的全部代码与其公共代码，二进制 `stickymd-package`）；
-  `tools/stickymd-smoke/src/release/platform_inputs.rs`（排除表 v2）、`governance/package_boundary.rs`（编译器看不到的边）；
+  `tools/stickymd-smoke/src/release/platform_inputs.rs`（排除表 v2）、`governance/package_boundary.rs`（编译器看不到的边）、`governance/product_boundary.rs`（产品发布图的编译期输入，USER 2026-11-22“采用 B”）；
   `tools/release/invoke-package.ps1`、`build-app.sh`、`release-macos.yml` 的打包与 SBOM 步骤改调打包工具。M5 的核对程序尚未实现。
 
 2026-11-19 Phase 18 macOS 安装版与公开分发（下一版本）：

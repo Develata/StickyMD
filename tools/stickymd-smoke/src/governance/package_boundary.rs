@@ -25,7 +25,7 @@
 //! its own job's compilation: plan 11 states both as the premise and the residual.
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse
 
-mod compiled;
+pub(super) mod compiled;
 mod workflow;
 
 use crate::release::json::{self, Value};
@@ -54,7 +54,7 @@ const BYTE_SCRIPTS: &[&str] = &[
     "syft-execute.ps1",
     "syft-fetch.ps1",
 ];
-const BUILD_APP: &str = "apps/stickymd-mac/packaging/build-app.sh";
+pub(super) const BUILD_APP: &str = "apps/stickymd-mac/packaging/build-app.sh";
 /// How a file reaches the verification tool: its package or crate name, its PowerShell wrapper
 /// script and function, or its per-phase entry points. Lower case; matched in any case.
 const TOOL_NAMES: &[&str] = &[
@@ -66,9 +66,9 @@ const TOOL_NAMES: &[&str] = &[
     "tools\\smoke\\",
 ];
 /// Regular files in the Git index (`100644`, `100755`); a link records only where it points.
-const REGULAR_MODES: &[&str] = &["100644", "100755"];
+pub(super) const REGULAR_MODES: &[&str] = &["100644", "100755"];
 
-type Index = BTreeMap<String, String>;
+pub(super) type Index = BTreeMap<String, String>;
 
 pub(super) fn verify(root: &Path) -> Result<(), String> {
     let index = git_index(root)?;
@@ -147,7 +147,7 @@ fn is_regular(index: &Index, path: &str) -> bool {
 
 /// The Git index: each path, exactly as Git records it, with its mode. A file only on disk is not
 /// a build input of a clean checkout.
-fn git_index(root: &Path) -> Result<Index, String> {
+pub(super) fn git_index(root: &Path) -> Result<Index, String> {
     let output = crate::release::platform_inputs::git(root)
         .args(["ls-files", "-z", "--cached", "--stage"])
         .output()

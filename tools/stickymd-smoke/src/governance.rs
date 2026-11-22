@@ -7,6 +7,7 @@ mod mac_host;
 mod mac_resources;
 mod manifest_harness;
 mod package_boundary;
+mod product_boundary;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -177,6 +178,7 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_forbidden_packages(root)?;
     crate_graph::verify(root)?;
     package_boundary::verify(root)?;
+    product_boundary::verify(root)?;
     verify_test_harnesses(root)?;
     input_injection::verify(root)?;
     Ok(())

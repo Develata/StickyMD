@@ -27,7 +27,7 @@ pub(super) struct Target {
 
 /// `lib` for any library kind Cargo reports (`lib`, `rlib`, `dylib`, `cdylib`, `staticlib`),
 /// `bin` for a binary, `None` for anything else (a procedural macro is refused elsewhere).
-pub(super) fn lib_or_bin(kinds: &[Value]) -> Option<&'static str> {
+pub(in crate::governance) fn lib_or_bin(kinds: &[Value]) -> Option<&'static str> {
     let is = |wanted: &str| kinds.iter().any(|kind| kind.string() == Ok(wanted));
     if ["lib", "rlib", "dylib", "cdylib", "staticlib"]
         .iter()
@@ -43,14 +43,14 @@ pub(super) fn lib_or_bin(kinds: &[Value]) -> Option<&'static str> {
 
 /// Cargo from `PATH`: through rustup it is the toolchain `rust-toolchain.toml` pins. An inherited
 /// `CARGO` could name any executable.
-pub(super) fn cargo() -> std::process::Command {
+pub(in crate::governance) fn cargo() -> std::process::Command {
     std::process::Command::new("cargo")
 }
 
 /// A path as rustc or Cargo wrote it, with `/` as the separator: on Windows `\` is one too; on
 /// other hosts a `\` is a character of the name, which no tracked input of this repository uses,
 /// so such a path is refused rather than read as another file.
-pub(super) fn normalize(path: &str) -> Result<String, String> {
+pub(in crate::governance) fn normalize(path: &str) -> Result<String, String> {
     if cfg!(windows) {
         Ok(path.replace('\\', "/"))
     } else if path.contains('\\') {
@@ -173,7 +173,7 @@ pub(super) fn files_in(
 }
 
 /// The rendered error diagnostics among Cargo's messages, at most a few, for a failed check.
-fn compiler_errors(messages: &[Value]) -> String {
+pub(in crate::governance) fn compiler_errors(messages: &[Value]) -> String {
     let errors: Vec<&str> = messages
         .iter()
         .filter(|m| m.field("reason").and_then(|r| r.string()).ok() == Some("compiler-message"))
@@ -190,7 +190,7 @@ fn compiler_errors(messages: &[Value]) -> String {
 }
 
 /// `deps/libNAME-HASH.rmeta` → `deps/NAME-HASH.d`, where rustc writes the dep-info.
-fn dep_info_path(rmeta: &Path) -> Result<std::path::PathBuf, String> {
+pub(in crate::governance) fn dep_info_path(rmeta: &Path) -> Result<std::path::PathBuf, String> {
     let stem = rmeta
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -205,7 +205,31 @@ fn dep_info_path(rmeta: &Path) -> Result<std::path::PathBuf, String> {
 /// (`# env-dep:NAME`) is refused, since a file chosen through `env!` at compile time can differ
 /// between the check and the release job; an escaped space or a `$` is refused rather than
 /// unescaped (repository paths have neither); any other line is refused.
-pub(super) fn parse(text: &str) -> Result<Vec<String>, String> {
+pub(in crate::governance) fn parse(text: &str) -> Result<Vec<String>, String> {
+    parse_rules(text, &|output| {
+        output.ends_with(".d") || output.ends_with(".rmeta")
+    })
+}
+
+/// [`parse`] for a build script's unit, which links an executable: each rule names a file in
+/// `directory` (the unit's own build directory, as Cargo reported it) whose name starts with
+/// `build_script_build-`, the executable or its dep-info.
+pub(in crate::governance) fn parse_build_script(
+    text: &str,
+    directory: &str,
+) -> Result<Vec<String>, String> {
+    let prefix = format!("{}/build_script_build-", directory.trim_end_matches('/'));
+    parse_rules(text, &|output| {
+        normalize(output).is_ok_and(|output| {
+            output
+                .strip_prefix(&prefix)
+                .is_some_and(|name| !name.contains('/'))
+        })
+    })
+}
+
+/// The rules of a dep-info whose outputs `is_output` accepts.
+fn parse_rules(text: &str, is_output: &dyn Fn(&str) -> bool) -> Result<Vec<String>, String> {
     // First, so that no other diagnostic (which may quote a path built from the value) runs.
     if let Some(read) = text
         .lines()
@@ -226,7 +250,7 @@ pub(super) fn parse(text: &str) -> Result<Vec<String>, String> {
             return Err(format!("dep-info line {line:?} needs unescaping"));
         }
         if let Some((output, inputs)) = line.split_once(": ") {
-            if !(output.ends_with(".d") || output.ends_with(".rmeta")) {
+            if !is_output(output) {
                 return Err(format!("unexpected dep-info rule for {output:?}"));
             }
             rules.push(

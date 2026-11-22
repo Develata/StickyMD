@@ -29,6 +29,7 @@ Windows 的产品行为、发布文件名与字节不变。
 | M4 | 本机基线与 `mac-test` 完成，候选包上的验证等 dispatch（[验证记录](../report/2026-11-20-phase-18-verification.md)） | 本机 fmt、clippy、测试；`mac-test` 中的 `mac-gui`；候选包上的下载路径 |
 | M5 | 待开始 | macOS 就绪核对（`11` #macos-release-gate），下一版本发布前完成；2026-11-21 起包括“R 上的源码测试”一行（合同已落盘，核对程序与收据格式未实现） |
 | 构建输入收窄 | 实现完成（分支 `feat/package-crate-split`，未合入） | USER 2026-11-21：产出发布字节的代码迁入 `tools/stickymd-package`，Platform Build Input Fingerprint 计入它，验证工具除 `Cargo.toml`、`build.rs` 与分类器 `src/release/platform_inputs.rs` 外不计入（算法 v2）；矩阵 P18-P05、P18-P10 |
+| 产品发布图 | 实现完成（分支 `feat/product-input-closure`，叠在 `feat/package-crate-split` 上，未合入；Windows 主机未运行） | USER 2026-11-22“采用 B”：governance 在 Windows 与 macOS 主机上按固定发布构建新编译一次，发布二进制依赖闭包内登记的文件都须是本平台指纹计入的跟踪文件（[分析报告](../report/2026-11-22-product-reads-of-excluded-inputs.md)）；矩阵 P18-P11、P18-P12 |
 
 ## Deliverables
 
