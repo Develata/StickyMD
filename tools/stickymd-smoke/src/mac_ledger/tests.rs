@@ -723,7 +723,7 @@ fn public_evidence_writers_refuse_the_ledger() {
     let path = std::path::Path::new("dist/evidence/mac-gui-ledger/records.jsonl");
     assert!(crate::qualification::validate_public_evidence_path(&root, path).is_err());
     let directory = std::path::Path::new("dist/evidence/mac-gui-ledger");
-    assert!(crate::qualification::validate_public_output_directory(&root, directory).is_err());
+    assert!(stickymd_package::output_guard::check_directory(&root, &root.join(directory)).is_err());
     let other = std::path::Path::new("dist/evidence/mac-gui-r14/mac-gui.json");
     assert!(crate::qualification::validate_public_evidence_path(&root, other).is_ok());
 }

@@ -301,7 +301,7 @@ mod phase8_interaction_tests {
     /// closed it (the whole button lies above the popup at every scale and size), and nothing
     /// reopens it; closed, the button opens it. Every other control acts either way. This checks
     /// the decision at four scales and three sizes; that the handler applies it is checked by the
-    /// copied-Release `WindowShell` runtime (`stickymd-smoke` `runtime/opacity_popup.rs`), which
+    /// copied-Release `WindowShell` runtime (the verification tool's `runtime/opacity_popup.rs`), which
     /// sends the presses as window messages, not native pointer delivery.
     #[test]
     fn the_opacity_button_closes_the_popup_it_finds_open() {

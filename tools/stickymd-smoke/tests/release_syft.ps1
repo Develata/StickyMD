@@ -3,8 +3,8 @@
 $syftRepo = Join-Path $outputDirectory 'Syft 中文 space'
 [void][IO.Directory]::CreateDirectory($syftRepo)
 foreach ($marker in @('Cargo.toml', 'AGENTS.md')) { [IO.File]::WriteAllText((Join-Path $syftRepo $marker), '') }
-. (Join-Path $repo 'tools/release/invoke-smoke.ps1')
-$plan = (Invoke-StickyMdReleaseTool -RepoRoot $syftRepo -Arguments @('syft-plan')) | ConvertFrom-Json
+. (Join-Path $repo 'tools/release/invoke-package.ps1')
+$plan = (Invoke-StickyMdPackageTool -RepoRoot $syftRepo -Arguments @('syft-plan')) | ConvertFrom-Json
 Assert-State
 if ($plan.external -or $plan.downloads.Count -ne 2 -or $plan.download_attempts -ne 3) { throw 'Missing Syft cache must require both pinned files' }
 $entry = $plan.downloads[0]
@@ -25,7 +25,7 @@ try {
         $partial = Join-Path $syftRepo 'private-download.partial'
         try {
             & (Join-Path $repo 'tools/release/syft-fetch.ps1') -Uri $entry.uri -OutputPath $partial
-            Invoke-StickyMdReleaseTool -RepoRoot $syftRepo -Arguments @('syft-publish', '--kind', $entry.kind, '--input', $partial)
+            Invoke-StickyMdPackageTool -RepoRoot $syftRepo -Arguments @('syft-publish', '--kind', $entry.kind, '--input', $partial)
         } catch {
             $failed = $true
         } finally {
@@ -41,13 +41,13 @@ try {
 } finally {
     Remove-Item Function:Invoke-WebRequest
 }
-$planAfter = (Invoke-StickyMdReleaseTool -RepoRoot $syftRepo -Arguments @('syft-plan')) | ConvertFrom-Json
+$planAfter = (Invoke-StickyMdPackageTool -RepoRoot $syftRepo -Arguments @('syft-plan')) | ConvertFrom-Json
 if ($planAfter.downloads.Count -ne 2) { throw 'Corrupt cache was accepted as a hit' }
-$external = (Invoke-StickyMdReleaseTool -RepoRoot $syftRepo -Arguments @('syft-plan', '--syft-path', $fakeSyft)) | ConvertFrom-Json
+$external = (Invoke-StickyMdPackageTool -RepoRoot $syftRepo -Arguments @('syft-plan', '--syft-path', $fakeSyft)) | ConvertFrom-Json
 if (-not $external.external -or $external.downloads.Count -ne 0) { throw 'Provided Syft path lost its existing bypass behavior' }
-Assert-Fails 'missing provided Syft' { Invoke-StickyMdReleaseTool -RepoRoot $syftRepo -Arguments @('syft-plan', '--syft-path', (Join-Path $syftRepo 'missing.exe')) }
+Assert-Fails 'missing provided Syft' { Invoke-StickyMdPackageTool -RepoRoot $syftRepo -Arguments @('syft-plan', '--syft-path', (Join-Path $syftRepo 'missing.exe')) }
 $verifiedDirectory = Join-Path $syftRepo 'unverified snapshot'
-Assert-Fails 'corrupt Syft snapshot' { Invoke-StickyMdReleaseTool -RepoRoot $syftRepo -Arguments @('syft-verify', '--archive', $entry.path, '--checksums', $entry.path, '--staging-directory', $verifiedDirectory) }
+Assert-Fails 'corrupt Syft snapshot' { Invoke-StickyMdPackageTool -RepoRoot $syftRepo -Arguments @('syft-verify', '--archive', $entry.path, '--checksums', $entry.path, '--staging-directory', $verifiedDirectory) }
 if (Test-Path -LiteralPath $verifiedDirectory) { throw 'Failed Syft verification left a usable snapshot' }
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 'RELEASE_SYFT=PASS'

@@ -11,7 +11,12 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// Paths no platform's artifact, build, packaging or verification reads.
+/// The algorithm version: it names the serialization and this exclusion table, so a change to
+/// either bumps it and values of two versions are never compared (plan 11
+/// #platform-artifact-reuse). v2 stopped counting the verification tool.
+pub(crate) const ALGORITHM: &str = "v2";
+
+/// Paths that neither enter any platform's artifact nor produce its bytes.
 const COMMON_EXCLUDED_PREFIXES: &[&str] = &[
     // Documentation: the package README is generated from a template in the tool.
     "docs/",
@@ -21,6 +26,10 @@ const COMMON_EXCLUDED_PREFIXES: &[&str] = &[
     "tools/manual/",
     // Pictures in the repository README.
     "assets/readme/",
+    // The verification tool. The release bytes come from `tools/stickymd-package`, which it
+    // depends on and which cannot depend on it; its manifest, its `build.rs` and this
+    // classifier stay inputs (`COUNTED_DESPITE_EXCLUSION`).
+    "tools/stickymd-smoke/",
 ];
 const COMMON_EXCLUDED_FILES: &[&str] = &[
     "AGENTS.md",
@@ -36,13 +45,28 @@ const COMMON_EXCLUDED_FILES: &[&str] = &[
 const WINDOWS_EXCLUDED_PREFIXES: &[&str] = &["apps/stickymd-mac/", "crates/stickymd-posix/"];
 /// The Windows host and its PowerShell packaging scripts.
 const MACOS_EXCLUDED_PREFIXES: &[&str] = &["apps/stickymd-win/", "tools/release/"];
-/// Every workspace member's manifest is an input of both platforms: another host's manifest can
-/// change the feature set Cargo merges without changing `Cargo.lock`, and the macOS product input
-/// fingerprint written into the bundle reads every member's manifest.
-const MEMBER_MANIFESTS: &[&str] = &[
+/// Files under excluded directories that are inputs of both platforms anyway:
+/// - every workspace member's manifest: another member's manifest can change the feature set Cargo
+///   merges without changing `Cargo.lock`, and the macOS product input fingerprint written into
+///   the bundle reads every member's manifest;
+/// - every member's build script: Cargo finds `build.rs` without a manifest entry and runs it when
+///   it compiles the member, which the Windows workspace build does for every member (governance
+///   checks with Cargo metadata that the workspace's build scripts are exactly plan 11's list; the
+///   entries outside that list stay here as a second line of defence);
+/// - this classifier: the exclusion table and the serialization are the reuse rule itself, so a
+///   change to them is never "only the verification tool".
+///
+/// The other members' manifests and build scripts are inputs anyway.
+const COUNTED_DESPITE_EXCLUSION: &[&str] = &[
     "apps/stickymd-mac/Cargo.toml",
+    "apps/stickymd-mac/build.rs",
     "apps/stickymd-win/Cargo.toml",
+    "apps/stickymd-win/build.rs",
     "crates/stickymd-posix/Cargo.toml",
+    "crates/stickymd-posix/build.rs",
+    "tools/stickymd-smoke/Cargo.toml",
+    "tools/stickymd-smoke/build.rs",
+    "tools/stickymd-smoke/src/release/platform_inputs.rs",
 ];
 
 /// Whether `path` (repository-relative, `/`-separated) is an input of `platform`'s artifact.
@@ -64,7 +88,12 @@ fn is_input_path(platform: Platform, path: &[u8]) -> bool {
             .iter()
             .any(|prefix| path.starts_with(prefix.as_bytes()))
     };
-    if listed(MEMBER_MANIFESTS) {
+    // Case-insensitively: on a case-insensitive volume (Windows, macOS by default) Cargo finds
+    // `Build.rs` when it looks for `build.rs`, so every spelling of a counted file is counted.
+    if COUNTED_DESPITE_EXCLUSION
+        .iter()
+        .any(|name| name.as_bytes().eq_ignore_ascii_case(path))
+    {
         return true;
     }
     if listed(COMMON_EXCLUDED_FILES) || under(COMMON_EXCLUDED_PREFIXES) {
@@ -198,7 +227,7 @@ pub(crate) fn fingerprint(root: &Path, platform: Platform, commit: &str) -> Resu
     );
     let io = |error: std::io::Error| format!("cannot write the input stream: {error}");
     stream
-        .write_all(b"StickyMD platform build inputs v1\0")
+        .write_all(format!("StickyMD platform build inputs {ALGORITHM}\0").as_bytes())
         .map_err(io)?;
     stream.write_all(platform.label().as_bytes()).map_err(io)?;
     stream.write_all(b"\0").map_err(io)?;
@@ -357,212 +386,4 @@ fn changed_inputs(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_exclusion_table_keeps_everything_else_as_an_input() {
-        use Platform::{MacOsArm64 as Mac, WindowsX64 as Win};
-        for path in [
-            "docs/plan/11_testing_and_release.md",
-            "README.md",
-            "experiments/phase-01/x/src/main.rs",
-            "tools/manual/macos-r03-translocation.md",
-            "assets/readme/screenshot.png",
-            ".github/workflows/ci.yml",
-            ".github/workflows/promote-release.yml",
-            ".github/actions/rust-cache/action.yml",
-        ] {
-            assert!(!is_input(Win, path) && !is_input(Mac, path), "{path}");
-        }
-        for path in [
-            "Cargo.toml",
-            "Cargo.lock",
-            "rust-toolchain.toml",
-            "deny.toml",
-            "LICENSE",
-            "THIRD_PARTY_NOTICES.md",
-            "assets/licenses/SIL-OFL-1.1.txt",
-            "crates/stickymd-app/src/lib.rs",
-            "tools/stickymd-smoke/src/main.rs",
-            "a-new-top-level-file",
-            ".gitattributes",
-            "tests/fixtures/a.md",
-            "apps/stickymd-mac/Cargo.toml",
-            "apps/stickymd-win/Cargo.toml",
-            "crates/stickymd-posix/Cargo.toml",
-        ] {
-            assert!(is_input(Win, path) && is_input(Mac, path), "{path}");
-        }
-        assert!(!is_input(Win, "apps/stickymd-mac/src/main.rs"));
-        assert!(!is_input(Win, "crates/stickymd-posix/src/lib.rs"));
-        assert!(!is_input(Win, ".github/workflows/release-macos.yml"));
-        assert!(is_input(Win, ".github/workflows/release.yml"));
-        assert!(is_input(Win, "apps/stickymd-win/src/main.rs"));
-        assert!(is_input(Win, "tools/release/package.ps1"));
-        assert!(!is_input(Mac, "apps/stickymd-win/src/main.rs"));
-        assert!(!is_input(Mac, "tools/release/package.ps1"));
-        assert!(!is_input(Mac, ".github/workflows/release.yml"));
-        assert!(is_input(Mac, ".github/workflows/release-macos.yml"));
-        assert!(is_input(Mac, "apps/stickymd-mac/packaging/build-app.sh"));
-        assert!(is_input(Mac, "crates/stickymd-posix/src/lib.rs"));
-    }
-
-    /// A throwaway repository with three commits: one changing only the macOS host, one only a
-    /// document, one the Windows host.
-    struct Repository {
-        directory: TemporaryDirectory,
-        commits: Vec<String>,
-    }
-
-    fn git(root: &Path, arguments: &[&str]) -> String {
-        let output = Command::new("git")
-            .current_dir(root)
-            .args(arguments)
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "git {arguments:?}: {output:?}");
-        String::from_utf8(output.stdout).unwrap().trim().to_owned()
-    }
-
-    fn repository() -> Repository {
-        let directory = TemporaryDirectory::new("platform-inputs-repo").unwrap();
-        let root = directory.path();
-        git(root, &["init", "-q", "-b", "main"]);
-        let mut commits = Vec::new();
-        let mut commit = |files: &[(&str, &str)]| {
-            for (path, text) in files {
-                let path = root.join(path);
-                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-                std::fs::write(path, text).unwrap();
-            }
-            git(root, &["add", "-A"]);
-            git(root, &["commit", "-q", "-m", "c"]);
-            commits.push(git(root, &["rev-parse", "HEAD"]));
-        };
-        commit(&[
-            ("Cargo.toml", "[workspace]\n"),
-            ("apps/stickymd-win/src/main.rs", "win 1"),
-            ("apps/stickymd-mac/src/main.rs", "mac 1"),
-            ("docs/plan/a.md", "doc 1"),
-        ]);
-        commit(&[("apps/stickymd-mac/src/main.rs", "mac 2")]);
-        commit(&[("docs/plan/a.md", "doc 2")]);
-        commit(&[("apps/stickymd-win/src/main.rs", "win 2")]);
-        commit(&[(
-            "apps/stickymd-mac/Cargo.toml",
-            "[features]\ndefault = [\"x\"]\n",
-        )]);
-        commit(&[("apps/stickymd-win/Cargo.toml", "version = \"0.3.0\"\n")]);
-        Repository { directory, commits }
-    }
-
-    #[test]
-    fn a_platform_reuses_an_ancestor_only_while_its_own_inputs_are_unchanged() {
-        let repository = repository();
-        let root = repository.directory.path();
-        let [
-            first,
-            mac_change,
-            doc_change,
-            win_change,
-            mac_manifest,
-            win_manifest,
-        ] = repository.commits.as_slice()
-        else {
-            panic!("six commits");
-        };
-        let win = Platform::WindowsX64;
-        let mac = Platform::MacOsArm64;
-        // A macOS change and a document leave Windows reusable.
-        assert!(matches!(
-            verify_reuse(root, win, first, doc_change),
-            Ok(Reuse::Ancestor { .. })
-        ));
-        assert_eq!(
-            verify_reuse(root, win, doc_change, doc_change),
-            Ok(Reuse::SameCommit)
-        );
-        // The macOS change makes the macOS artifact of the first commit unusable.
-        let error = verify_reuse(root, mac, first, doc_change).unwrap_err();
-        assert!(error.contains("apps/stickymd-mac/src/main.rs"), "{error}");
-        // After it, a document and a Windows change leave macOS reusable.
-        assert!(matches!(
-            verify_reuse(root, mac, mac_change, win_change),
-            Ok(Reuse::Ancestor { .. })
-        ));
-        assert!(verify_reuse(root, win, first, win_change).is_err());
-        // Never backwards: a descendant is not an ancestor.
-        let backwards = verify_reuse(root, win, doc_change, first).unwrap_err();
-        assert!(backwards.contains("not an ancestor"), "{backwards}");
-        // The two platforms' fingerprints differ even over the same tree.
-        assert_ne!(
-            fingerprint(root, win, first).unwrap(),
-            fingerprint(root, mac, first).unwrap()
-        );
-        assert!(verify_reuse(root, win, "short", first).is_err());
-        assert!(verify_reuse(root, win, &first.to_ascii_uppercase(), first).is_err());
-        let unknown = "0".repeat(40);
-        assert!(verify_reuse(root, win, &unknown, &unknown).is_err());
-        // An annotated tag's own object is not a commit, though it peels to one.
-        git(root, &["tag", "-a", "-m", "t", "annotated", first]);
-        let tag = git(root, &["rev-parse", "annotated"]);
-        assert_ne!(&tag, first);
-        let error = verify_reuse(root, win, &tag, &tag).unwrap_err();
-        assert!(error.contains("not a commit"), "{error}");
-        // The fingerprint command alone refuses it too, and a tree id.
-        assert!(fingerprint(root, win, &tag).is_err());
-        let tree = git(root, &["rev-parse", &format!("{first}^{{tree}}")]);
-        assert!(fingerprint(root, win, &tree).is_err());
-        // A graft cannot make a non-ancestor an ancestor: X, a document change beside the main
-        // line, has the Windows inputs of `doc_change` but is not its ancestor until a graft
-        // names X as `doc_change`'s parent. The graft file is ignored.
-        git(root, &["checkout", "-q", "-b", "side", first]);
-        std::fs::write(root.join("docs/plan/a.md"), "side").unwrap();
-        git(root, &["commit", "-q", "-am", "side"]);
-        let side = git(root, &["rev-parse", "HEAD"]);
-        assert!(verify_reuse(root, win, &side, doc_change).is_err());
-        std::fs::write(
-            root.join(".git/info/grafts"),
-            format!("{doc_change} {side}\n"),
-        )
-        .unwrap();
-        let plain = Command::new("git")
-            .current_dir(root)
-            .args(["merge-base", "--is-ancestor", &side, doc_change])
-            .status()
-            .unwrap();
-        assert!(plain.success(), "plain Git follows the graft");
-        let error = verify_reuse(root, win, &side, doc_change).unwrap_err();
-        assert!(error.contains("not an ancestor"), "{error}");
-        // Each host's manifest reaches the other platform: features merge, and the macOS bundle
-        // records a fingerprint that reads every manifest.
-        let error = verify_reuse(root, win, win_change, mac_manifest).unwrap_err();
-        assert!(error.contains("apps/stickymd-mac/Cargo.toml"), "{error}");
-        let error = verify_reuse(root, mac, mac_manifest, win_manifest).unwrap_err();
-        assert!(error.contains("apps/stickymd-win/Cargo.toml"), "{error}");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_symbolic_link_among_the_inputs_fails_the_fingerprint() {
-        let repository = repository();
-        let root = repository.directory.path();
-        std::os::unix::fs::symlink("plan/a.md", root.join("docs/link.md")).unwrap();
-        git(root, &["add", "-A"]);
-        git(root, &["commit", "-q", "-m", "excluded link"]);
-        let excluded = git(root, &["rev-parse", "HEAD"]);
-        fingerprint(root, Platform::WindowsX64, &excluded).unwrap();
-        std::fs::create_dir_all(root.join("crates")).unwrap();
-        std::os::unix::fs::symlink("../docs/plan/a.md", root.join("crates/input.md")).unwrap();
-        git(root, &["add", "-A"]);
-        git(root, &["commit", "-q", "-m", "input link"]);
-        let linked = git(root, &["rev-parse", "HEAD"]);
-        let error = fingerprint(root, Platform::WindowsX64, &linked).unwrap_err();
-        assert!(error.contains("crates/input.md"), "{error}");
-    }
-}
+mod tests;

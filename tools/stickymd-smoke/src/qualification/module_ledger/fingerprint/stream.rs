@@ -1,12 +1,12 @@
 //! Bounded streaming of shared inputs into independent v1 fingerprint digests.
 //! plan_ref: docs/plan/11_testing_and_release.md#shared-headless-prerequisite
 
-use super::normalize::VersionNormalizer;
 use super::{ModuleId, domains, path_domains, temporary_path};
 use crate::qualification::receipt;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use stickymd_package::app_inputs::{VersionNormalizer, write_entry};
 
 pub(in crate::qualification) struct Batch {
     pub(in crate::qualification) digests: Vec<String>,
@@ -21,9 +21,6 @@ pub(super) enum Target {
     Workspace,
     /// One functional qualification module: its domains, release version normalized.
     Module(ModuleId),
-    /// The macOS app `build-app.sh` builds: its inputs, release version normalized, then the
-    /// build identity (plan 11 #phase-16-macos-host).
-    MacApp,
 }
 
 impl From<Option<ModuleId>> for Target {
@@ -44,7 +41,6 @@ impl Target {
                 b"StickyMD qualification module fingerprint v2\0",
                 module.as_str(),
             ),
-            Self::MacApp => (b"StickyMD macOS app input fingerprint v1\0", "mac-app"),
         }
     }
 
@@ -58,11 +54,10 @@ impl Target {
         !matches!(self, Self::Module(_))
     }
 
-    fn includes(self, relative: &str, input_domains: u64) -> bool {
+    fn includes(self, input_domains: u64) -> bool {
         match self {
             Self::Workspace => true,
             Self::Module(module) => domains(module) & input_domains != 0,
-            Self::MacApp => super::mac::is_input(relative),
         }
     }
 }
@@ -117,8 +112,8 @@ impl Stream {
         Ok(stream)
     }
 
-    fn includes(&self, relative: &str, input_domains: u64) -> bool {
-        self.target.includes(relative, input_domains)
+    fn includes(&self, input_domains: u64) -> bool {
+        self.target.includes(input_domains)
     }
 
     fn writer(&mut self) -> &mut BufWriter<File> {
@@ -157,7 +152,7 @@ fn write_inputs(
         .flatten();
     for relative in tracked {
         let input_domains = path_domains(relative);
-        if !streams.iter().any(|s| s.includes(relative, input_domains)) {
+        if !streams.iter().any(|s| s.includes(input_domains)) {
             continue;
         }
         let path = root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
@@ -168,10 +163,7 @@ fn write_inputs(
             let raw =
                 fs::read(&path).map_err(|e| format!("cannot read module input {relative}: {e}"))?;
             let normalized = normalizer.normalize(relative, &raw);
-            for stream in streams
-                .iter_mut()
-                .filter(|s| s.includes(relative, input_domains))
-            {
+            for stream in streams.iter_mut().filter(|s| s.includes(input_domains)) {
                 let content: &[u8] = if stream.target.normalized() {
                     &normalized
                 } else {
@@ -191,7 +183,6 @@ fn write_inputs(
             .len();
         let mut output = Fanout {
             streams,
-            relative,
             input_domains,
         };
         let name = relative.as_bytes();
@@ -220,25 +211,15 @@ fn write_inputs(
     Ok((input_files, input_bytes))
 }
 
-/// The per-file record shared with the streaming path: name length, name, length, bytes.
-fn write_entry(writer: &mut impl Write, relative: &str, content: &[u8]) -> io::Result<()> {
-    let name = relative.as_bytes();
-    writer.write_all(&(name.len() as u64).to_le_bytes())?;
-    writer.write_all(name)?;
-    writer.write_all(&(content.len() as u64).to_le_bytes())?;
-    writer.write_all(content)
-}
-
 struct Fanout<'a> {
     streams: &'a mut [Stream],
-    relative: &'a str,
     input_domains: u64,
 }
 
 impl Write for Fanout<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         for stream in self.streams.iter_mut() {
-            if stream.includes(self.relative, self.input_domains) {
+            if stream.includes(self.input_domains) {
                 stream.writer().write_all(bytes)?;
             }
         }

@@ -98,9 +98,9 @@ jobs:
           lane: linux-smoke
       - name: Linux smoke CLI lint and tests
         run: |
-          cargo clippy -p stickymd-smoke --all-targets --locked -- -D warnings
+          cargo clippy -p stickymd-package -p stickymd-smoke --all-targets --locked -- -D warnings
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test -p stickymd-smoke --locked
+          cargo test -p stickymd-package -p stickymd-smoke --locked
           exit $LASTEXITCODE
 
   dependency-policy:

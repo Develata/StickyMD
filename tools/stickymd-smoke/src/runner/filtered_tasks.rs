@@ -208,10 +208,11 @@ mod tests {
             .find(|task| task.filter == "phase6_" && task.ignored)
             .unwrap();
         assert!(phase6.packages.contains("stickymd-render"));
-        // The product selector ends at the Windows host; the macOS host and POSIX layer hold no `phase6_` test.
+        // The product selector ends at the Windows host; the macOS host, the POSIX layer and the
+        // packaging crate hold no `phase6_` test.
         assert_eq!(
             phase6.unselected,
-            BTreeSet::from(["stickymd-mac", "stickymd-posix"])
+            BTreeSet::from(["stickymd-mac", "stickymd-package", "stickymd-posix"])
         );
         let phase15 = tasks.iter().find(|task| task.filter == "phase15_").unwrap();
         assert!(phase15.unselected.contains("stickymd-app"));

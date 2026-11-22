@@ -137,3 +137,41 @@ workflow 文件名；composite action 先把所有 id 与 attempt 校验为正�
 ## 合并提示
 
 与 `feat/phase-17-copy-notices` 合并时预计冲突：`release/cli.rs` 的 P17/P18 命令、`governance.rs`、coverage 的来源摘要、plan `01` 的元数据。
+
+## Resolution（2026-11-21）：“需要 Develata 决定”第 1 项
+
+USER 对主会话建议的回复（原话）：
+
+> 按你的建议来
+
+所采纳的建议（主会话转述，照录）：
+
+> 1. **新建打包 crate**（如 `tools/stickymd-package`，名字可调），把 `tools/stickymd-smoke/src/release/` 中产出发布字节的代码迁过去：`package_*`、`notices`、SBOM 生成、macOS 打包，以及它们依赖的公共代码。`stickymd-smoke` 改为依赖它。
+>    - Platform Build Input Fingerprint 计入新 crate；`stickymd-smoke` 其余的验证代码不再计入。
+>    - 只改验证工具时，按 `11` 已批准的规则，在同一份字节上重跑相应的门，不重新构建。
+>    - 用 crate 边界而不是文件白名单，是因为编译器能保证验证代码影响不到打包代码，这正是合同里写明的放宽条件。
+> 2. **`ci.yml`、`scheduled.yml` 与本地 cache action 仍不计入指纹。** 构建 workflow 在 S 上跑的测试只是构建前自检；发布证据只认 R 上的运行。
+>    - Windows 已经由绑定 Source Freeze 的 headless CI 收据满足这一点。
+>    - macOS 要在 M5（就绪核对，`11` #macos-release-gate）里写明同样的要求：R 上跑过源码测试，包括工具测试。先核实 M5 现在的写法。
+> 3. **在冻结 R 之前做，和 M5 一起。** 依据：最近 14 天 main 的 295 个提交中，有 106 个动了 `tools/stickymd-smoke`。
+
+落盘位置：`11` #platform-artifact-reuse（排除表、打包 crate、边界的证明、只改验证工具时、构建 workflow 中的验证只是自检）、#macos-release-gate
+（新增“R 上的源码测试”一行，M5 的出口随之列出该收据）、#phase-16-macos-host（产品输入指纹的命令），`01` Platform Build Input Fingerprint，
+`AGENTS.md` 目录表。
+
+核实 M5 的结果：M5 此前只有 `11` 里程碑表的一行与发布门表格，没有代码；表中“不依赖发布字节的行”的证据身份只写“源码身份”，没有绑定 R，
+也没有工具测试的要求。本次只改合同，M5 的核对程序与收据格式仍待实现。
+
+按批准规则补充的两点（建议中没有逐项列出）：
+
+- `build-app.sh` 写进 bundle（`Info.plist` 的 `StickyMDInputs`）的产品输入指纹由 `stickymd-smoke mac-ledger inputs` 计算，它也产出发布字节，
+  所以连同构建身份与环境检查一并迁入打包 crate，命令改为 `stickymd-package app-inputs`。
+- 排除表改变后，同一 tree 的指纹值随之改变，Platform Build Input Fingerprint 升为算法 v2。截至 2026-11-21，Phase 18 还没有产生任何候选收据与
+  v1 沿用记录，没有需要迁移的；更早版本的 Windows 候选与发布收据保留各自原来的身份，不受影响。
+
+影响分两步：
+
+- 只改合同的提交：改 `11` 会使 Windows 全部资格化模块的收据失效（#module-success-ledger），下一版本本来就要整体重新资格化。
+- 拆分落地的提交：新成员、`Cargo.lock` 与打包代码都是两个平台的输入，两个平台的指纹都变，都要在其后的提交上重新构建；`Cargo.lock` 的
+  SHA-256 还写进了两个平台包内的第三方声明。根 `Cargo.toml` 的成员表与 `Cargo.lock` 改变，macOS 产品输入指纹也随之改变，账本中的 PASS 不再复用；
+  这些行本来就要在候选 bundle 上重跑。

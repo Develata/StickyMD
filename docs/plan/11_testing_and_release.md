@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.5.0
-- `Last Review`: 2026-11-19
+- `Last Review`: 2026-11-21
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -270,15 +270,16 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 `mac-gui` 的结果按行记入账本 `dist/evidence/mac-gui-ledger/records.jsonl`，由 `stickymd-smoke mac-ledger` 管理（USER 批准 2026-11-12，[复用提案](../report/2026-11-11-macos-gui-rerun-reuse.md)）。
 证据的锚点是**产品输入指纹**，不是 app 的字节（USER 批准 2026-11-17，[锚定提案](../report/2026-11-17-macos-evidence-anchoring.md)）：
 
-- **产品输入指纹**：`stickymd-smoke mac-ledger inputs` 在仓库根目录对能进入 `build-app.sh` 所建 app 的全部 tracked 文件计算，与功能模块指纹共用同一算法，
-  根 `Cargo.toml` 与 `Cargo.lock` 的发布版本同样规范化。除列为不能进入 app 的目录与文件（Windows 宿主、`tools/`、`docs/`、`.github/`、`experiments/`、
+- **产品输入指纹**：`stickymd-package app-inputs` 在仓库根目录对能进入 `build-app.sh` 所建 app 的全部 tracked 文件计算，与功能模块指纹共用同一算法，
+  根 `Cargo.toml` 与 `Cargo.lock` 的发布版本同样规范化。指纹写进 bundle，所以计算它的代码在打包 crate 中，是两个平台的构建输入（#platform-artifact-reuse）；
+  `mac-ledger` 与 `mac-gui` 读取与比对它时调用同一实现。除列为不能进入 app 的目录与文件（Windows 宿主、`tools/`、`docs/`、`.github/`、`experiments/`、
   根 `tests/`、`assets/`、`dist/`、根目录的说明文档与 `deny.toml`）外，任何文件都是输入；新文件只会导致重跑，不会导致误复用。
 - **构建身份**：指纹最后接上目标 `aarch64-apple-darwin`、`--release --locked`、`cargo -V`、`rustc -vV`、`xcode-select -p`、SDK 路径与版本、
   `clang --version`、`ld -v`。
 - **干净的构建环境**：`build-app.sh` 在仓库根目录、以只含 `HOME` 与固定 `PATH`（先系统目录，链接驱动因此是系统的 `cc`，再接调用者 `cargo` 所在目录）的环境
   计算指纹并构建，所以调用者的其他环境变量进不了构建。仓库之外存在 Cargo 会合并的配置文件（各级祖先目录与 Cargo home 中的 `config`/`config.toml`）时，
-  `inputs` 拒绝；Cargo home 按脚本以参数传入的 `HOME` 定位，Cargo 配置的 `[env]` 改不了它。需要非空的 `HOME`；
-  直接调用 `inputs` 时，`RUSTFLAGS`、`RUSTC` 与各种 wrapper、`CARGO_PROFILE_*`、`CARGO_BUILD_*`、`CARGO_TARGET_*`、`CARGO_RESOLVER_*`、
+  `app-inputs` 拒绝；Cargo home 按脚本以参数传入的 `HOME` 定位，Cargo 配置的 `[env]` 改不了它。需要非空的 `HOME`；
+  直接调用 `app-inputs` 时，`RUSTFLAGS`、`RUSTC` 与各种 wrapper、`CARGO_PROFILE_*`、`CARGO_BUILD_*`、`CARGO_TARGET_*`、`CARGO_RESOLVER_*`、
   `MACOSX_DEPLOYMENT_TARGET`、`SDKROOT`、C 工具链的 `CC`/`CFLAGS`/`LDFLAGS` 等变量也会被拒绝。
 - **信任假设（不进指纹的输入）**：
   - 仓库内被跟踪的 Cargo 配置若 `include` 仓库外的文件，或指向仓库外的程序、lockfile 与路径依赖，这些外部内容的变化不进指纹（现有配置只有 Windows 的 rustflags）；
@@ -342,7 +343,7 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 | M2 | 安装版：位置判定纯函数、键、家目录查询、Note Root 句柄链与加锁、启动阶段与运行期共用一个 `note/` 句柄、提示文字 | 矩阵 L 系列的单元、存储与实例测试；Windows 行为不变 |
 | M3 | 发布流水线：`release-macos` workflow、darwin 依赖图的第三方声明、macOS SBOM 与 checksum、按 artifact id 的候选收据与本地晋升、晋升 workflow 的完整附件比对、Platform Build Input Fingerprint 与沿用规则 | 矩阵 P 系列的工具测试；两个 workflow 都能 dispatch（实际 dispatch 由 USER 授权） |
 | M4 | 验证 | 本机基线；`mac-test` 中的 `mac-gui`；候选包上的下载路径（矩阵 D 系列） |
-| M5 | macOS 就绪核对：按 #macos-release-gate 逐行核对候选收据、账本与 waiver 收据 | 坏样本能判出失败；下一版本发布前必须完成 |
+| M5 | macOS 就绪核对：按 #macos-release-gate 逐行核对候选收据、账本、waiver 收据与 R 上的源码测试收据 | 坏样本能判出失败；核对程序与打包 crate 的拆分在冻结 R 之前完成，正式收据在实际的 R 上运行后产生 |
 
 <a id="macos-release-gate"></a>
 #### macOS 发布门
@@ -350,11 +351,12 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 | 类别 | 判定 | 证据身份 | 可否 waiver |
 | --- | --- | --- | --- |
 | 包完整性：各文件哈希、签名完整（`codesign --verify --strict`）与签名方式确为 ad-hoc（`codesign -dv` 观察到 `Signature=adhoc`，且没有 Team ID）两项分别检查、仅 arm64、Info.plist lint、ZIP 成员白名单、README 写明 macOS 27+ 与 Apple Silicon、SBOM、第三方声明 | `release-macos` workflow 与本地晋升 | macOS 候选收据（签名方式按观察结果记录） | 不可 |
-| 同键互斥：同一个键的两个安装副本互斥（`05` #note-root 第 9 条） | 实例测试 | 源码身份 | 不可 |
+| 同键互斥：同一个键的两个安装副本互斥（`05` #note-root 第 9 条），大小写敏感与不敏感两种卷都有结果 | 实例测试，在 R 上运行；大小写敏感卷的测试标为 `#[ignore]`（要挂载磁盘映像），须显式运行（P18-L08） | 源码身份 R，两种卷各自的结果 | 不可 |
 | R03：最终 ZIP 实际触发随机化后提示退出，所观察的目录不写文件；没有触发随机化为 `NOT TESTED` | R03 探针直接接收并核对候选 ZIP（不从 `.app` 重新打包）；验收阶梯获批后由程序判定 | 本次发布的 ZIP | 不可 |
 | 真实下载路径：浏览器下载、拖进“应用程序”或移动文件夹、访达首开、保存、退出后重开（安装版报告第 8 节） | 在第一个公开包的候选上做一次；签名方式或 macOS 大版本改变时重做（USER 未单独表态，按建议记为此方案）。系统拦下时才点“仍要打开”，并记录拦截与否 | 做那次的 ZIP | 不可（需要做的那一版） |
 | Phase 16 中依赖 app 运行的行 | 各自的工具（`mac-gui`、`mac-resources`、`mac-latency`），或获批的阶梯办法；否则 USER 收据 | 本次发布的 bundle | 逐行 USER waiver |
-| Phase 16 中不依赖发布字节的行（如 S01 存储测试） | 源码测试 | 源码身份 | 按现行规则 |
+| Phase 16 中不依赖发布字节的行（如 S01 存储测试） | 源码测试 | 源码身份 R | 按现行规则 |
+| R 上的源码测试：在发布提交 R 上，以 `cargo test --locked` 显式选择四个共享 crate、`stickymd-posix`、`stickymd-mac`、`stickymd-package` 与 `stickymd-smoke`，不加测试名过滤，默认测试集（不含 `#[ignore]` 的测试）全部通过。`release-macos` 在构建来源 S 上跑的同组测试只是构建前自检（#platform-artifact-reuse），不能代替；标为 `#[ignore]` 的诊断与性能测试不在此行，需要它们的行（如上方同键互斥）各自要求 | macOS 主机上 R 的 checkout，开始与结束时 HEAD 都等于 R、工作树都干净 | 源码身份 R：收据（格式由 M5 定）记下 R、主机、完整命令、每个测试二进制执行与忽略的数目，以及开始和结束时的源码身份；身份不符、缺包或命令带过滤即无效 | 不可 |
 
 - **按行判定，不看退出码。** `mac-gui` 有 `NOT TESTED` 行时仍成功退出，发布门逐行检查。
 - **waiver 与收据分开。** 不可 waiver 的行必须 PASS。可 waiver 的行要么 PASS，要么保持 `NOT TESTED` 并有一份绑定本候选的 USER waiver 收据。
@@ -687,7 +689,7 @@ ZIP/checksum/SBOM 与用户副本逐字节一致后才允许 staging。
 
 macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文件、SBOM、候选收据、staging 目录与 resolver。
 
-- **构建：** `release-macos` workflow 只接受 `workflow_dispatch`，运行在 `xcode-27` runner 上，候选提交必须在 `origin/main` 上。它先以
+- **构建：** `release-macos` workflow 只接受 `workflow_dispatch`，三个发布 job 运行在 `xcode-27` runner 上（依赖策略 job 在 `ubuntu-latest`），候选提交必须在 `origin/main` 上。它先以
   `xcode-select` 选定 Xcode 27.2（SDK macOS 27.2），再用 `build-app.sh` 构建并 ad-hoc 签名，并留一份构建记录：`sw_vers`、Xcode 与 SDK 版本、
   `cargo -V`、`rustc -vV`、产品输入指纹（#phase-16-macos-host）、`codesign -dv` 的结果、架构与 `LC_BUILD_VERSION`。签名维持 ad-hoc（`02` macOS 节）。
 - **打包：** Rust CLI 生成包目录，`ditto -c -k --norsrc --keepParent` 打包：
@@ -736,8 +738,9 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
 - **规则：** 每个平台的发布物记下构建来源提交 S。发布提交 R（打 tag 的提交，即 Windows Source Freeze 的提交）可以沿用在 S 上构建的某一平台
   发布物，当且仅当 S 是 R 的祖先，且该平台的 Platform Build Input Fingerprint（`01`）在 S 与 R 上相同。两个平台对称适用：修 macOS 不重建 Windows，
   反之亦然。同一提交上一侧偶发失败时只重跑那一侧的 workflow。
-- **指纹（算法 v1）：** 在提交的 Git tree 上，对每个输入路径按路径字节排序，依次写入路径、文件模式、内容长度与内容本身，连同平台名与算法版本
-  计算一个 SHA-256；不读工作树，也不使用 Git 的替换对象。输入路径上的条目必须是普通文件（模式 `100644` 或 `100755`），符号链接与子模块
+- **指纹（算法 v2）：** 在提交的 Git tree 上，对每个输入路径按路径字节排序，依次写入路径、文件模式、内容长度与内容本身，连同平台名与算法版本
+  计算一个 SHA-256；不读工作树，也不使用 Git 的替换对象。算法版本同时标识序列化与排除表：两者任一改变都升版本，所以同一 tree 在两个版本下的值
+  不可比较。v2 相对 v1 只改了排除表（不再计入验证工具，见下文），序列化不变。输入路径上的条目必须是普通文件（模式 `100644` 或 `100755`），符号链接与子模块
   使指纹失败（链接的 blob 只是目标路径名，目标内容会漏出指纹）。两个 SHA 只有都是本仓库中的提交（对象本身的类型为 commit，注解 tag 不算）
   时才参与判定。发布 workflow 不得调用仓库内的 action（governance 检查），
   否则那些 action 也要计入。
@@ -745,16 +748,97 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
   - 两个平台共同：`docs/`（文档不进入发布物，也不参与构建）；根目录的 `AGENTS.md`、`CHANGELOG.md`、`CONTRIBUTING.md`、`README.md`、
     `README.en.md`、`README.zh-CN.md`、`SECURITY.md`（包内 README.txt 由打包工具中的模板生成）；`experiments/`（不是 workspace 成员）；
     `tools/manual/`（人工步骤说明）；`assets/readme/`（仓库 README 的插图）；`.github/` 下除本平台发布 workflow 之外的文件（CI、定时任务与
-    晋升 workflow 不构建发布物）。`tests/` 不排除：其中的夹具有些编进了验证工具。
-  - 仅 Windows 排除：`apps/stickymd-mac/` 与 `crates/stickymd-posix/` 下除各自 `Cargo.toml` 之外的文件（只在 macOS 编译）、
+    晋升 workflow 不构建发布物）；`tools/stickymd-smoke/` 下除 `Cargo.toml`、`build.rs` 与分类器 `src/release/platform_inputs.rs` 之外的文件
+    （验证工具，不产出发布字节，见下文打包 crate 一条）。
+    `tests/` 与 `tools/smoke/` 不排除：没有逐项证明构建与打包都不读它们，保守计入。
+  - 仅 Windows 排除：`apps/stickymd-mac/` 与 `crates/stickymd-posix/` 下除各自 `Cargo.toml` 与 `build.rs` 之外的文件（只在 macOS 编译）、
     `.github/workflows/release-macos.yml`。
-  - 仅 macOS 排除：`apps/stickymd-win/` 下除 `Cargo.toml` 之外的文件、`.github/workflows/release.yml`、`tools/release/`（Windows 的 PowerShell 打包与校验脚本）。
+  - 仅 macOS 排除：`apps/stickymd-win/` 下除 `Cargo.toml` 与 `build.rs` 之外的文件、`.github/workflows/release.yml`、`tools/release/`（Windows 的 PowerShell 打包与校验脚本）。
   - 每个 workspace 成员的 `Cargo.toml` 对两个平台都是输入：另一宿主的清单可以在 `Cargo.lock` 不变时改变 feature 合并，macOS 的产品输入指纹
-    （写进 Info.plist）也读取每个成员的清单。
+    （写进 Info.plist）也读取每个成员的清单。每个成员的 `build.rs` 同样是两个平台的输入：Cargo 不需要清单条目就会发现并在编译该成员时运行它，
+    Windows 的 workspace 构建会编译每个成员。governance 以 Cargo metadata 核对 workspace 的构建脚本恰为清单中的一个（见下文“边界的证明”），
+    其他成员要有构建脚本须先改清单。分类器仍把 `apps/stickymd-mac/`、`crates/stickymd-posix/`、`tools/stickymd-smoke/` 下的 `build.rs` 计入两个平台，
+    是有意的：清单检查失守时，出现的构建脚本仍会改变两个平台的指纹。这些文件名按 ASCII 大小写不敏感匹配：在大小写不敏感的卷上，Cargo 会把
+    `Build.rs` 当作 `build.rs`。
+  - 分类器 `tools/stickymd-smoke/src/release/platform_inputs.rs`（排除表与序列化）对两个平台都是输入：它就是沿用规则本身，它的改变是沿用规则的
+    改变，不属于“只改验证工具”。
   - 版本号、`Cargo.toml`、`Cargo.lock`、`rust-toolchain.toml`、`deny.toml`、`LICENSE`、`THIRD_PARTY_NOTICES.md`、`assets/` 的其余部分按原样计入。
-  - `tools/stickymd-smoke/` 整体计入两个平台：发布 workflow 用它打包、校验并运行它的测试，晋升后才运行的门与这些代码同在一个 crate，
-    现在无法证明互不影响。因此只改其中晋升后才运行的门，也会让两个平台都重建；这比批准的规则保守（批准的规则允许在原字节上重跑改了的门），
-    待晋升后的门拆成独立输入后再放宽。
+  - **打包 crate `tools/stickymd-package/` 整体计入两个平台**（USER 批准 2026-11-21）：发布字节中由仓库工具产出的部分都出自它——Windows 与 macOS 的
+    包目录与 ZIP、包内 README 与第三方声明、SBOM 与 checksum，以及 `build-app.sh` 写进 macOS bundle 的产品输入指纹（#phase-16-macos-host），
+    打包前的门（Windows 的 PE import 门，#portable-windows-runtime；macOS 的包检查，#macos-release-artifact），连同它们依赖的公共代码（JSON、哈希、
+    原子写入、临时目录、路径身份与输出守卫）。它只依赖标准库，不依赖 `stickymd-smoke`；`stickymd-smoke`
+    依赖它。产出字节的调用点——`build-app.sh`、Windows 的打包与 SBOM 脚本及 `release` 中调用它们的步骤、`release-macos` 的打包与 SBOM
+    步骤与打包前的门——只调用 `stickymd-package` 的二进制，不经过 `stickymd-smoke` 的命令行。`stickymd-smoke` 的晋升、资格化与校验调用同一份库代码。
+  - **边界的证明（闭合世界，USER 决定 2026-11-22）：** crate 依赖由编译器保证打包代码引用不到验证代码，这是放宽的前提。编译器看不到的边，
+    即生产链中不经过 Rust 依赖的输入，由 governance 测试按清单检查。每条规则只用四类可判定的事实：与 `stickymd-smoke` 中固定清单或固定副本的
+    逐字比较（行尾统一为 LF 后）、对文件全文的原样搜索、Cargo 与 rustc 自己报告的事实、Git 索引中的路径与文件模式（检查在被检提交的干净检出上
+    运行）。检查不解析 Rust、PowerShell 或 YAML 的语法，清单之外一律拒绝。Git 索引中的路径不得含 `\`；Cargo 与 rustc 报告的路径只在 Windows 上
+    把 `\` 视为分隔符，其他平台上含 `\` 的路径被拒。
+    - **Cargo metadata：** 打包 crate 没有依赖、没有构建脚本、没有 feature；workspace 中没有过程宏成员（它们在编译器里运行），二进制名只用 ASCII
+      字母、数字、`_` 与 `-`，不分大小写不重复（被排除的成员无法在 workspace 构建的输出中顶替产品）；每个成员的清单在 Git 索引中是普通文件，按索引中的路径两个平台都
+      计入（落在排除区的新成员须先改分类器）；workspace 的构建脚本恰为清单（成员与路径成对）：`stickymd-win` 的 `apps/stickymd-win/build.rs`；
+      `Cargo.lock` 中含所属成员名的行恰为它自己的 `name = "stickymd-win"`，即解析图中没有任何包（含 workspace 之外的包）依赖它。
+    - **编译器读过的文件：** 固定的 workflow 以 dev profile（`cargo run`）运行打包工具，Windows 的发布 job 还以 release profile 构建 workspace。
+      governance 在运行它的平台上，为每次检查新建私有目录（同时作为 Cargo 的 target 与 build 目录），对打包 crate 的 lib 与 bin target（库的各种 crate-type 都算 lib）
+      按这两个 profile 各运行一次 `cargo check`。在每个 profile 中，打包 crate 的每个 lib 与 bin target 恰有一个新编译（`fresh: false`）的编译单元，它的
+      dep-info 登记它自己的入口文件；dep-info 的规则行与逐文件行列出同一组文件，否则拒绝。这些 dep-info 登记的本地源文件与文件依赖都在
+      `tools/stickymd-package/` 内，在 Git 索引中是普通文件（不是符号链接），按索引中的原样拼写（因此不含 `..` 与绝对路径），且两个平台都计入；
+      需要反转义的路径（含空格或 `$`）被拒。dep-info 中不得有环境读取（`# env-dep:`）：由环境变量在编译期选择的文件（例如以 `env!` 拼出的
+      include 路径）在 `self-check` 与 `build-package` 中可能不同。模块文件、`#[path]` 与三个 include 宏读入的文件，无论怎么写、经过别名还是宏展开，
+      都由 rustc 登记。这只证明 Rust 前端登记的输入：标准库来自固定的 Rust 工具链（`rust-toolchain.toml`，计入）；原生链接器、SDK 与导入库（如
+      Windows 打包代码链接的 `Bcrypt.lib`）属于平台构建环境（runner 镜像），不由本检查证明。两个平台的 `self-check` 都运行这项检查（Windows 经
+      `tools/smoke/all.ps1 -Ci` 中的 governance，macOS 经 `stickymd-smoke` 的测试），各自覆盖本平台 `cfg` 下编译的文件。
+    - **构建脚本：** 清单中的构建脚本的全文中没有 `../`、`..\` 与 `".."`。固定的 Windows 发布 job 以 workspace 构建，会运行它；固定的 macOS 发布构建
+      只选择 `stickymd-package`（`cargo run`）与 `stickymd-mac`（`build-app.sh`），而 `Cargo.lock` 中没有包依赖 `stickymd-win`，所以它只在 Windows
+      构建中运行，
+      它所在的成员目录计入 Windows 指纹。它自己声明的模块与引入的文件不在 dep-info 检查之内，归入下文“剩余”；名字搜索覆盖其中位于
+      `apps/` 与 `crates/` 下的跟踪文件。
+    - **脚本：** Windows 产出字节的脚本按保守清单检查：`tools/release/` 下的 `package.ps1`、`generate-sbom.ps1`、`invoke-package.ps1`、
+      `package-archive.ps1`、`syft-fetch.ps1`、`syft-execute.ps1`（从固定的 `build-package` job 可达），以及保守纳入的 `generate-third-party-notices.ps1`
+      （独立入口，经包装函数启动打包工具）与 `archive-facts.ps1`（打包库直接启动，供校验与晋升使用）。每个都按此拼写在 Git 索引中是普通文件，
+      计入 Windows 指纹，且是不含 NUL 的合法 UTF-8（其他编码中名字的字节可能不连续）。这些脚本与打包 crate 中编译器读过的文件里，每处 `.ps1`（不分
+      大小写）紧前的文件名（ASCII 字母、数字、`.`、`_`、`-` 组成的最长串）都在清单中，且文件名位于文件起点，或前一个字节是 ASCII 且不是 `/` 或 `\`；
+      `build-app.sh` 中没有 `.ps1`。
+    - **workflow：** 每个发布 workflow 的全文等于 `stickymd-smoke` 中的固定副本；副本恰为分类器计入的 `.github/` 文件（两个发布 workflow），副本经审查
+      具有上文 `dependency-policy` 与三个发布 job 的结构，改动 workflow 须同时改副本。
+    - **清单与合同：** 代码中的脚本清单、构建脚本清单与 profile 恰为本条所列；测试按本条原文核对，改清单须同时改合同。
+    - **名字：** 在打包 crate 中编译器读过的文件、清单中的脚本、`build-app.sh`、`crates/` 与 `apps/` 下被 Git 跟踪的全部文件（产品 crate 与构建脚本，
+      含构建脚本可能声明的模块），以及每个固定副本中从 `  build-package:` 行到 `  verify-artifact:` 行之间的文本里原样搜索（不分大小写，注释也算）：
+      不出现 `stickymd-smoke`、`stickymd_smoke`、`invoke-smoke.ps1`、`Invoke-StickyMdReleaseTool` 与 `tools/smoke/`（两种分隔符）。
+
+    **前提：** `self-check` 与 `build-package` 运行同一份固定 workflow、同一 runner 标签、同一检出与工具链；两者的有效编译配置（runner 环境中的
+    `RUSTFLAGS`、`CARGO_BUILD_TARGET`、Cargo home 中的配置）相同。检查只能观察本 job 的编译，这一前提不由它证明。能检查的只有一部分：固定副本不含下列字面串（原样
+    搜索、不分大小写：`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`CARGO_BUILD_TARGET`、
+    `CARGO_BUILD_BUILD_DIR`、`CARGO_TARGET_DIR`、`RUSTUP_TOOLCHAIN`、`RUSTC:`、`RUSTC=`、`env:RUSTC`），仓库内的 `.cargo/config.toml` 计入指纹。
+    其他拼写与其他改变编译的变量（如 `CARGO_PROFILE_*`）、runner 镜像与 Cargo home 的配置，以及各调用点对环境的处理（例如 `build-app.sh` 以
+    `env -i` 清空环境后再运行打包工具，而检查器与 workflow 中的其他调用继承环境）仍属前提。打包 crate 没有依赖与 feature，workspace 的 feature 合并改变不了它。
+
+    **剩余：** 以下不能由这些事实证明，由代码审查承担：清单中的文件在运行时做什么，例如运行时拼出的名字或路径（`Join-Path` 的目录参数）、不含
+    上述名字的命令，以及已审文件在运行时选择读取的被排除文件（之后只改被读文件时，指纹不变）；清单中构建脚本自己的模块与引入的文件读什么，
+    以及它们引入的、位于 `apps/` 与 `crates/` 之外的文件；产品 crate 读取其他被排除区域（如 `docs/`）的文件，这不属于本边界。检查器与固定副本本身
+    位于被排除的验证工具中，它们的改动由代码审查与 R 上的重新校验承担。在这些前提下，产出字节的代码既不运行验证工具，也不读它计入范围之外的
+    文件（版本规范化按根清单的成员表读取每个成员的清单，其中的 `tools/stickymd-smoke/Cargo.toml` 是计入的输入）。
+  - **只改验证工具时：** 即 `tools/stickymd-smoke/` 中上文三个例外以外的文件。两个平台都可以沿用，不重新构建；按下文“沿用后”，受影响的门用
+    R 的工具在同一份字节上重跑。
+  - **产出字节的 job 只运行计入指纹的代码（USER 决定 2026-11-21，方案 A）：** 每个发布 workflow 在依赖策略 job（`dependency-policy`，
+    `cargo deny`）之后分为三个 job，各在自己的 runner 上运行：
+    1. `self-check`（`needs: dependency-policy`）：版本读取、fmt、Clippy 与源码测试（Windows 为 `tools/smoke/all.ps1 -Ci`，macOS 为共享 crate、宿主与两个工具 crate 的测试），会运行
+       `stickymd-smoke`；
+    2. `build-package`（`needs: self-check`）：只运行计入本平台指纹的代码：祖先关系核对（Git）、产品构建、打包前的门（Windows 的 PE import 门、
+       macOS 的包检查，都在打包 crate 中）、打包、SBOM、构建记录，然后上传 artifact；
+    3. `verify-artifact`（`needs: build-package`）：下载刚上传的 artifact，用 `stickymd-smoke` 在这份字节上校验（Windows 为包校验；macOS 为完整的
+       三件套：恰好 ZIP、checksum 文件与 SBOM，三者彼此一致），并在摘要中写下构建来源的平台指纹。
+
+    macOS 的 artifact 以构建它的 attempt 命名（#macos-release-artifact），所以 macOS 的重试从 `build-package` 起重跑（或整个 workflow 重跑）；只重跑
+    `verify-artifact` 找不到本 attempt 的 artifact，以失败结束。Windows 的 artifact 名不带 attempt，只重跑 `verify-artifact` 会取回同一 run 中已上传的
+    artifact；Windows 按 attempt 收紧另行决定（见上文“触发与步骤”）。
+
+    run 的结论要求全部 job 都成功，晋升与 TAG、DRAFT、PUBLISH 照旧只认成功的 run 与它上传的 artifact。被排除的代码因此不与产出字节的步骤共用
+    文件系统或环境；governance 按上文“边界的证明”中的 workflow 一条核对 job 结构与固定副本。
+  - **自检与校验的证据地位：** S 上 `self-check` 与 `verify-artifact` 的通过结论不是发布证据；源码测试与受影响的门的通过结论只认 R 上的运行：
+    Windows 是绑定 Source Freeze 的本地 headless CI 收据与 Promote 的重新校验，macOS 是 #macos-release-gate 的“R 上的源码测试”与晋升的重新校验。
+    构建本身的事实仍绑定 S，不能在 R 上重现：成功的 run 与 attempt、artifact id、构建来源，以及构建记录中的 SDK、工具链与签名观察。
+    `ci.yml`、`scheduled.yml` 与本地 cache action 仍不计入。
 - **构建来源 S 与发布提交 R 的核对对象：**
   - 绑定 S：构建 run 的 head、包内 README 的 `Source commit`、两个平台 candidate receipt 中的构建来源。
   - 绑定 R：Windows Source Freeze、tag、TAG/DRAFT/PUBLISH 的授权、晋升 workflow 检出与签发证明的提交。
@@ -1136,7 +1220,7 @@ private release lab。
   Redistributable 的原生 Windows 11 上启动；只允许依赖该系统自带的 Win32 DLL 与 API set。
 - `x86_64-pc-windows-msvc` 通过仓库级 target 配置静态链接 MSVC CRT。该配置只是构建输入，
   不能单独作为 artifact 自包含性的证据。
-- std-only `stickymd-smoke` 必须解析 exact Release PE32+ 的普通 import table 与 delay-load
+- std-only 打包 crate `stickymd-package` 必须解析 exact Release PE32+ 的普通 import table 与 delay-load
   import table，并拒绝 `VCRUNTIME*`、`MSVCP*`、版本化 `MSVCR*`、`CONCRT*`、debug UCRT 以及
   GNU C/C++ runtime DLL。Release/package task graph 与 GitHub Release workflow 都必须在打包前
   执行该 gate。
@@ -1152,7 +1236,8 @@ private release lab。
 
 1. `release.yml`（Windows）与 `release-macos.yml`（macOS，#macos-release-artifact）只接受显式 `workflow_dispatch`，分别从
    Source Freeze 或可沿用的构建来源提交构建、测试、deny、检查 manifest、（Windows）native-runtime import 或（macOS）签名与架构、
-   生成 portable ZIP/checksums/license/SBOM 并上传 workflow artifact；它们不创建 tag、draft 或 publish。两个平台各自 dispatch，
+   生成 portable ZIP/checksums/license/SBOM 并上传 workflow artifact，按 #platform-artifact-reuse 在 `dependency-policy` 之后分为 `self-check`、`build-package`、
+   `verify-artifact` 三个 job；它们不创建 tag、draft 或 publish。两个平台各自 dispatch，
    一侧失败只重跑那一侧。
 2. 两个平台分别本地下载并 Promote 各自的 artifact，完成全部 artifact-bound qualification：Windows readiness 必须为 `READY`，
    macOS 就绪按 #macos-release-gate 成立。

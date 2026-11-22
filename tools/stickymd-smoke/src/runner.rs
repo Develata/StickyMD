@@ -1491,13 +1491,20 @@ fn phase18_mac_tests() -> Task {
     )
 }
 
-/// The release tooling of plan 11 #macos-release-artifact and #platform-artifact-reuse, with the
-/// rest of the verification CLI it is built into.
+/// The release tooling of plan 11 #macos-release-artifact and #platform-artifact-reuse: the
+/// packaging crate and the verification CLI that depends on it.
 fn phase18_release_tests() -> Task {
     cargo(
         TaskId::Phase18ReleaseTests,
         "Phase 18 release tooling tests",
-        &["test", "-p", "stickymd-smoke", "--locked"],
+        &[
+            "test",
+            "-p",
+            "stickymd-package",
+            "-p",
+            "stickymd-smoke",
+            "--locked",
+        ],
     )
 }
 

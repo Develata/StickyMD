@@ -451,7 +451,7 @@ impl CommandLine {
             Some("phase-entry") => crate::phase_entry::parse(&args[1..], false),
             Some("phase-entry-plan") => crate::phase_entry::parse(&args[1..], true),
             Some("release") => crate::release::parse(&args[1..]).map(Self::Release),
-            Some("package-path") => crate::package_path::parse(&args[1..]).map(Self::PackagePath),
+            Some("package-path") => package_path_directory(&args[1..]).map(Self::PackagePath),
             Some("modules") => crate::headless::Command::parse(&args[1..]).map(Self::Modules),
             Some("ci") => crate::ci::Command::parse(&args[1..]).map(Self::Ci),
             Some("dev-check") => crate::development::Command::parse(&args[1..]).map(Self::Development),
@@ -1111,7 +1111,18 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..18|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke dev-check [--plan] [--mode=tests|performance|all]\n       stickymd-smoke timings --input <json-or-log> [--input <path> ...] [--json]\n       stickymd-smoke startup-details --trace <v2-path> --details <sidecar-path> [--json]\n       stickymd-smoke phase-entry[-plan] <00..16|18|11-b|all> [--Parameter=value]\n       stickymd-smoke release <build-package|generate-sbom|package-inputs|prepare-package|publish-package|workspace-version|verify-promoted|verify-package|verify-workflow|verify-remote-state|notices|checksums|prepare-sbom|publish-sbom|syft-plan|syft-publish|syft-verify> [options]; see tools/stickymd-smoke/README.md"
+        "usage: stickymd-smoke phase <00..18|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke dev-check [--plan] [--mode=tests|performance|all]\n       stickymd-smoke timings --input <json-or-log> [--input <path> ...] [--json]\n       stickymd-smoke startup-details --trace <v2-path> --details <sidecar-path> [--json]\n       stickymd-smoke phase-entry[-plan] <00..16|18|11-b|all> [--Parameter=value]\n       stickymd-smoke release <workspace-version|verify-promoted|verify-package|verify-workflow|verify-attachments|verify-release-set|verify-remote-state|platform-inputs|verify-reuse|macos-verify-package|macos-verify-artifact|macos-promote|macos-candidate> [options]; see tools/stickymd-smoke/README.md
+       (building release bytes: stickymd-package; see tools/stickymd-package/README.md)"
+    }
+}
+
+/// The directory of `package-path --directory <directory>`.
+fn package_path_directory(arguments: &[String]) -> Result<PathBuf, String> {
+    match arguments {
+        [flag, directory] if flag == "--directory" && !directory.is_empty() => {
+            Ok(PathBuf::from(directory))
+        }
+        _ => Err("usage: stickymd-smoke package-path --directory <directory>".to_owned()),
     }
 }
 
@@ -1740,5 +1751,29 @@ mod tests {
             options.evidence_file.as_deref(),
             Some(std::path::Path::new("docs/report/evidence/phase-11.json"))
         );
+    }
+
+    #[test]
+    fn command_line_preserves_spaces_and_rejects_missing_or_extra_arguments() {
+        let args = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            CommandLine::parse(args(&["package-path", "--directory", "folder with spaces"]))
+                .unwrap(),
+            CommandLine::PackagePath(std::path::PathBuf::from("folder with spaces")),
+        );
+        for input in [
+            vec!["package-path"],
+            vec!["package-path", "--directory"],
+            vec!["package-path", "--directory", ""],
+            vec!["package-path", "--directory", "path", "extra"],
+            vec!["package-path", "--unknown", "path"],
+        ] {
+            assert!(CommandLine::parse(args(&input)).is_err());
+        }
     }
 }

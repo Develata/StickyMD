@@ -1,0 +1,18 @@
+[package]
+name = "stickymd-package"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "StickyMD release packaging: the bytes the release workflows build, std-only"
+
+# Std-only by design: plan 11 #platform-artifact-reuse counts this crate as a build input of both
+# platforms, and governance refuses any dependency, so verification code cannot reach it.
+[dependencies]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "stickymd-package"
+path = "src/main.rs"

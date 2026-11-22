@@ -1,7 +1,7 @@
 # macOS 依赖的许可证回退文本：来源记录
 
-`stickymd-smoke release notices --platform macos-arm64` 为下列没有随包许可证文件的 crate 使用 `assets/licenses/` 中的回退文本，
-映射按 (crate, 版本) 写在 `tools/stickymd-smoke/src/release/notices/licenses.rs`，未列出的版本会让生成失败。每个 crate 包里的
+`stickymd-package notices --platform macos-arm64` 为下列没有随包许可证文件的 crate 使用 `assets/licenses/` 中的回退文本，
+映射按 (crate, 版本) 写在 `tools/stickymd-package/src/notices/licenses.rs`，未列出的版本会让生成失败。每个 crate 包里的
 `.cargo_vcs_info.json` 记着发布时的上游提交；下表的“上游”即该提交，`.crate` 的 SHA-256 取自 `Cargo.lock`。2026-11-20 核对。
 
 许可证选择：`objc2`、`objc-sys`、`block2`、`objc2-encode`、`objc2-foundation` 与 0.2.2 的框架 crate 只声明 MIT；0.3.2 的框架 crate 与

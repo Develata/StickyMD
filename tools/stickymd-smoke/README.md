@@ -562,7 +562,8 @@ The existing PowerShell parameter interfaces remain available:
 ./tools/release/generate-sbom.ps1 -PackageDirectory <directory> [-ZipPath <zip>] [-OutputPath <sbom>] [-SyftPath <syft>]
 ```
 
-Their reusable commands are in the existing std-only CLI:
+Their reusable commands are in the std-only CLIs (verification here, packaging in
+`stickymd-package`):
 
 Replace `<release-tag>` with the tag for the approved source and artifact version.
 Verification binds it to the checkout's full source SHA and workspace version; an old
@@ -578,58 +579,19 @@ Measurements, wrapper overhead and verification limits are recorded in the
 [routing/workflow/CNG report](../../docs/report/2026-09-30-phase-routing-release-workflows-cng.md).
 
 ```powershell
-cargo run --quiet -p stickymd-smoke --locked -- release package-inputs --allow-dirty-validation
-cargo run --quiet -p stickymd-smoke --locked -- release prepare-package --exe <exe> --staging-directory <new-directory> [--allow-dirty-validation]
-cargo run --quiet -p stickymd-smoke --locked -- release build-package [--exe <exe>] [--output-directory <directory>] [--allow-dirty-validation]
-cargo run --quiet -p stickymd-smoke --locked -- release generate-sbom [--package-directory <directory>] [--zip <zip>] [--output <sbom>] [--syft-path <tool>]
 cargo run --quiet -p stickymd-smoke --locked -- release workspace-version
 cargo run --quiet -p stickymd-smoke --locked -- release verify-package --package-directory <directory> [--zip <zip>] [--checksums <manifest>] [--runtime]
 cargo run --quiet -p stickymd-smoke --locked -- release verify-promoted --artifact-directory <directory> --source-sha <full-sha> --expected-zip-sha256 <sha256> --expected-sbom-sha256 <sha256> --release-tag <release-tag>
 cargo run --quiet -p stickymd-smoke --locked -- release verify-workflow --source-sha <full-sha> --workflow-json <utf8-file-or-dash>
 cargo run --quiet -p stickymd-smoke --locked -- release verify-remote-state --kind <tag|draft> --source-sha <full-sha> --release-tag <tag> --query-exit <code> --http-response <utf8-file-or-dash> [--allow-missing]
-cargo run --quiet -p stickymd-smoke --locked -- release notices --destination <new-file>
-cargo run --quiet -p stickymd-smoke --locked -- release checksums --zip <zip> [--sbom <sbom>] --output <manifest>
-cargo run --quiet -p stickymd-smoke --locked -- release publish-sbom --input <staged-sbom> --output <sbom> --zip <zip> --checksums <manifest>
-cargo run --quiet -p stickymd-smoke --locked -- release publish-package --input <completed-zip> --output <zip> --checksums <manifest>
-cargo run --quiet -p stickymd-smoke --locked -- release prepare-sbom --package-directory <directory> --staging-directory <new-directory> [--zip <zip>] [--syft-path <provided-tool>]
-cargo run --quiet -p stickymd-smoke --locked -- release syft-plan [--syft-path <provided-tool>]
-cargo run --quiet -p stickymd-smoke --locked -- release syft-publish --kind <archive|checksums> --input <downloaded-file>
-cargo run --quiet -p stickymd-smoke --locked -- release syft-verify --archive <archive> --checksums <upstream-manifest> --staging-directory <new-directory>
 ```
 
-`package-inputs` also accepts `--version`, `--commit-sha`, `--release-tag` and
-`--exact-candidate`, preserving `package.ps1`'s override and dirty-tree policy.
-It returns one JSON plan marked `NOT_RUN`. Package selection and naming use the
-same Rust implementation. `workspace-version` reads the scalar from
-`[workspace.package]`, accepts assignment whitespace and comments, and refuses
-missing or duplicate versions instead of selecting a dependency/metadata version.
-Verification/notices retain the scripts' `KEY=value` stdout and 0/nonzero exit
-semantics. The wrappers resolve relative paths using the caller's PowerShell
-location, restore that location and console encoding even on failure, and use
-locked Cargo invocations.
+The commands that build release bytes (package, README, notices, SBOM, checksums, the
+Syft cache and the macOS package and product inputs) are in
+[`stickymd-package`](../stickymd-package/README.md), which this CLI depends on and which
+cannot depend on it (plan 11 #platform-artifact-reuse). The scripts above that build bytes
+call it; the verification commands stay here.
 
-`build-package` and `generate-sbom` coordinate these same typed Rust rules directly.
-The runner calls them in-process and preserves its task IDs/order and JSON stdout
-boundary. The stable PowerShell scripts each make one locked Cargo invocation;
-Cargo still checks source freshness. The two commands accept `--powershell <host>`
-for their platform adapter; wrappers supply their own 5.1/7 host, while direct CLI
-and runner calls default to `pwsh`. No application build occurs inside packaging.
-ZIP compression keeps the original member order, timestamp and compression API in
-`package-archive.ps1`. Rust owns private staging, publication and cleanup. Adapter
-or validation failure returns nonzero without creating success qualification evidence.
-
-`prepare-package` accepts the same identity overrides and flags as `package-inputs`.
-It creates only a new staging directory (the parent must exist), writes complete
-files atomically, and removes its owned staging tree on failure. Existing files or
-directories are never overwritten or cleaned. Its JSON contains the unchanged
-`inputs` plan, ordered `members`, and `diagnostics` for the wrapper to forward.
-`inputs.status: NOT_RUN` still means package verification/qualification has not run.
-`release/package_content.rs` owns the six members, staging content sources and the
-four SBOM-required flags. ZIP validation and SBOM coverage consume that inventory;
-PowerShell compresses the returned ordinal member list without enumerating or
-selecting content. README titles come from the validated source state; the text
-template remains UTF-8 without BOM with CRLF output. Packaged licenses reuse the
-strict notices decoder, normalize line endings to LF and omit BOMs.
 
 The release workflow uses `workspace-version` too. `verify-workflow` reads one
 GitHub Actions run API observation from a UTF-8 JSON file, or stdin when

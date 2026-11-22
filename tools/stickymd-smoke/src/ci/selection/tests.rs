@@ -59,9 +59,15 @@ fn ci_reverse_dependencies_cover_downstream_behavior_without_selecting_unrelated
         [Module::Mac]
     );
     assert_eq!(
-        selected(&["tools/stickymd-smoke/src/package_path.rs"]).modules,
+        selected(&["tools/stickymd-smoke/src/release/platform_inputs.rs"]).modules,
         [Module::Smoke]
     );
+    // The verification tool checks what the packaging crate builds, so it is retested too.
+    assert_eq!(
+        selected(&["tools/stickymd-package/src/package_path.rs"]).modules,
+        [Module::Package, Module::Smoke]
+    );
+    assert!(selected(&["tools/stickymd-package/src/json.rs"]).full);
     assert_eq!(
         selected(&["experiments/phase-01/persistence/src/main.rs"]).modules,
         [Module::Persistence]

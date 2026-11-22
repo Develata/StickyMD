@@ -3,7 +3,7 @@
 //! read, check and publish, and rewrites the ledger atomically with the old bytes verbatim.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::{
-    append, build,
+    append,
     decide::{self, Rows},
     options::{Command, Options},
     record::{self, Built, Identity, Record},
@@ -24,10 +24,6 @@ fn rows(root: &Path) -> Result<Rows, String> {
 
 pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     let command = options.command.ok_or("mac-ledger needs a command")?;
-    if command == Command::Inputs {
-        println!("{}", inputs(root, options.home.as_deref())?);
-        return Ok(());
-    }
     let ledger = options.ledger.clone().unwrap_or_else(|| {
         root.join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
             .join("records.jsonl")
@@ -44,7 +40,7 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
         Command::Record => append::recorded(options)?,
         Command::Receipt => append::receipts(options, &rows(root)?)?,
         Command::Revoke => append::revocation(options, &existing)?,
-        Command::Plan | Command::Inputs => unreachable!("handled above"),
+        Command::Plan => unreachable!("handled above"),
     };
     let mut all: Vec<Record> = existing;
     for record in &new {
@@ -104,67 +100,6 @@ fn built(app: &Path) -> Result<Built, String> {
         executable: crate::integrity::sha256(&contained_executable(&app)?)?,
         bundle: bundle_hash(&app)?,
     })
-}
-
-/// The product input fingerprint of this checkout as `build-app.sh` builds it: the tracked inputs
-/// of the macOS app, then the build identity (the Cargo and Rust toolchain, the Xcode tools). A
-/// variable or a Cargo configuration outside the repository that could change the build
-/// unrecorded is refused; `build-app.sh` runs this with a clean environment.
-fn inputs(root: &Path, home: Option<&Path>) -> Result<String, String> {
-    let refused = build::refused(std::env::vars());
-    if !refused.is_empty() {
-        return Err(format!(
-            "unset {}: they change the app's build but are not part of its input fingerprint",
-            refused.join(", ")
-        ));
-    }
-    // Both streams: `ld -v` reports its version on stderr.
-    let output = |program: &str, args: &[&str]| -> Result<String, String> {
-        let output = std::process::Command::new(program)
-            .args(args)
-            .current_dir(root)
-            .output()
-            .map_err(|e| format!("{program}: {e}"))?;
-        if !output.status.success() {
-            return Err(format!("{program} {} failed", args.join(" ")));
-        }
-        let mut text = String::from_utf8(output.stdout).map_err(|e| format!("{program}: {e}"))?;
-        text.push_str(&String::from_utf8(output.stderr).map_err(|e| format!("{program}: {e}"))?);
-        Ok(text)
-    };
-    let xcrun = "/usr/bin/xcrun";
-    // A home given by the caller wins over this process's environment, which a Cargo
-    // configuration's `[env]` can rewrite before this program starts.
-    let cargo_home = match home {
-        Some(home) => home.join(".cargo"),
-        None => build::cargo_home(
-            std::env::var_os("CARGO_HOME"),
-            std::env::var_os("HOME"),
-            &std::env::current_dir().map_err(|e| format!("current directory: {e}"))?,
-        )
-        .ok_or("neither CARGO_HOME nor a non-empty HOME is set")?,
-    };
-    let outside = build::outside_cargo_configs(root, &cargo_home);
-    if !outside.is_empty() {
-        return Err(format!(
-            "remove or move {}: Cargo configuration outside the repository can change the build but is not part of its input fingerprint",
-            outside
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    let tools = [
-        ("cargo -V", output("cargo", &["-V"])?),
-        ("rustc -vV", output("rustc", &["-vV"])?),
-        ("xcode-select -p", output("/usr/bin/xcode-select", &["-p"])?),
-        ("sdk path", output(xcrun, &["--show-sdk-path"])?),
-        ("sdk version", output(xcrun, &["--show-sdk-version"])?),
-        ("clang --version", output(xcrun, &["clang", "--version"])?),
-        ("ld -v", output(xcrun, &["ld", "-v"])?),
-    ];
-    crate::qualification::mac_app_inputs(root, &build::identity(&tools))
 }
 
 fn plan(options: &Options, existing: &[Record], rows: &Rows) -> Result<(), String> {

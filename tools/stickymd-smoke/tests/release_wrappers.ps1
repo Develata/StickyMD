@@ -1,10 +1,15 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 function cargo {
-    if (($args[0..4] -join ' ') -cne 'run --quiet -p stickymd-smoke --locked') {
+    $invocation = $args[0..4] -join ' '
+    if ($invocation -ceq 'run --quiet -p stickymd-smoke --locked') {
+        $executable = $env:STICKYMD_TEST_EXE
+    } elseif ($invocation -ceq 'run --quiet -p stickymd-package --locked') {
+        $executable = $env:STICKYMD_TEST_PACKAGE_EXE
+    } else {
         throw ('Unexpected Cargo invocation: ' + ($args -join '/'))
     }
-    & $env:STICKYMD_TEST_EXE @($args[5..($args.Length - 1)])
+    & $executable @($args[5..($args.Length - 1)])
 }
 $repo = $env:STICKYMD_TEST_ROOT
 $fixture = $env:STICKYMD_TEST_DIRECTORY

@@ -1,8 +1,9 @@
 //! In-process release verification with the same human/JSON stream boundary as other tasks.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-verification-harness
 
-use crate::release::{self, PackageOptions, verify_package};
+use crate::release::{PackageOptions, verify_package};
 use std::path::Path;
+use stickymd_package::{package_workflow, sbom_workflow};
 
 pub(super) fn run(root: &Path, capture_output: bool) -> Result<(), String> {
     let options = PackageOptions {
@@ -17,13 +18,13 @@ pub(super) fn run(root: &Path, capture_output: bool) -> Result<(), String> {
 
 pub(super) fn build(root: &Path, capture_output: bool) -> Result<(), String> {
     with_output("portable package creation", capture_output, |output| {
-        release::build_package(root, &release::PackageBuildOptions::default(), output)
+        package_workflow::build(root, &Default::default(), output)
     })
 }
 
 pub(super) fn sbom(root: &Path, capture_output: bool) -> Result<(), String> {
     with_output("SPDX SBOM generation", capture_output, |output| {
-        release::generate_sbom(root, &release::SbomBuildOptions::default(), output)
+        sbom_workflow::generate(root, &Default::default(), output)
     })
 }
 

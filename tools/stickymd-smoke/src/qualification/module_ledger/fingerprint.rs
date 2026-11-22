@@ -3,15 +3,12 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#module-success-ledger
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::ModuleId;
 use crate::cli::ResourceModule;
 
-mod mac;
-mod normalize;
 mod stream;
 pub(in crate::qualification) use stream::Batch;
 
@@ -105,21 +102,6 @@ fn calculate_from(
         .remove(0))
 }
 
-/// The macOS app's product input fingerprint (plan 11 #phase-16-macos-host): every tracked file
-/// that can reach the app `build-app.sh` builds, with the release version normalized as for the
-/// functional modules, followed by `build_identity` (toolchain, SDK, target, profile).
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn mac_app_inputs(root: &Path, build_identity: &[u8]) -> Result<String, String> {
-    Ok(stream::calculate(
-        root,
-        &[stream::Target::MacApp],
-        &tracked_files(root)?,
-        build_identity,
-    )?
-    .digests
-    .remove(0))
-}
-
 fn domains(module: ModuleId) -> u64 {
     match module {
         ModuleId::Runtime => ALL_PRODUCT | RUNTIME_HARNESS | GLOBAL,
@@ -143,33 +125,9 @@ fn domains(module: ModuleId) -> u64 {
     }
 }
 
+/// The checkout's files as the macOS app fingerprint lists them (one listing for every stream).
 fn tracked_files(root: &Path) -> Result<Vec<String>, String> {
-    let output = Command::new("git")
-        .args([
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ])
-        .current_dir(root)
-        .output()
-        .map_err(|error| format!("cannot start git ls-files: {error}"))?;
-    if !output.status.success() {
-        return Err("git ls-files failed while fingerprinting qualification inputs".to_owned());
-    }
-    let mut files = output
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-        .map(|path| {
-            String::from_utf8(path.to_vec())
-                .map(|path| path.replace('\\', "/"))
-                .map_err(|error| format!("tracked path is not UTF-8: {error}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    files.sort();
-    Ok(files)
+    stickymd_package::app_inputs::tracked_files(root)
 }
 
 fn temporary_path() -> Result<PathBuf, String> {
@@ -269,11 +227,12 @@ fn is_global_input(path: &str) -> bool {
             | "tools/stickymd-smoke/src/qualification/module_ledger/record.rs"
             | "tools/stickymd-smoke/src/qualification/windows_build.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint.rs"
-            | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint/normalize.rs"
+            | "tools/stickymd-package/src/app_inputs/normalize.rs"
+            | "tools/stickymd-package/src/app_inputs/mod.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint/stream.rs"
             | "tools/stickymd-smoke/src/qualification/module_ledger/store.rs"
             | "tools/stickymd-smoke/src/qualification/file_lock.rs"
-            | "tools/stickymd-smoke/src/atomic_evidence.rs"
+            | "tools/stickymd-package/src/atomic.rs"
             | "tools/stickymd-smoke/src/qualification/receipt.rs"
             | "tools/stickymd-smoke/src/qualification/reuse.rs"
     )

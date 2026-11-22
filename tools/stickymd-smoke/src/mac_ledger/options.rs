@@ -11,11 +11,9 @@ pub(crate) fn is_batch(s: &str) -> bool {
 }
 
 pub(super) const HELP: &str =
-    "usage: stickymd-smoke mac-ledger <inputs|plan|record|receipt|revoke> [options]
-  inputs  [--home <dir>]
-          Prints the product input fingerprint of this checkout and toolchain; build-app.sh
-          writes it into the bundle's Info.plist. --home is the caller's home directory, given
-          by the caller so that a Cargo configuration cannot redirect where it is looked for.
+    "usage: stickymd-smoke mac-ledger <plan|record|receipt|revoke> [options]
+  The product input fingerprint of a checkout is printed by `stickymd-package app-inputs`:
+  build-app.sh writes it into the bundle, so it is computed by the packaging crate.
   plan    --app <StickyMD.app> --driver <stickymd-smoke> --image <digest> --system <file> [--batch <name>]
           Lists the mac-gui rows to run, the rows whose PASS is reused (same product inputs,
           driver, VM image and VM system), and the rows the USER or agents still have to judge
@@ -42,7 +40,6 @@ pub(super) const HELP: &str =
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Command {
-    Inputs,
     Plan,
     Record,
     Receipt,
@@ -52,7 +49,6 @@ pub(crate) enum Command {
 impl Command {
     fn name(self) -> &'static str {
         match self {
-            Self::Inputs => "inputs",
             Self::Plan => "plan",
             Self::Record => "record",
             Self::Receipt => "receipt",
@@ -63,7 +59,6 @@ impl Command {
     /// The options this command accepts; any other is refused rather than silently ignored.
     fn accepts(self, key: &str) -> bool {
         let allowed: &[&str] = match self {
-            Self::Inputs => &["--home"],
             Self::Plan => &[
                 "--ledger", "--app", "--driver", "--image", "--system", "--batch",
             ],
@@ -86,8 +81,6 @@ pub(crate) struct Options {
     pub command: Option<Command>,
     pub ledger: Option<PathBuf>,
     pub app: Option<PathBuf>,
-    /// For `inputs`: the home directory whose `.cargo` is Cargo's home, as the caller saw it.
-    pub home: Option<PathBuf>,
     pub driver: Option<PathBuf>,
     pub image: Option<String>,
     pub system: Option<PathBuf>,
@@ -104,7 +97,12 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
     let mut result = Options::default();
     let mut rest = args.iter();
     let command = match rest.next().map(String::as_str) {
-        Some("inputs") => Command::Inputs,
+        Some("inputs") => {
+            return Err(
+                "mac-ledger inputs moved to the packaging crate: run `cargo run -p stickymd-package -- app-inputs`"
+                    .to_owned(),
+            );
+        }
         Some("plan") => Command::Plan,
         Some("record") => Command::Record,
         Some("receipt") => Command::Receipt,
@@ -152,7 +150,6 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
         match key.as_str() {
             "--ledger" => result.ledger = Some(value.into()),
             "--app" => result.app = Some(value.into()),
-            "--home" => result.home = Some(value.into()),
             "--driver" => result.driver = Some(value.into()),
             "--image" => result.image = Some(value.clone()),
             "--system" => result.system = Some(value.into()),
@@ -187,7 +184,6 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
         _ => Err(missing("--quote with the USER's words")),
     };
     match command {
-        Command::Inputs => {}
         Command::Plan => {
             result.app.as_ref().ok_or_else(|| missing("--app"))?;
             result.driver.as_ref().ok_or_else(|| missing("--driver"))?;

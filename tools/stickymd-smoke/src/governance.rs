@@ -6,6 +6,7 @@ mod input_injection;
 mod mac_host;
 mod mac_resources;
 mod manifest_harness;
+mod package_boundary;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -152,17 +153,7 @@ pub(crate) fn phase16_modes(content: &str) -> Result<Vec<(String, String)>, Stri
     )
 }
 
-pub(crate) fn find_repository_root(start: &Path) -> Result<PathBuf, String> {
-    for candidate in start.ancestors() {
-        if candidate.join("Cargo.toml").is_file() && candidate.join("AGENTS.md").is_file() {
-            return Ok(candidate.to_path_buf());
-        }
-    }
-    Err(format!(
-        "cannot locate repository root above {}",
-        start.display()
-    ))
-}
+pub(crate) use stickymd_package::repository::find_root as find_repository_root;
 
 pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_required_files(root)?;
@@ -185,6 +176,7 @@ pub(crate) fn verify(root: &Path) -> Result<(), String> {
     verify_local_markdown_links(root)?;
     verify_forbidden_packages(root)?;
     crate_graph::verify(root)?;
+    package_boundary::verify(root)?;
     verify_test_harnesses(root)?;
     input_injection::verify(root)?;
     Ok(())
@@ -536,7 +528,8 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         "tools/release/package.ps1 -ExactCandidate",
         "tools/release/generate-sbom.ps1",
         "tools/release/verify-package.ps1",
-        "qualification native-runtime --exe=target/release/stickymd-win.exe",
+        "-p stickymd-package --locked -- native-runtime --exe target/release/stickymd-win.exe",
+        "uses: actions/download-artifact@",
         "name: stickymd-windows-x64-release",
     ] {
         if !release.contains(required) {
@@ -555,9 +548,10 @@ fn verify_release_infrastructure(root: &Path) -> Result<(), String> {
         "runs-on: xcode-27",
         "/Applications/Xcode_27.2.app",
         "apps/stickymd-mac/packaging/build-app.sh",
-        "release macos-package",
-        "release macos-sbom",
-        "release macos-verify-package",
+        "-p stickymd-package --locked -- macos-package",
+        "-p stickymd-package --locked -- macos-sbom",
+        "-p stickymd-package --locked -- macos-verify-package",
+        "release macos-verify-artifact --directory dist",
         "name: stickymd-macos-arm64-release-${{ github.run_attempt }}",
     ] {
         if !release_macos.contains(required) {

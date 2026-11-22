@@ -10,7 +10,7 @@ use super::package::{self, run};
 use crate::evidence::escape_json;
 use crate::release::attachments::platform_files;
 use crate::release::platform::Platform;
-use crate::release::platform_inputs::{Reuse, fingerprint, verify_reuse};
+use crate::release::platform_inputs::{ALGORITHM, Reuse, fingerprint, verify_reuse};
 use crate::release::temporary::TemporaryDirectory;
 use crate::release::{json, workflow};
 use crate::{atomic_evidence, integrity, repository};
@@ -88,11 +88,12 @@ pub(crate) struct Receipt {
 impl Receipt {
     pub(crate) fn json(&self) -> String {
         format!(
-            "{{\"schema_version\":1,\"origin\":\"GITHUB_WORKFLOW_ARTIFACT\",\"platform\":\"macos-arm64\",\"source_commit\":\"{}\",\"version\":\"{}\",\"cargo_lock_sha256\":\"{}\",\"build_inputs\":\"{}\",\"build_inputs_algorithm\":\"v1\",\"app_inputs\":\"{}\",\"workflow_run_id\":{},\"workflow_attempt\":{},\"artifact_id\":{},\"artifact_name\":\"{}\",\"zip_name\":\"{}\",\"zip_sha256\":\"{}\",\"checksums_sha256\":\"{}\",\"sbom_sha256\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"target\":\"aarch64-apple-darwin\",\"signing\":\"{}\"}}\n",
+            "{{\"schema_version\":1,\"origin\":\"GITHUB_WORKFLOW_ARTIFACT\",\"platform\":\"macos-arm64\",\"source_commit\":\"{}\",\"version\":\"{}\",\"cargo_lock_sha256\":\"{}\",\"build_inputs\":\"{}\",\"build_inputs_algorithm\":\"{}\",\"app_inputs\":\"{}\",\"workflow_run_id\":{},\"workflow_attempt\":{},\"artifact_id\":{},\"artifact_name\":\"{}\",\"zip_name\":\"{}\",\"zip_sha256\":\"{}\",\"checksums_sha256\":\"{}\",\"sbom_sha256\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"target\":\"aarch64-apple-darwin\",\"signing\":\"{}\"}}\n",
             self.source,
             escape_json(&self.version),
             self.cargo_lock_sha256,
             self.build_inputs,
+            ALGORITHM,
             self.facts.app_inputs,
             self.run_id,
             self.attempt,
@@ -127,20 +128,36 @@ fn check_release(root: &Path, release: &str) -> Result<(), String> {
 
 /// Checks a downloaded set (the artifact's three files in `directory`) and the bundle inside,
 /// and returns the receipt; nothing is staged here.
-pub(crate) fn check_set(
-    root: &Path,
-    directory: &Path,
-    request_attempt: (u64, u64),
-    artifact: (u64, String),
-    release: &str,
-) -> Result<(Receipt, Reuse), String> {
+/// What [`verify_set`] establishes about a downloaded macOS set.
+pub(crate) struct CheckedSet {
+    pub version: String,
+    pub zip_name: String,
+    pub checksums_name: String,
+    pub zip_sha256: String,
+    pub sbom_sha256: String,
+    pub facts: package::Facts,
+}
+
+/// The three files of the macOS set in `directory` and nothing else: the ZIP passes the package
+/// check, the checksum file lists exactly the ZIP and the SBOM with their hashes, and the SBOM
+/// describes this very package. Writes nothing.
+pub(crate) fn verify_set(root: &Path, directory: &Path) -> Result<CheckedSet, String> {
     let version = repository::workspace_version(root)?;
     let [zip_name, checksums_name, sbom_name] = platform_files(Platform::MacOsArm64, &version);
-    let mut names = fs::read_dir(directory)
-        .map_err(|error| error.to_string())?
-        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+    let mut names = Vec::new();
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // Only plain files: a link would let the set borrow bytes from outside the directory.
+        if !entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_file()
+        {
+            return Err(format!("the artifact's {name} is not a plain file"));
+        }
+        names.push(name);
+    }
     names.sort();
     let mut expected = vec![zip_name.clone(), checksums_name.clone(), sbom_name.clone()];
     expected.sort();
@@ -163,6 +180,31 @@ pub(crate) fn check_set(
     let sbom = fs::read_to_string(directory.join(&sbom_name)).map_err(|error| error.to_string())?;
     // The SBOM must describe the bytes of this very package, not only its file names.
     content::validate_sbom(&sbom, &facts.members)?;
+    Ok(CheckedSet {
+        version,
+        zip_name,
+        checksums_name,
+        zip_sha256,
+        sbom_sha256,
+        facts,
+    })
+}
+
+pub(crate) fn check_set(
+    root: &Path,
+    directory: &Path,
+    request_attempt: (u64, u64),
+    artifact: (u64, String),
+    release: &str,
+) -> Result<(Receipt, Reuse), String> {
+    let CheckedSet {
+        version,
+        zip_name,
+        checksums_name,
+        zip_sha256,
+        sbom_sha256,
+        facts,
+    } = verify_set(root, directory)?;
     let source = facts.source_commit.clone();
     let reuse = verify_reuse(root, Platform::MacOsArm64, &source, release)?;
     let lock = crate::release::platform_inputs::git(root)
@@ -368,7 +410,7 @@ fn reuse_record(
     receipt_sha256: &str,
 ) -> String {
     format!(
-        "{{\"schema_version\":1,\"platform\":\"macos-arm64\",\"build_source\":\"{build}\",\"release_source\":\"{}\",\"build_inputs\":\"{build_inputs}\",\"release_inputs\":\"{release_inputs}\",\"algorithm\":\"v1\",\"candidate_receipt_sha256\":\"{receipt_sha256}\"}}\n",
+        "{{\"schema_version\":1,\"platform\":\"macos-arm64\",\"build_source\":\"{build}\",\"release_source\":\"{}\",\"build_inputs\":\"{build_inputs}\",\"release_inputs\":\"{release_inputs}\",\"algorithm\":\"{ALGORITHM}\",\"candidate_receipt_sha256\":\"{receipt_sha256}\"}}\n",
         release.to_ascii_lowercase(),
     )
 }
@@ -519,7 +561,7 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<PathBuf, String> {
     if receipt.field("schema_version")?.unsigned()? != 1
         || field("platform")? != "macos-arm64"
         || field("origin")? != "GITHUB_WORKFLOW_ARTIFACT"
-        || field("build_inputs_algorithm")? != "v1"
+        || field("build_inputs_algorithm")? != ALGORITHM
         || field("target")? != "aarch64-apple-darwin"
         || field("signing")? != "AD_HOC"
     {
@@ -617,6 +659,33 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    /// The downloaded set holds exactly the three plain files: a missing one, an extra one and a
+    /// link are refused before any of them is read.
+    #[test]
+    fn the_set_check_refuses_missing_extra_and_linked_files() {
+        let root =
+            crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap();
+        let version = crate::repository::workspace_version(&root).unwrap();
+        let [zip, checksums, sbom] = super::platform_files(super::Platform::MacOsArm64, &version);
+        let directory = super::TemporaryDirectory::new("macos-set").unwrap();
+        let path = directory.path();
+        for name in [&zip, &checksums] {
+            std::fs::write(path.join(name), b"x").unwrap();
+        }
+        let error = super::verify_set(&root, path).err().unwrap();
+        assert!(error.contains("the artifact holds"), "{error}");
+        std::fs::write(path.join("extra.txt"), b"x").unwrap();
+        std::fs::write(path.join(&sbom), b"x").unwrap();
+        let error = super::verify_set(&root, path).err().unwrap();
+        assert!(error.contains("the artifact holds"), "{error}");
+        std::fs::remove_file(path.join("extra.txt")).unwrap();
+        std::fs::remove_file(path.join(&sbom)).unwrap();
+        std::os::unix::fs::symlink(path.join(&zip), path.join(&sbom)).unwrap();
+        let error = super::verify_set(&root, path).err().unwrap();
+        assert!(error.contains("not a plain file"), "{error}");
+        directory.close().unwrap();
+    }
+
     use super::*;
 
     fn tree(root: &Path, candidate: &str, receipt: &str, record: Option<&str>) {

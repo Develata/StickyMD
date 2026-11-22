@@ -209,7 +209,8 @@ crates/stickymd-desktop/    共享界面：视图几何、标题投影、软件�
 apps/stickymd-win/          Windows 宿主：启动装配、WinHost、平台 adapter 与存储
 crates/stickymd-posix/      macOS 宿主的原生 POSIX 层，未来供 Debian 复用；`unsafe` 与原生绑定限于 `src/`，无业务逻辑
 apps/stickymd-mac/          macOS 宿主（二进制 `stickymd`）：只在 macOS 上有测试，宿主内 `unsafe` 限于 `src/platform/`，POSIX 原语由 `stickymd-posix` 提供
-tools/stickymd-smoke/       不进入产品包的 Rust 验收 CLI
+tools/stickymd-package/     发布打包工具：两平台的包、第三方声明、SBOM、checksum 与 macOS 产品输入指纹；std-only，不依赖验收 CLI
+tools/stickymd-smoke/       不进入产品包的 Rust 验收 CLI（依赖 stickymd-package）
 tools/smoke/                各 Phase 的 PowerShell 薄入口
 docs/plan/                  唯一工程合同
 docs/features/              用户行为投影
@@ -312,7 +313,7 @@ cargo test -p stickymd-app --locked
 cargo test -p stickymd-desktop --locked
 cargo test -p stickymd-win --locked
 cargo test -p stickymd-posix -p stickymd-mac --locked  # 仅在 macOS 上执行测试；其他平台是无测试的桩
-cargo test -p stickymd-smoke --locked
+cargo test -p stickymd-package -p stickymd-smoke --locked
 ./tools/smoke/phase-05.ps1
 ./tools/smoke/phase-14.ps1 -Ci
 ```

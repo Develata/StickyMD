@@ -24,7 +24,7 @@ mod manual_readiness;
 mod module_evidence;
 mod module_ledger;
 mod module_registry;
-mod path_identity;
+use stickymd_package::path_identity;
 mod readiness;
 mod receipt;
 mod remote;
@@ -43,7 +43,6 @@ pub(crate) mod workspace_tests;
 #[cfg(windows)]
 pub(crate) use exact_desktop::tray::exit_owned_copy;
 #[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
-pub(crate) use module_ledger::fingerprint::mac_app_inputs;
 pub(crate) use module_ledger::fingerprint::verify_product_classification;
 
 /// The unit tests that own manual obligations (plan 11 manual obligation mapping).
@@ -75,15 +74,7 @@ pub(crate) fn execute(root: &Path, command: QualificationCommand) -> Result<(), 
         QualificationCommand::StartupAttribution => startup_attribution::record(root),
         QualificationCommand::WindowStress(options) => run_window_stress(root, options),
         QualificationCommand::NativeRuntime { executable } => {
-            let executable = if executable.is_absolute() {
-                executable
-            } else {
-                root.join(executable)
-            };
-            let report = crate::pe_dependencies::verify_portable_executable(&executable)?;
-            println!("PORTABLE_NATIVE_DEPENDENCIES={}", report.imports.join(","));
-            println!("DEVELOPER_RUNTIME_IMPORTS=none");
-            Ok(())
+            stickymd_package::commands::native_runtime(root, &executable)
         }
         QualificationCommand::G3Exact {
             zip,
@@ -265,23 +256,6 @@ pub(crate) fn record_last_success_for_evidence(root: &Path, path: &Path) -> Resu
 
 /// A directory a command outside the coordinators may write into: never inside the
 /// last-success store or the manual observation archive.
-pub(crate) fn validate_public_output_directory(
-    root: &Path,
-    directory: &Path,
-) -> Result<(), String> {
-    if module_ledger::is_success_storage_path(root, directory)
-        || reserved_paths::is_manual_store_path(root, directory)
-        || reserved_paths::is_mac_ledger_path(root, directory)
-        || decisions::is_internal_path(root, directory)
-    {
-        return Err(format!(
-            "{} is coordinator-owned qualification storage; choose another directory",
-            directory.display()
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<(), String> {
     // The writer's own spelling rules, applied before any caller creates a directory.
     crate::atomic_evidence::check_spelling(&root.join(path))?;

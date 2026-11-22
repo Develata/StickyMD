@@ -108,7 +108,17 @@ pub(crate) fn select(paths: &[String]) -> Selection {
     }
 }
 
+/// Packaging-crate files the CI planner, governance and the evidence writers themselves run: a
+/// change to them can change what CI selects or checks, so it selects everything.
+const SHARED_PACKAGE_FILES: &[&str] = &[
+    "tools/stickymd-package/src/json.rs",
+    "tools/stickymd-package/src/repository.rs",
+];
+
 fn is_shared(path: &str) -> bool {
+    if SHARED_PACKAGE_FILES.contains(&path) {
+        return true;
+    }
     // This fixture is also embedded by the Windows smoke/G5 harness, outside Cargo edges.
     if path == "crates/stickymd-render/tests/fixtures/rendering-stress.md" {
         return true;
@@ -151,7 +161,6 @@ fn is_shared(path: &str) -> bool {
             "governance.rs",
             "governance/",
             "evidence.rs",
-            "repository.rs",
             "pe_dependencies.rs",
         ]
         .iter()

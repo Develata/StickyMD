@@ -2481,6 +2481,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "stickymd-package"
+version = "0.2.0"
+
+[[package]]
 name = "stickymd-posix"
 version = "0.2.0"
 dependencies = [
@@ -2513,6 +2517,9 @@ dependencies = [
 [[package]]
 name = "stickymd-smoke"
 version = "0.2.0"
+dependencies = [
+ "stickymd-package",
+]
 
 [[package]]
 name = "stickymd-win"

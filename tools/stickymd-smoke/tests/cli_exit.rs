@@ -238,7 +238,6 @@ fn package_checksum_roles_must_refer_to_distinct_artifacts() {
 #[test]
 fn malformed_release_requests_never_emit_a_success_marker() {
     for args in [
-        vec!["release", "notices"],
         vec![
             "release",
             "verify-promoted",
@@ -256,35 +255,10 @@ fn malformed_release_requests_never_emit_a_success_marker() {
             "missing",
             "--runtime",
         ],
-        vec![
-            "release",
-            "notices",
-            "--destination",
-            "one",
-            "--destination",
-            "two",
-        ],
         vec!["release", "workspace-version", "--runtime"],
-        vec!["release", "prepare-package"],
-        vec!["release", "prepare-package", "--exe", "missing.exe"],
-        vec!["release", "syft-plan", "--runtime"],
-        vec![
-            "release",
-            "syft-publish",
-            "--kind",
-            "unknown",
-            "--input",
-            "file",
-        ],
-        vec!["release", "syft-verify"],
         vec!["release", "verify-package", "--exact-candidate"],
-        vec!["release", "checksums", "--zip", "missing"],
-        vec!["release", "publish-sbom", "--input", "missing"],
-        vec!["release", "publish-package", "--input", "missing"],
-        vec!["release", "prepare-sbom"],
         vec!["release", "verify-remote-state", "--kind", "tag"],
         vec!["release", "workspace-version", "--allow-missing"],
-        vec!["release", "checksums", "--zip=a", "--output=b", "--runtime"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
             .args(args)
@@ -293,6 +267,44 @@ fn malformed_release_requests_never_emit_a_success_marker() {
             .unwrap();
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stdout.is_empty());
+    }
+}
+
+/// The packaging commands moved to stickymd-package (plan 11 #platform-artifact-reuse); their
+/// own argument checks are in tools/stickymd-package/tests/cli_exit.rs. Naming one here, or the
+/// former `mac-ledger inputs`, fails and says which command replaced it.
+#[test]
+fn moved_packaging_commands_name_their_replacement() {
+    for (args, replacement) in [
+        (
+            vec!["release", "notices", "--destination", "x"],
+            "stickymd-package -- notices",
+        ),
+        (
+            vec![
+                "release",
+                "macos-package",
+                "--app",
+                "a",
+                "--output-directory",
+                "o",
+            ],
+            "stickymd-package -- macos-package",
+        ),
+        (
+            vec!["mac-ledger", "inputs", "--home", "/h"],
+            "stickymd-package -- app-inputs",
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_stickymd-smoke"))
+            .args(&args)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(replacement), "{args:?}: {stderr}");
     }
 }
 

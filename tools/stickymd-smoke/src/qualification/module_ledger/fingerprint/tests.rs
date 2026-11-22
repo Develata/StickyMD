@@ -566,7 +566,8 @@ fn legacy_digest(
     let mut files = 0;
     let mut bytes = 0;
     // Same v2 semantics as the batch: module digests see normalized manifests.
-    let normalizer = module.and_then(|_| super::normalize::VersionNormalizer::read(root, tracked));
+    let normalizer =
+        module.and_then(|_| stickymd_package::app_inputs::VersionNormalizer::read(root, tracked));
     for relative in tracked {
         if module.is_some_and(|m| path_domains(relative) & super::domains(m) == 0) {
             continue;
@@ -578,7 +579,7 @@ fn legacy_digest(
         output.write_all(name).unwrap();
         let source = root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
         if let Some(normalizer) = normalizer.as_ref()
-            && super::normalize::VersionNormalizer::applies_to(relative)
+            && stickymd_package::app_inputs::VersionNormalizer::applies_to(relative)
         {
             let raw = fs::read(&source).unwrap();
             let content = normalizer.normalize(relative, &raw);

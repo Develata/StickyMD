@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
-. (Join-Path $PSScriptRoot 'invoke-smoke.ps1')
+. (Join-Path $PSScriptRoot 'invoke-package.ps1')
 
 if (-not $PackageDirectory) { $PackageDirectory = Join-Path $repoRoot 'dist' }
 $PackageDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PackageDirectory)
@@ -23,4 +23,4 @@ $shellName = if ($PSVersionTable.PSEdition -eq 'Desktop') { 'powershell.exe' } e
 $arguments = @('generate-sbom', '--package-directory', $PackageDirectory, '--output', $OutputPath, '--powershell', (Join-Path $PSHOME $shellName))
 if ($ZipPath) { $arguments += @('--zip', $ZipPath) }
 if ($SyftPath) { $arguments += @('--syft-path', $SyftPath) }
-Invoke-StickyMdReleaseTool -RepoRoot $repoRoot -Arguments $arguments
+Invoke-StickyMdPackageTool -RepoRoot $repoRoot -Arguments $arguments
