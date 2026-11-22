@@ -282,3 +282,24 @@ Develata 的回复：“采用 B”。决定 2（过程宏绊线）与决定 3�
 
 本轮修正后在 macOS 27.2 arm64 上验证：fmt 与两组 clippy 均为 exit 0，`cargo test --workspace --exclude stickymd-win --locked` 1887 项通过、0 失败，
 `phase 00` PASS。“当前状态”一节中的未验证项不变：Windows 主机仍未运行，本轮的修正也还没有复审。
+
+### Windows CI（USER “推送跑 Windows”，2026-11-22）
+
+推送 `origin/feat/product-input-closure`（`f6b9ddd`）。这一推送也公开了 `feat/package-crate-split` 此前未推送的提交，共 28 个提交在 `origin/main` 之上。
+随后以 `workflow_dispatch` 运行 `ci.yml`，得到 run [45028821289](https://github.com/Develata/StickyMD/actions/runs/45028821289)，执行完整计划。
+
+- **已验证（Windows 主机）：** 两个 headless 分片（`all --ci` 的 tests 与 performance）的 governance 都是 PASSED，用时 106 秒与 95 秒；本机 macOS 约
+  12 秒，差额主要是产品检查的新编译。也就是说，下列各项都在 `windows-latest` 上对真实仓库运行过，且检查通过：
+  - `rustc -vV` 的主机判定；
+  - `--workspace --release` 的新编译；
+  - 单元位于 `release/deps`；
+  - `stickymd-win` 构建脚本单元的 dep-info（`filenames`、`.exe` 规则输出与 Windows 路径）。
+- **未验证（Windows 主机）：** P18-P11 中的 probe 测试没有在 Windows 上运行。tests 分片的 workspace tests 在 `stickymd-package` 的两项测试处失败并停止，
+  `stickymd-smoke` 的测试没有执行。这两项是父分支迁入打包 crate 的代码第一次在 Windows 上运行：
+  - `atomic.rs:399` 的 `ambiguous_spellings_are_refused_before_writing`，失败时的输出为 `NUL:`；
+  - `commands.rs:211` 的 `release_writers_cannot_target_qualification_storage`，`dist/evidence\..` 路径报 os error 3。
+
+  两项都不属于产品检查，留给 `feat/package-crate-split` 处理。
+- **结论：** P18-P12 仍为 `NOT TESTED`。它要求的测试集合在 Windows 上没有完整运行，证据栏记录了真实仓库检查的通过。其余 job 均通过：
+  plan 与 governance（Linux）、依赖策略、Linux smoke CLI、Linux portable-core、Windows format 与 lint、Windows release build、
+  Windows headless performance、macOS host。
