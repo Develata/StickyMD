@@ -57,11 +57,12 @@ pub fn normalize(path: &Path) -> String {
             component => normalized.push(component.as_os_str()),
         }
     }
-    let normalized = normalized.to_string_lossy().replace('\\', "/");
+    // `\\` separates only on Windows; elsewhere it is a character of a name.
+    let normalized = normalized.to_string_lossy();
     if cfg!(windows) {
-        normalized.to_lowercase()
+        normalized.replace('\\', "/").to_lowercase()
     } else {
-        normalized
+        normalized.into_owned()
     }
 }
 

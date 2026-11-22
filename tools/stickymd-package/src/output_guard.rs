@@ -101,22 +101,17 @@ impl<'a> Guard<'a> {
     }
 
     /// `create_dir_all` creates the missing lexical ancestors of a path one by one, each resolved
-    /// by the platform as `std::path::absolute` resolves it. On Windows `absolute` folds `..`
-    /// (`dist/evidence\..\x` becomes `dist\x`), so there every lexical ancestor is resolved that
-    /// way and checked too: only the ancestor `dist/evidence` still shows the reserved directory
-    /// the write would pass through. An ancestor without a named component (a drive, a root, a
-    /// share) already exists and is never created, so it is not checked on its own; the path
-    /// itself always is. Elsewhere `absolute` keeps `..`, and the check of the path already walks
-    /// its ancestors, so the path alone is checked, as before. Resolving with the writers' own
-    /// function keeps the guard and the writer on the same file, whatever form the path takes.
+    /// by the platform as `std::path::absolute` resolves it. So the path and every lexical
+    /// ancestor are resolved that way and checked: on Windows `absolute` folds `..`
+    /// (`dist/evidence\\..\\x` becomes `dist\\x`), and for any directory the final location
+    /// alone does not show a reserved directory the path passes through
+    /// (`target/resource-diagnostics/probe/../../release`). Only an ancestor that is nothing but a
+    /// drive or a root is skipped: it exists and is never created. Relative ancestors such as `..`
+    /// are checked, since they resolve against the working directory. Resolving with the writers'
+    /// own function keeps the guard and the writer on the same file, whatever form the path takes.
     fn check_ancestors(&self, path: &Path) -> Result<(), String> {
-        self.check(&resolve(path)?)?;
-        #[cfg(windows)]
-        for ancestor in path.ancestors().skip(1).filter(|ancestor| {
-            ancestor
-                .components()
-                .any(|part| matches!(part, std::path::Component::Normal(_)))
-        }) {
+        resolve(path)?;
+        for ancestor in checked_ancestors(path) {
             self.check(&resolve(ancestor)?)?;
         }
         Ok(())
@@ -153,6 +148,20 @@ pub fn check_file(root: &Path, path: &Path) -> Result<(), String> {
 /// [`Guard::check_directory`] with a fresh snapshot.
 pub fn check_directory(root: &Path, directory: &Path) -> Result<(), String> {
     Guard::new(root)?.check_directory(directory)
+}
+
+/// `path` and its lexical ancestors, without the empty one and without those made only of a drive
+/// prefix and a root.
+fn checked_ancestors(path: &Path) -> impl Iterator<Item = &Path> {
+    path.ancestors().filter(|ancestor| {
+        !ancestor.as_os_str().is_empty()
+            && !ancestor.components().all(|part| {
+                matches!(
+                    part,
+                    std::path::Component::Prefix(_) | std::path::Component::RootDir
+                )
+            })
+    })
 }
 
 /// `path` against the working directory, as the writers resolve it. An empty path, and on
@@ -300,6 +309,10 @@ mod tests {
                 .join("..")
                 .join("SHA256SUMS.txt");
             super::check_file(root, &lookalike).unwrap();
+            fs::create_dir_all(root.join("target/resource-diagnostics")).unwrap();
+            let through_cache = root.join("target/resource-diagnostics/probe/../../release");
+            let error = super::check_directory(root, &through_cache).unwrap_err();
+            assert!(error.contains("coordinator-owned"), "{error}");
         }
         super::check_directory(root, &root.join("dist/release")).unwrap();
         for empty in [
@@ -324,5 +337,26 @@ mod tests {
             );
         }
         assert!(super::check_directory(&cwd, Path::new("C:\\out\\a\0b")).is_err());
+    }
+
+    /// The ancestors checked: relative `..` steps are kept (they resolve against the working
+    /// directory, which may lie inside reserved storage); only a bare drive or root is dropped.
+    #[test]
+    fn relative_parents_are_checked_and_bare_roots_are_not() {
+        let listed = |path: &str| -> Vec<String> {
+            super::checked_ancestors(Path::new(path))
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        let separator = std::path::MAIN_SEPARATOR;
+        let parents = format!("..{separator}..{separator}SHA256SUMS.txt");
+        assert_eq!(
+            listed(&parents),
+            [parents.clone(), format!("..{separator}.."), "..".to_owned()]
+        );
+        let rooted = format!("{separator}out{separator}x.txt");
+        assert_eq!(listed(&rooted), [rooted.clone(), format!("{separator}out")]);
+        #[cfg(windows)]
+        assert_eq!(listed(r"C:\out\x.txt"), [r"C:\out\x.txt", r"C:\out"]);
     }
 }
