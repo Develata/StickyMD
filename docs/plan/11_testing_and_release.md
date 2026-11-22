@@ -807,9 +807,10 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
       含构建脚本可能声明的模块），以及每个固定副本中从 `  build-package:` 行到 `  verify-artifact:` 行之间的文本里原样搜索（不分大小写，注释也算）：
       不出现 `stickymd-smoke`、`stickymd_smoke`、`invoke-smoke.ps1`、`Invoke-StickyMdReleaseTool` 与 `tools/smoke/`（两种分隔符）。
     - **产品发布图（USER 决定 2026-11-22，“采用 B”）：** 在本次 `cargo check` 中，受检单元由 Rust 前端登记的文件都计入本平台指纹。governance 在 Windows 与 macOS
-      主机上各检查本平台。Windows 的固定构建不加 `--target`，所以 `rustc -vV` 报告的主机三元组须为 `x86_64-pc-windows-msvc`，否则检查失败（与检查器
-      自身为哪种架构编译、处理器是否仿真无关）；macOS 以 `--target aarch64-apple-darwin` 检查，缺少该目标时 `cargo check` 失败。在其他系统上
-      不适用（例如只跑 governance 的 Linux CI；两个平台的 `self-check` 都在原生主机上运行）。
+      主机上各检查本平台。Cargo 所启动的编译器（设置了 `RUSTC` 时为它，否则为 `PATH` 中的 `rustc`）以 `-vV` 报告的主机三元组须为本平台的三元组，
+      否则检查失败：Windows 为 `x86_64-pc-windows-msvc`，因为固定构建不加 `--target`；macOS 为 `aarch64-apple-darwin`，因为过程宏在主机上编译和运行，
+      交叉检查登记的文件可能不同。这一判定与检查器自身为哪种架构编译、处理器是否仿真无关。在其他系统上不适用（例如只跑 governance 的 Linux CI；
+      两个平台的 `self-check` 都在原生主机上运行）。
       - **构建：** 每次检查新建私有目录（同时作为 Cargo 的 target 与 build 目录），按固定发布构建的选择与 profile 运行一次 `cargo check`：Windows 为
         `--workspace --release`，不加 `--target`，与 `release` 的 `cargo build --workspace --release --locked` 相同（feature 按同一组成员合并）；macOS 为
         `-p stickymd-mac --release --target aarch64-apple-darwin`，与 `build-app.sh` 相同。`build-app.sh` 的全文（行尾统一为 LF 后）等于 `stickymd-smoke`
@@ -824,7 +825,8 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
         为桩的两个 macOS 成员）：Windows 为 `stickymd-mac`、`stickymd-posix`、`stickymd-package`、`stickymd-smoke`，macOS 为空；其他单元一律拒绝。
         依赖图中不得有 workspace 之外的本地包（metadata 中 `source` 为空的非成员，例如经 `[patch]` 或 path 依赖引入、由 `workspace.exclude` 排除的包），
         否则它们的文件不在任何检查之内。
-      - **文件：** 这些单元的 dep-info 按上文同样读取（规则行与逐文件行一致，不得有环境读取），并登记该单元自己的入口文件（metadata 的 `src_path`）；
+      - **文件：** 受检的 lib 与 bin 单元的产物须位于 build 目录下本平台目标的位置：Windows 为 `release/deps`（即没有生效的 `build.target`），macOS 为
+        `aarch64-apple-darwin/release/deps`。这些单元的 dep-info 按上文同样读取（规则行与逐文件行一致，不得有环境读取），并登记该单元自己的入口文件（metadata 的 `src_path`）；
         构建脚本单元的规则只指向这份 dep-info 与同名的可执行文件。登记的每个本地文件在 Git 索引中是普通文件，按索引中的原样拼写（因此不含 `..`
         与绝对路径），且为本平台的输入（分类器 `is_input`）。与上文一样，检查只观察本 job 的编译（见前提）。
     - **Cargo 配置：** Git 索引中首个路径分量按 ASCII 大小写不敏感等于 `.cargo` 的文件恰为普通文件 `.cargo/config.toml`（按此拼写；在大小写不敏感的
@@ -832,7 +834,7 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
       其他配置文件（`include`），也不让 rustc 从文件读取参数（`@文件`），因为这两种读取都不登记在 dep-info 中。
 
     **前提：** `self-check` 与 `build-package` 运行同一份固定 workflow、同一 runner 标签、同一检出与工具链；两者的有效编译配置（runner 环境中的
-    `RUSTFLAGS`、`CARGO_BUILD_TARGET`、Cargo home 中的配置）相同。检查只能观察本 job 的编译，这一前提不由它证明。能检查的只有一部分：两个发布 workflow 的固定副本不含下列字面串（原样
+    `RUSTFLAGS`、`CARGO_BUILD_TARGET`、`RUSTC`、Cargo home 中的配置，含 `build.rustc` 与 `build.target`）相同。检查只能观察本 job 的编译，这一前提不由它证明。能检查的只有一部分：两个发布 workflow 的固定副本不含下列字面串（原样
     搜索、不分大小写：`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`CARGO_BUILD_TARGET`、
     `CARGO_BUILD_BUILD_DIR`、`CARGO_TARGET_DIR`、`RUSTUP_TOOLCHAIN`、`RUSTC:`、`RUSTC=`、`env:RUSTC`），仓库内的 Cargo 配置计入指纹并等于固定副本（见“Cargo 配置”）。
     其他拼写与其他改变编译的变量（如 `CARGO_PROFILE_*`）、runner 镜像与 Cargo home 的配置，以及各调用点对环境的处理（例如 `build-app.sh` 以

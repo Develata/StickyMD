@@ -108,6 +108,7 @@ const PROBE: Build = Build {
     shipped: "ship",
     outside: &["aside"],
     command: ("", ""),
+    deps: "release/deps",
 };
 
 /// The probe's files, or the reason the compilation or the files are refused.
@@ -329,6 +330,23 @@ fn every_compiled_member_is_in_the_closure_or_listed_outside_it() {
     directory.close().unwrap();
 }
 
+/// Units compiled for another target than the platform's (as an effective `build.target` would)
+/// land in another directory and are refused.
+#[test]
+fn units_must_be_where_the_platform_s_target_puts_them() {
+    let directory = probe(&workspace(), &[]);
+    let elsewhere = Build {
+        deps: "aarch64-pc-windows-msvc/release/deps",
+        ..PROBE
+    };
+    let error = check(directory.path(), &elsewhere).unwrap_err();
+    assert!(
+        error.contains("not in") && error.contains("aarch64-pc-windows-msvc/release/deps"),
+        "{error}"
+    );
+    directory.close().unwrap();
+}
+
 /// A selection that does not build the shipped binary leaves an expected unit uncompiled.
 #[test]
 fn every_expected_unit_must_be_compiled() {
@@ -414,11 +432,13 @@ fn a_build_script_rule_names_only_its_dep_info_and_executable() {
     );
     assert!(compiled::parse_build_script(&rules(other), dep_info).is_err());
     let good = good.as_str();
+    // With this platform's suffix, so each fails for its stem or directory alone.
+    let suffix = if cfg!(windows) { ".exe" } else { "" };
     for output in [
-        "/t/b/x-1/build_script_build-2",
-        "/t/b/x-1/build_script_build-other.txt",
-        "/t/b/x-2/build_script_build-1",
-        "/t/b/x-1/sub/build_script_build-1",
+        format!("/t/b/x-1/build_script_build-2{suffix}"),
+        "/t/b/x-1/build_script_build-other.txt".to_owned(),
+        format!("/t/b/x-2/build_script_build-1{suffix}"),
+        format!("/t/b/x-1/sub/build_script_build-1{suffix}"),
     ] {
         let bad = format!("{dep_info}: a/build.rs\n\n{output}: a/build.rs\n\na/build.rs:\n");
         assert!(
@@ -564,6 +584,16 @@ fn the_builds_are_the_contract_s() {
     assert_eq!(MACOS.selection, ["-p", "stickymd-mac", "--target", triple]);
     assert!(bullet.contains(&format!("`-p stickymd-mac --release --target {triple}`")));
     assert_eq!(MACOS_TARGET_LINE, format!("target={triple}"));
+    // A host build's units, and a `--target` build's, where Cargo puts them; both named in plan 11.
+    assert_eq!(WINDOWS.deps, "release/deps");
+    assert_eq!(MACOS.deps, format!("{triple}/release/deps"));
+    for build in [&WINDOWS, &MACOS] {
+        assert!(
+            bullet.contains(&format!("`{}`", build.deps)),
+            "{}",
+            build.deps
+        );
+    }
     assert!(
         MACOS.command.1.starts_with(
             "clean cargo build -p stickymd-mac --release --locked --target \"$target\" "

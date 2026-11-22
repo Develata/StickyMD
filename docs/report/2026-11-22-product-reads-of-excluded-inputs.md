@@ -262,3 +262,23 @@ Develata 的回复：“采用 B”。决定 2（过程宏绊线）与决定 3�
 
 **未决（不是 USER 决定）：** 没有做过程宏绊线；分支叠在尚未合并的父分支上，合并前须 rebase。本分支改了父分支的 `package_boundary/compiled.rs`
 （可见性、`parse_rules`、`parse_build_script`）、`package_boundary.rs`（可见性），以及 plan 11 中“构建脚本”“清单与合同”“前提”“剩余”四段。
+
+### 第三轮窄复审（`a7b1336`）的处理（USER “先再审一轮”）
+
+- **合同：** 判为不通过。上一轮七项全部解决，新报 1 项 BLOCKER、1 项 SHOULD_FIX，都涉及主机判定。
+- **实现：** 判为通过，没有 BLOCKER。上一轮未关闭的各项均已解决（Windows 原生收据按设计保留），另报 2 项 SHOULD_FIX。
+
+逐项核对后都成立：
+
+- **Intel macOS 上的交叉检查（合同 BLOCKER）：** 过程宏按主机架构编译和运行，同一个过程宏可能按主机展开出不同的 include，所以交叉检查登记的文件
+  可能与原生构建不同。上一轮取消 Intel macOS 上的拒绝是错的。现在两个平台都要求编译器主机等于本平台的三元组，macOS 仍带 `--target`。
+- **生效的 `build.target`（合同 SHOULD_FIX）：** Windows 的检查不加 `--target`，Cargo home 中若设了 `build.target`，检查的就是另一个目标。现在受检单元的
+  产物必须位于 build 目录下本平台目标的位置（Windows `release/deps`，macOS `aarch64-apple-darwin/release/deps`）。这是 Cargo 报告的事实，新增负例
+  覆盖它。前提中也写明了 `RUSTC`、`build.rustc` 与 `build.target`。
+- **主机探针与 Cargo 实际使用的编译器（实现 SHOULD_FIX）：** 探针原先总是启动 `PATH` 中的 `rustc`。现在与 Cargo 一致，设置了 `RUSTC` 时用它。Cargo home 中的
+  `build.rustc` 无法从仓库观察，归入前提。
+- **构建脚本规则的负例（实现 SHOULD_FIX）：** stem 错误、目录错误与子目录三个负例改用本平台的后缀，在 Windows 上也只因各自的原因被拒。
+  另一平台后缀的负例保留。
+
+本轮修正后在 macOS 27.2 arm64 上验证：fmt 与两组 clippy 均为 exit 0，`cargo test --workspace --exclude stickymd-win --locked` 1887 项通过、0 失败，
+`phase 00` PASS。“当前状态”一节中的未验证项不变：Windows 主机仍未运行，本轮的修正也还没有复审。

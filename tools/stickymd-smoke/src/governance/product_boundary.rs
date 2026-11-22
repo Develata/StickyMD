@@ -30,6 +30,9 @@ pub(super) struct Build {
     pub(super) outside: &'static [&'static str],
     /// The file that runs the pinned build and its one `cargo build` line, trimmed.
     pub(super) command: (&'static str, &'static str),
+    /// Where, under the build directory, Cargo puts the units for this platform's target: a host
+    /// build (no `--target`, no effective `build.target`) uses `release/deps`.
+    pub(super) deps: &'static str,
 }
 
 pub(super) const WINDOWS: Build = Build {
@@ -48,6 +51,7 @@ pub(super) const WINDOWS: Build = Build {
         ".github/workflows/release.yml",
         "run: cargo build --workspace --release --locked",
     ),
+    deps: "release/deps",
 };
 
 pub(super) const MACOS: Build = Build {
@@ -60,6 +64,7 @@ pub(super) const MACOS: Build = Build {
         BUILD_APP,
         "clean cargo build -p stickymd-mac --release --locked --target \"$target\" --target-dir \"$repo/target\"",
     ),
+    deps: "aarch64-apple-darwin/release/deps",
 };
 
 /// The one line of the macOS build script that sets the target its `cargo build` uses.
@@ -70,31 +75,36 @@ const CARGO_CONFIG: &str = ".cargo/config.toml";
 /// The reviewed Cargo configuration: no `include`, no `@file` argument.
 const CARGO_CONFIG_PIN: &str = include_str!("product_boundary/pins/cargo-config.toml");
 
-/// The build this host repeats: on Windows the Windows x64 build, which names no `--target`, so
-/// rustc's own host must be `x86_64-pc-windows-msvc` (whatever the checker was compiled for or
-/// the processor emulates); on macOS the macOS arm64 build, whose `--target` makes `cargo check`
-/// fail where that target is missing; on another system none.
+/// The build this host repeats: the Windows x64 build on Windows, the macOS arm64 build on macOS,
+/// none on another system. The compiler's own host must be the platform's triple, whatever the
+/// checker was compiled for or the processor emulates: the Windows build names no `--target`,
+/// and procedural macros run on the host, so a cross check could register other files.
 fn host_build(root: &Path) -> Result<Option<&'static Build>, String> {
-    if cfg!(windows) {
-        let host = rustc_host(root)?;
-        if Some(host.as_str()) == WINDOWS.triple {
-            Ok(Some(&WINDOWS))
-        } else {
-            Err(format!(
-                "rustc's host is {host}; the Windows x64 release build plan 11's product check repeats compiles for x86_64-pc-windows-msvc without `--target`"
-            ))
-        }
+    let build = if cfg!(windows) {
+        &WINDOWS
     } else if cfg!(target_os = "macos") {
-        Ok(Some(&MACOS))
+        &MACOS
     } else {
-        Ok(None)
+        return Ok(None);
+    };
+    let host = rustc_host(root)?;
+    if Some(host.as_str()) == build.triple {
+        Ok(Some(build))
+    } else {
+        Err(format!(
+            "the compiler's host is {host}; plan 11's product check for {} needs a {} compiler",
+            build.platform.label(),
+            build.triple.unwrap_or("?")
+        ))
     }
 }
 
-/// The `host:` line of `rustc -vV`, from `PATH` in the workspace (through rustup, the pinned
-/// toolchain).
+/// The `host:` line of `-vV` from the compiler Cargo starts: `RUSTC` when set, otherwise `rustc`
+/// from `PATH` in the workspace (through rustup, the pinned toolchain). A `build.rustc` in Cargo
+/// home is a premise of plan 11, not observed here.
 fn rustc_host(root: &Path) -> Result<String, String> {
-    let output = std::process::Command::new("rustc")
+    let compiler = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let output = std::process::Command::new(compiler)
         .current_dir(root)
         .arg("-vV")
         .output()
@@ -474,9 +484,14 @@ fn files_in(
             names.get(missing.package.as_str()).unwrap_or(&"?")
         ));
     }
+    let deps = format!(
+        "{}/{}",
+        compiled::normalize(&directory.join("build").to_string_lossy())?,
+        build.deps
+    );
     let mut files = BTreeSet::new();
     for (unit, entry, name, message) in &units {
-        let paths = dep_info(message, unit.kind)
+        let paths = dep_info(message, unit.kind, &deps)
             .and_then(|paths| require_entry(paths, entry))
             .map_err(|e| format!("the {} `{}` of {name}: {e}", unit.kind, unit.name))?;
         files.extend(paths);
@@ -496,7 +511,7 @@ fn require_entry(paths: Vec<String>, entry: &str) -> Result<Vec<String>, String>
 /// The files a unit's dep-info registers: next to its `.rmeta` for a lib or bin; for a build
 /// script, the one hashed dep-info in the directory of the executable Cargo reports, whose rules
 /// may name only that dep-info and the hashed executable beside it.
-fn dep_info(message: &Value, kind: &str) -> Result<Vec<String>, String> {
+fn dep_info(message: &Value, kind: &str, deps: &str) -> Result<Vec<String>, String> {
     let filenames: Vec<&str> = message
         .field("filenames")?
         .array()?
@@ -508,6 +523,16 @@ fn dep_info(message: &Value, kind: &str) -> Result<Vec<String>, String> {
             .iter()
             .find(|name| name.ends_with(".rmeta"))
             .ok_or("no .rmeta")?;
+        // A unit compiled for another target (an effective `build.target`) lands elsewhere.
+        let directory = Path::new(rmeta)
+            .parent()
+            .ok_or("the .rmeta has no directory")?;
+        if compiled::normalize(&directory.to_string_lossy())? != deps {
+            return Err(format!(
+                "Cargo put it in {}, not in {deps}, where this platform's target puts it",
+                directory.display()
+            ));
+        }
         let path = compiled::dep_info_path(Path::new(rmeta))?;
         let text =
             std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
