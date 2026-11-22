@@ -318,3 +318,17 @@ Develata 授权“修好后推送重跑 CI”，由顶层 session 转达。父 s
 
 `fb97b82` 之后将由父分支的修订版 `47474cc` 取代：复审发现它会误拒按盘符或根目录给出的相对路径。父 session 要求在那份复审通过前，本分支不再合并或推送。
 这次重跑的授权已经用掉，再次推送需要新的授权。产品检查的代码不受该修订影响。
+
+### Windows CI 第二次重跑（`347ca7f`，2026-11-23）
+
+Develata 授权“允许再推一次”，由顶层 session 转达，前提是父分支的最终修复通过窄复审。父 session 给出的终版为 `b304417`：代码修复截至 `9ca7942`，
+`b304417` 只补报告中的 Resolution。它取代 `fb97b82`，后者是 `b304417` 的祖先。
+
+1. 将 `b304417` 合入本分支，得到 `347ca7f`。
+2. 本机基线：fmt、两组 clippy 均为 exit 0，测试 1890 项通过、0 失败，`phase 00` PASS。
+3. 核对推送范围：合并提交、`47474cc` 至 `b304417` 的 8 个修复提交，以及本地文档提交 `5510f72`，共涉及 5 个文件。
+4. 推送一次后重跑 `ci.yml`，得到 run [45040362344](https://github.com/Develata/StickyMD/actions/runs/45040362344)。**结论为 success，所有 job 通过。**
+   Windows tests 分片中，governance PASSED，用时 110 秒；workspace tests PASSED，`stickymd_package` 与 `stickymd_smoke` 的测试二进制都已运行。
+   这也是父分支只在 Windows 上运行的输出守卫测试第一次留下运行证据。P18-P12 的证据改指这次 run。
+
+这次的推送授权已经用掉，本节所在的文档提交只在本地。
