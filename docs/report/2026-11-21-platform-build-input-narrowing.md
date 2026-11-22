@@ -383,3 +383,10 @@ Windows `self-check` 就是证据；Windows 上的 PowerShell 包装测试；三
 
 **仍未验证：** 闭合世界检查从未在 Windows 上运行；本节所在提交未经复审。
 
+
+### Resolution（2026-11-22）：`env -i` 调用点
+
+Develata 的回复：“保留为前提”。
+
+`build-app.sh` 以 `env -i` 清空环境后运行打包工具、检查器与 workflow 中的其他调用继承环境，这一差异留在合同 `11` #platform-artifact-reuse 的
+“前提”中（“各调用点对环境的处理”），不改成检查。合同文字不变。
