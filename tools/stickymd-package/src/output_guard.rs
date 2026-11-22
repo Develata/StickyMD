@@ -80,25 +80,39 @@ impl<'a> Guard<'a> {
         Ok(Self { root, link_targets })
     }
 
-    /// Refuses `path` (resolved against the working directory, as the writers resolve it) as a
-    /// file a release command writes: the writer's spelling rules first, so no parent is created
-    /// for a path the writer would refuse, then the reserved storage.
+    /// Refuses `path` as a file a release command writes: the writer's spelling rules first, on
+    /// the path as given and as `std::path::absolute` resolves it (writers do both), so no parent
+    /// is created for a path a writer would refuse; then the reserved storage, for the file and
+    /// for every directory the write could create on the way (see [`Self::check_directory`]).
     pub fn check_file(&self, path: &Path) -> Result<(), String> {
-        // The writers check the path as they are given it; the resolved form is checked too,
-        // since resolution adds a base (which may be verbatim) in front of it.
         crate::atomic::check_spelling(path)?;
         #[cfg(windows)]
         crate::path_identity::validate_output_spelling(path)?;
-        let path = resolve(path)?;
-        crate::atomic::check_spelling(&path)?;
+        let resolved = resolve(path)?;
+        crate::atomic::check_spelling(&resolved)?;
         #[cfg(windows)]
-        crate::path_identity::validate_output_spelling(&path)?;
-        self.check(&path)
+        crate::path_identity::validate_output_spelling(&resolved)?;
+        self.check_ancestors(path)
     }
 
     /// Refuses `directory` as a directory a release command writes into.
     pub fn check_directory(&self, directory: &Path) -> Result<(), String> {
-        self.check(&resolve(directory)?)
+        self.check_ancestors(directory)
+    }
+
+    /// `create_dir_all` creates the missing lexical ancestors of a path one by one, each resolved
+    /// by the platform as `std::path::absolute` resolves it. So every lexical ancestor of `path`
+    /// (and `path` itself) is resolved that way and checked: on Windows `absolute` folds `..`
+    /// (`dist/evidence\..\x` becomes `dist\x`), and only the ancestor `dist/evidence` still shows
+    /// the reserved directory the write would pass through. Resolving with the writers' own
+    /// function keeps the guard and the writer on the same file, whatever form the path takes
+    /// (drive- or root-relative, UNC, a verbatim working directory).
+    fn check_ancestors(&self, path: &Path) -> Result<(), String> {
+        resolve(path)?;
+        for ancestor in path.ancestors().filter(|a| !a.as_os_str().is_empty()) {
+            self.check(&resolve(ancestor)?)?;
+        }
+        Ok(())
     }
 
     fn check(&self, path: &Path) -> Result<(), String> {
@@ -134,88 +148,11 @@ pub fn check_directory(root: &Path, directory: &Path) -> Result<(), String> {
     Guard::new(root)?.check_directory(directory)
 }
 
-/// `path` against the working directory, as the writers resolve it. Elsewhere than Windows,
-/// `std::path::absolute` keeps `..` and every name as written.
-#[cfg(not(windows))]
+/// `path` against the working directory, as the writers resolve it. An empty path, and on
+/// Windows one holding a NUL, is refused here as the writers refuse it.
 fn resolve(path: &Path) -> Result<PathBuf, String> {
     std::path::absolute(path)
         .map_err(|error| format!("cannot resolve output {}: {error}", path.display()))
-}
-
-/// `path` against the working directory, as the writers resolve it, and kept as written: no `..`
-/// collapsed and no device spelling mapped, so the spelling rules see the name the writer will be
-/// asked to create and [`reaches`] sees a reserved directory the path passes through.
-/// `std::path::absolute` cannot serve whole: on Windows it goes through `GetFullPathNameW`, which
-/// turns `dist/evidence\..\x` into `dist\x` and `NUL:` into `\\.\NUL`.
-#[cfg(windows)]
-fn resolve(path: &Path) -> Result<PathBuf, String> {
-    resolve_windows(path, &std::env::current_dir, &|head: &Path| {
-        std::path::absolute(head)
-    })
-}
-
-/// Only the head that Win32 gives a base to is resolved, and the rest of the path is appended to
-/// that base as text, unit for unit:
-/// - an absolute path is kept as given;
-/// - a drive-relative path (`C:x`) takes that drive's working directory (`absolute("C:")`);
-/// - a root-relative path (`\x`) takes the current drive's root (`absolute("\")`);
-/// - any other relative path takes the working directory.
-///
-/// Appending as text, never with `join`, keeps a rest such as `C:x` (from `\C:x`) from being read
-/// as a new drive, and keeps `..` on a verbatim base, where `join` would fold it. On a verbatim
-/// base (`\\?\`) `.` and `..` are plain names to Win32, so a rest that holds them has no single
-/// meaning and is refused; a rest without them is appended as it is. An empty path, or one holding
-/// a NUL, names nothing on Windows and is refused, as `absolute` refuses it.
-#[cfg(windows)]
-fn resolve_windows(
-    path: &Path,
-    current_dir: &dyn Fn() -> std::io::Result<PathBuf>,
-    absolute: &dyn Fn(&Path) -> std::io::Result<PathBuf>,
-) -> Result<PathBuf, String> {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
-    use std::path::{Component, Prefix};
-    let fail = |why: String| format!("cannot resolve output {}: {why}", path.display());
-    let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
-    if wide.is_empty() || wide.contains(&0) {
-        return Err(fail("the path is empty or holds a NUL".to_owned()));
-    }
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
-    }
-    let (head, base) = match path.components().next() {
-        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_)) => {
-            let head = prefix.as_os_str();
-            (head.encode_wide().count(), absolute(Path::new(head)))
-        }
-        Some(Component::Prefix(_)) => {
-            return Err(fail("an unsupported relative prefix".to_owned()));
-        }
-        Some(Component::RootDir) => (1, absolute(Path::new("\\"))),
-        _ => (0, current_dir()),
-    };
-    let base = base.map_err(|error| fail(error.to_string()))?;
-    let rest = &wide[head..];
-    let verbatim = matches!(
-        base.components().next(),
-        Some(Component::Prefix(prefix)) if prefix.kind().is_verbatim()
-    );
-    if verbatim
-        && Path::new(&OsString::from_wide(rest))
-            .components()
-            .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
-    {
-        return Err(fail(format!(
-            "the base {} is a verbatim path, where `.` and `..` are names; give an absolute output path",
-            base.display()
-        )));
-    }
-    let mut joined: Vec<u16> = base.as_os_str().encode_wide().collect();
-    if !rest.is_empty() && !matches!(joined.last(), Some(0x5C | 0x2F)) {
-        joined.push(0x5C);
-    }
-    joined.extend_from_slice(rest);
-    Ok(PathBuf::from(OsString::from_wide(&joined)))
 }
 
 /// The store always lives at `<git common dir>/stickymd/qualification-ledger`. Matching
@@ -316,98 +253,52 @@ fn existing_directory(base: &Path, pointer: &str, label: &str) -> Result<PathBuf
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::Path;
 
-    /// Relative outputs join the working directory with their `..` kept, so a reserved
-    /// directory the path passes through is still seen; an absolute path is kept as given; an
-    /// empty path names nothing, through either public entry. The expected text is built apart
-    /// from the code under test, whatever the working directory ends with.
+    /// A write whose path passes through reserved storage on its way elsewhere is refused even
+    /// where `absolute` folds the `..` (Windows), because the ancestor shows it; a sibling output
+    /// is not; an empty path names nothing.
     #[test]
-    fn outputs_resolve_against_the_working_directory_keeping_parents() {
-        let cwd = std::env::current_dir().unwrap();
-        let separator = std::path::MAIN_SEPARATOR;
-        let relative = format!("dist{separator}evidence{separator}..{separator}x.txt");
-        let mut expected = cwd.clone().into_os_string();
-        if !cwd.as_os_str().to_string_lossy().ends_with(['/', '\\']) {
-            expected.push(separator.to_string());
+    fn a_path_through_reserved_storage_is_refused_by_its_ancestors() {
+        let directory = crate::temporary::TemporaryDirectory::new("guard-ancestors").unwrap();
+        let root = directory.path();
+        fs::create_dir_all(root.join("dist/evidence")).unwrap();
+        fs::create_dir_all(root.join("dist/release")).unwrap();
+        let through = root
+            .join("dist")
+            .join("evidence")
+            .join("..")
+            .join("SHA256SUMS.txt");
+        for error in [
+            super::check_file(root, &through).unwrap_err(),
+            super::check_directory(root, &through).unwrap_err(),
+        ] {
+            assert!(error.contains("coordinator-owned"), "{error}");
         }
-        expected.push(&relative);
-        let resolved = super::resolve(Path::new(&relative)).unwrap();
-        assert_eq!(resolved.as_os_str(), expected.as_os_str());
-        assert!(
-            resolved
-                .components()
-                .any(|part| part == std::path::Component::ParentDir)
-        );
-        let absolute = cwd.join("a").join("..").join("b");
-        assert_eq!(super::resolve(&absolute).unwrap(), absolute);
-        assert!(super::resolve(Path::new("")).is_err());
-        assert!(super::check_file(&cwd, Path::new("")).is_err());
-        assert!(super::check_directory(&cwd, Path::new("")).is_err());
+        super::check_file(root, &root.join("dist/release/SHA256SUMS.txt")).unwrap();
+        super::check_directory(root, &root.join("dist/release")).unwrap();
+        for empty in [
+            super::check_file(root, Path::new("")),
+            super::check_directory(root, Path::new("")),
+        ] {
+            assert!(empty.is_err());
+        }
+        directory.close().unwrap();
     }
 
-    /// Windows, with fixed bases standing in for the working directory, a drive's working
-    /// directory and the current drive's root: only the head is resolved, and the rest (`..`,
-    /// `/`, device spellings, a leading `C:`) is appended as written. Every expected value is a
-    /// literal.
+    /// Windows: the spelling rules run on the path as given, before `absolute` could map a device
+    /// name or read a leading `C:` of a later component; a NUL is refused.
     #[cfg(windows)]
     #[test]
-    fn windows_paths_keep_their_spelling_after_the_head() {
-        use std::path::PathBuf;
-        let resolve = |path: &str, cwd: &str, drive: &str, root: &str| {
-            let (cwd, drive, root) = (cwd.to_owned(), drive.to_owned(), root.to_owned());
-            super::resolve_windows(
-                Path::new(path),
-                &move || Ok(PathBuf::from(&cwd)),
-                &move |head| {
-                    Ok(PathBuf::from(if head == Path::new("\\") {
-                        &root
-                    } else {
-                        &drive
-                    }))
-                },
-            )
-            .map(|resolved| resolved.into_os_string().into_string().unwrap())
-        };
-        let ordinary = |path: &str| resolve(path, r"C:\repo", r"C:\repo", r"C:\");
-        for (input, expected) in [
-            (r"C:\a\evidence\..\x.txt", r"C:\a\evidence\..\x.txt"),
-            (r"C:\a\fresh\NUL:", r"C:\a\fresh\NUL:"),
-            (r"dist/evidence\..\x.txt", r"C:\repo\dist/evidence\..\x.txt"),
-            (r"\out\..\SHA256SUMS.txt", r"C:\out\..\SHA256SUMS.txt"),
-            (r"C:out\..\NUL:", r"C:\repo\out\..\NUL:"),
-            // The rest's leading `C:` stays a name: the colon rule then sees it.
-            (r"\C:report.txt", r"C:\C:report.txt"),
-            (r"C:", r"C:\repo"),
-        ] {
-            assert_eq!(ordinary(input).unwrap(), expected, "{input}");
-        }
-        // A base that ends in a separator, and a UNC working directory.
-        assert_eq!(
-            resolve("x.txt", r"C:\", r"C:\", r"C:\").unwrap(),
-            r"C:\x.txt"
-        );
-        assert_eq!(
-            resolve(r"out\x.txt", r"\\server\share\repo", r"C:\", r"C:\").unwrap(),
-            r"\\server\share\repo\out\x.txt"
-        );
-        // A verbatim base keeps a plain rest and refuses one with `.` or `..`.
-        let verbatim = |path: &str| resolve(path, r"\\?\C:\repo", r"\\?\C:\repo", r"\\?\C:\");
-        assert_eq!(
-            verbatim(r"out\SHA256SUMS.txt").unwrap(),
-            r"\\?\C:\repo\out\SHA256SUMS.txt"
-        );
-        for refused in [r"dist\evidence\..\x.txt", r".\x.txt", r"C:out\..\x.txt"] {
-            let error = verbatim(refused).unwrap_err();
-            assert!(error.contains("verbatim"), "{refused}: {error}");
-        }
-        for refused in ["", "a\0b", "C:\\out\\a\0b"] {
-            assert!(ordinary(refused).is_err(), "{refused:?}");
-        }
-        // Through the public entries: the colon of `\C:report.txt`, and a NUL in an absolute path.
+    fn windows_spellings_are_checked_as_given() {
         let cwd = std::env::current_dir().unwrap();
-        assert!(super::check_file(&cwd, Path::new(r"\C:report.txt")).is_err());
-        assert!(super::check_file(&cwd, Path::new("C:\\out\\a\0b")).is_err());
+        for refused in [r"\C:report.txt", r"fresh\NUL:", "C:\\out\\a\0b"] {
+            assert!(
+                super::check_file(&cwd, Path::new(refused)).is_err(),
+                "{refused:?}"
+            );
+        }
         assert!(super::check_directory(&cwd, Path::new("C:\\out\\a\0b")).is_err());
     }
 }
