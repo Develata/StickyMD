@@ -101,15 +101,22 @@ impl<'a> Guard<'a> {
     }
 
     /// `create_dir_all` creates the missing lexical ancestors of a path one by one, each resolved
-    /// by the platform as `std::path::absolute` resolves it. So every lexical ancestor of `path`
-    /// (and `path` itself) is resolved that way and checked: on Windows `absolute` folds `..`
-    /// (`dist/evidence\..\x` becomes `dist\x`), and only the ancestor `dist/evidence` still shows
-    /// the reserved directory the write would pass through. Resolving with the writers' own
-    /// function keeps the guard and the writer on the same file, whatever form the path takes
-    /// (drive- or root-relative, UNC, a verbatim working directory).
+    /// by the platform as `std::path::absolute` resolves it. On Windows `absolute` folds `..`
+    /// (`dist/evidence\..\x` becomes `dist\x`), so there every lexical ancestor is resolved that
+    /// way and checked too: only the ancestor `dist/evidence` still shows the reserved directory
+    /// the write would pass through. An ancestor without a named component (a drive, a root, a
+    /// share) already exists and is never created, so it is not checked on its own; the path
+    /// itself always is. Elsewhere `absolute` keeps `..`, and the check of the path already walks
+    /// its ancestors, so the path alone is checked, as before. Resolving with the writers' own
+    /// function keeps the guard and the writer on the same file, whatever form the path takes.
     fn check_ancestors(&self, path: &Path) -> Result<(), String> {
-        resolve(path)?;
-        for ancestor in path.ancestors().filter(|a| !a.as_os_str().is_empty()) {
+        self.check(&resolve(path)?)?;
+        #[cfg(windows)]
+        for ancestor in path.ancestors().skip(1).filter(|ancestor| {
+            ancestor
+                .components()
+                .any(|part| matches!(part, std::path::Component::Normal(_)))
+        }) {
             self.check(&resolve(ancestor)?)?;
         }
         Ok(())
@@ -258,18 +265,26 @@ mod tests {
 
     /// A write whose path passes through reserved storage on its way elsewhere is refused even
     /// where `absolute` folds the `..` (Windows), because the ancestor shows it; a sibling output
-    /// is not; an empty path names nothing.
+    /// is not; an empty path names nothing. On Unix a `\` is part of a name: a directory spelled
+    /// `target\resource-diagnostics` is not the reserved diagnostics cache.
     #[test]
     fn a_path_through_reserved_storage_is_refused_by_its_ancestors() {
         let directory = crate::temporary::TemporaryDirectory::new("guard-ancestors").unwrap();
         let root = directory.path();
         fs::create_dir_all(root.join("dist/evidence")).unwrap();
         fs::create_dir_all(root.join("dist/release")).unwrap();
-        let through = root
-            .join("dist")
-            .join("evidence")
-            .join("..")
-            .join("SHA256SUMS.txt");
+        // Built as text, so that no `join` (which folds `..` on a verbatim base) can remove the
+        // `..` before the guard sees it.
+        let separator = std::path::MAIN_SEPARATOR;
+        let through = std::path::PathBuf::from(format!(
+            "{}{separator}dist{separator}evidence{separator}..{separator}SHA256SUMS.txt",
+            root.display()
+        ));
+        assert!(
+            through
+                .components()
+                .any(|part| part == std::path::Component::ParentDir)
+        );
         for error in [
             super::check_file(root, &through).unwrap_err(),
             super::check_directory(root, &through).unwrap_err(),
@@ -277,6 +292,15 @@ mod tests {
             assert!(error.contains("coordinator-owned"), "{error}");
         }
         super::check_file(root, &root.join("dist/release/SHA256SUMS.txt")).unwrap();
+        #[cfg(unix)]
+        {
+            fs::create_dir_all(root.join("target\\resource-diagnostics")).unwrap();
+            let lookalike = root
+                .join("target\\resource-diagnostics")
+                .join("..")
+                .join("SHA256SUMS.txt");
+            super::check_file(root, &lookalike).unwrap();
+        }
         super::check_directory(root, &root.join("dist/release")).unwrap();
         for empty in [
             super::check_file(root, Path::new("")),
