@@ -213,15 +213,20 @@ pub(in crate::governance) fn parse(text: &str) -> Result<Vec<String>, String> {
 
 /// [`parse`] for a build script's unit, which links an executable: each rule names `dep_info`
 /// itself (the hashed `build_script_build-HASH.d` that was read) or the hashed executable beside
-/// it (`.exe` on Windows). Windows compares paths without ASCII case, as its file system does.
+/// it, `build_script_build-HASH.exe` on Windows and without an extension elsewhere. Windows
+/// compares paths without ASCII case, as its file system does.
 pub(in crate::governance) fn parse_build_script(
     text: &str,
     dep_info: &str,
 ) -> Result<Vec<String>, String> {
-    let executable = dep_info
+    let stem = dep_info
         .strip_suffix(".d")
         .ok_or_else(|| format!("{dep_info} is not a dep-info"))?;
-    let windows_executable = format!("{executable}.exe");
+    let executable = if cfg!(windows) {
+        format!("{stem}.exe")
+    } else {
+        stem.to_owned()
+    };
     let same = |left: &str, right: &str| {
         if cfg!(windows) {
             left.eq_ignore_ascii_case(right)
@@ -230,11 +235,7 @@ pub(in crate::governance) fn parse_build_script(
         }
     };
     parse_rules(text, &|output| {
-        normalize(output).is_ok_and(|output| {
-            same(&output, dep_info)
-                || same(&output, executable)
-                || (cfg!(windows) && same(&output, &windows_executable))
-        })
+        normalize(output).is_ok_and(|output| same(&output, dep_info) || same(&output, &executable))
     })
 }
 

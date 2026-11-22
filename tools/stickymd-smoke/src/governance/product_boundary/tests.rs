@@ -345,6 +345,26 @@ fn every_expected_unit_must_be_compiled() {
     directory.close().unwrap();
 }
 
+/// A member that is also a build dependency compiles a second unit of the same lib (the build
+/// profile differs), which the rule refuses rather than check one and skip the other.
+#[test]
+fn a_target_compiled_twice_is_refused() {
+    let manifest = package(
+        "ship",
+        "[dependencies]\nbase = { path = \"../../crates/base\" }\n\n[build-dependencies]\nbase = { path = \"../../crates/base\" }\n",
+    );
+    let directory = probe_with(
+        &[
+            ("apps/ship/Cargo.toml", &manifest),
+            ("apps/ship/build.rs", "fn main() {\n    base::f();\n}\n"),
+        ],
+        &[],
+    );
+    let error = check(directory.path(), &PROBE).unwrap_err();
+    assert!(error.contains("the lib `base` of base twice"), "{error}");
+    directory.close().unwrap();
+}
+
 /// A unit reused from an earlier compilation of the same directory carries old dep-info.
 #[test]
 fn a_reused_unit_is_refused() {
@@ -372,11 +392,28 @@ fn a_dep_info_must_name_its_unit_s_entry() {
 #[test]
 fn a_build_script_rule_names_only_its_dep_info_and_executable() {
     let dep_info = "/t/b/x-1/build_script_build-1.d";
-    let good = "/t/b/x-1/build_script_build-1.d: a/build.rs\n\n/t/b/x-1/build_script_build-1: a/build.rs\n\na/build.rs:\n";
+    let rules = |executable: &str| {
+        format!("{dep_info}: a/build.rs\n\n{executable}: a/build.rs\n\na/build.rs:\n")
+    };
+    // The executable as this platform names it, and the other platform's name, refused.
+    let (own, other) = if cfg!(windows) {
+        (
+            "/t/b/x-1/build_script_build-1.exe",
+            "/t/b/x-1/build_script_build-1",
+        )
+    } else {
+        (
+            "/t/b/x-1/build_script_build-1",
+            "/t/b/x-1/build_script_build-1.exe",
+        )
+    };
+    let good = rules(own);
     assert_eq!(
-        compiled::parse_build_script(good, dep_info).unwrap(),
+        compiled::parse_build_script(&good, dep_info).unwrap(),
         ["a/build.rs"]
     );
+    assert!(compiled::parse_build_script(&rules(other), dep_info).is_err());
+    let good = good.as_str();
     for output in [
         "/t/b/x-1/build_script_build-2",
         "/t/b/x-1/build_script_build-other.txt",
@@ -389,13 +426,6 @@ fn a_build_script_rule_names_only_its_dep_info_and_executable() {
             "{output}"
         );
     }
-    let exe = format!(
-        "{dep_info}: a/build.rs\n\n/t/b/x-1/build_script_build-1.exe: a/build.rs\n\na/build.rs:\n"
-    );
-    assert_eq!(
-        compiled::parse_build_script(&exe, dep_info).is_ok(),
-        cfg!(windows)
-    );
     assert!(compiled::parse_build_script(good, "/t/b/x-1/build_script_build-1").is_err());
     // A lib's rules stay as they were.
     assert!(compiled::parse(good).is_err());
@@ -461,6 +491,11 @@ fn the_cargo_configuration_is_the_reviewed_file_alone() {
             (".cargo/config.toml", "100644"),
             (".cargo/config", "100644"),
         ]),
+        index(&[
+            (".cargo/config.toml", "100644"),
+            (".CARGO/config", "100644"),
+        ]),
+        index(&[(".Cargo/config.toml", "100644")]),
         index(&[(".cargo/config.toml", "120000")]),
         index(&[("Cargo.toml", "100644")]),
     ] {
@@ -520,6 +555,10 @@ fn the_builds_are_the_contract_s() {
         "`{}`",
         WINDOWS.command.1.trim_start_matches("run: ")
     )));
+    // Both pinned build lines and the macOS target line, verbatim.
+    for line in [WINDOWS.command.1, MACOS.command.1, MACOS_TARGET_LINE] {
+        assert!(bullet.contains(&format!("`{line}`")), "{line}");
+    }
     // macOS: the script builds the one package for the target its target line names.
     let triple = MACOS.triple.unwrap();
     assert_eq!(MACOS.selection, ["-p", "stickymd-mac", "--target", triple]);

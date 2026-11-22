@@ -211,3 +211,26 @@ Develata 的回复：“采用 B”。决定 2（过程宏绊线）与决定 3�
 - **待验证（实现第 8 项）：** Windows x64 主机的原生运行仍是 P18-P12 的 `NOT TESTED`，包括构建脚本的 `filenames`、选中的 `.d` 与规则输出。
 
 不改的：没有恢复过程宏绊线（两份复审都不要求）；审查者提到的“包内 README 记录构建来源，在 R 上重新打包不会逐字节相同”与本规则无关，因为沿用时不重新打包。
+
+### 窄范围复审（`90b9432`）的处理
+
+两份窄复审仍判为不通过。合同侧新报 2 项 BLOCKER、1 项 SHOULD_FIX，上轮六项中 2 项解决、4 项部分解决；实现侧新报 1 项 BLOCKER、2 项 SHOULD_FIX，
+上轮八项中 5 项解决、2 项部分解决、1 项未解决。逐项核对后都成立：
+
+- **Cargo 配置的目录按大小写敏感匹配（两份都报）：** 在大小写不敏感的卷上，Cargo 也读 `.CARGO/config`，而且优先于 `config.toml`。现在按 ASCII
+  大小写不敏感匹配首个路径分量 `.cargo`，所得集合须恰为 `.cargo/config.toml`；新增 `.CARGO/config` 与 `.Cargo/config.toml` 两个负例。
+- **禁词扫描的范围（合同 BLOCKER）：** 前提中“固定副本不含 `RUSTFLAGS` 等字面串”原本泛指一切固定副本，与 Cargo 配置副本中的 `rustflags` 冲突。
+  实现本来只扫描两个发布 workflow 的副本，现在合同也写明这一范围。
+- **git 来源的锁定方式（合同 SHOULD_FIX）：** registry 归档由校验和锁定，git 来源由精确的提交锁定，且 `deny.toml` 禁止 git 来源。
+- **措辞（合同复核 1、4、5 项）：**
+  - 首句改为“在本次 `cargo check` 中，受检单元由 Rust 前端登记的文件”；
+  - 单元改为按 target 计数；
+  - 两行固定的 `cargo build` 与 macOS 的目标行逐字写进合同，并由测试与合同原文核对。
+- **构建脚本的可执行文件名（实现 SHOULD_FIX）：** 规则只认本平台的名字：Windows 为 `.exe`，其他平台无扩展名。另一平台的名字作为负例。
+- **主机判定（实现 SHOULD_FIX）：** Windows ARM64 上可以运行 x64 仿真的检查器，用 `cfg!` 判断主机会判错，而真正决定编译目标的是 rustc 自己的主机：
+  Windows 的固定构建不加 `--target`。现在读 `rustc -vV` 的 `host:` 行，不是 `x86_64-pc-windows-msvc` 即失败。
+  macOS 始终以 `--target aarch64-apple-darwin` 检查，缺目标时 `cargo check` 自己失败；原先 Intel macOS 上的拒绝随之取消，因为交叉检查得到的
+  dep-info 同样有效。
+- **重复单元（实现复核第 7 项）：** 新增负例：同一成员同时作为 normal 与 build 依赖。release 下构建依赖用另一个 profile，会多出一个单元，而且该单元
+  完整编译、规则指向 `.rlib`。为了让它以“编译两次”的理由被拒，检查改为两遍：先核对单元集合，包括重复与缺失，再读各单元的 dep-info。
+- **Windows 原生收据（实现复核第 8 项）：** 仍是 P18-P12 的 `NOT TESTED`，本机无法补。

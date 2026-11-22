@@ -70,24 +70,43 @@ const CARGO_CONFIG: &str = ".cargo/config.toml";
 /// The reviewed Cargo configuration: no `include`, no `@file` argument.
 const CARGO_CONFIG_PIN: &str = include_str!("product_boundary/pins/cargo-config.toml");
 
-/// The build this host repeats: each platform's own on its release architecture, none on another
-/// system, a refusal on another architecture of either, which cannot repeat the release build.
-fn host_build() -> Result<Option<&'static Build>, String> {
+/// The build this host repeats: on Windows the Windows x64 build, which names no `--target`, so
+/// rustc's own host must be `x86_64-pc-windows-msvc` (whatever the checker was compiled for or
+/// the processor emulates); on macOS the macOS arm64 build, whose `--target` makes `cargo check`
+/// fail where that target is missing; on another system none.
+fn host_build(root: &Path) -> Result<Option<&'static Build>, String> {
     if cfg!(windows) {
-        if cfg!(all(target_arch = "x86_64", target_env = "msvc")) {
+        let host = rustc_host(root)?;
+        if Some(host.as_str()) == WINDOWS.triple {
             Ok(Some(&WINDOWS))
         } else {
-            Err("this Windows host is not x86_64 MSVC and cannot repeat the Windows x64 release build plan 11's product check needs".to_owned())
+            Err(format!(
+                "rustc's host is {host}; the Windows x64 release build plan 11's product check repeats compiles for x86_64-pc-windows-msvc without `--target`"
+            ))
         }
     } else if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "aarch64") {
-            Ok(Some(&MACOS))
-        } else {
-            Err("this macOS host is not arm64 and cannot repeat the macOS arm64 release build plan 11's product check needs".to_owned())
-        }
+        Ok(Some(&MACOS))
     } else {
         Ok(None)
     }
+}
+
+/// The `host:` line of `rustc -vV`, from `PATH` in the workspace (through rustup, the pinned
+/// toolchain).
+fn rustc_host(root: &Path) -> Result<String, String> {
+    let output = std::process::Command::new("rustc")
+        .current_dir(root)
+        .arg("-vV")
+        .output()
+        .map_err(|error| format!("cannot start `rustc -vV`: {error}"))?;
+    if !output.status.success() {
+        return Err("`rustc -vV` failed".to_owned());
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .map(str::to_owned)
+        .ok_or_else(|| "`rustc -vV` names no host".to_owned())
 }
 
 pub(super) fn verify(root: &Path) -> Result<(), String> {
@@ -103,7 +122,7 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
     .map_err(|e| format!("{}: {e}", WINDOWS.command.0))?;
     check_command(&build_app, MACOS.command.1, Some(MACOS_TARGET_LINE))
         .map_err(|e| format!("{BUILD_APP}: {e}"))?;
-    let Some(build) = host_build()? else {
+    let Some(build) = host_build(root)? else {
         return Ok(());
     };
     let files = compiled_files(root, build)?;
@@ -126,11 +145,17 @@ fn check_pin(path: &str, text: &str, pin: &str) -> Result<(), String> {
     }
 }
 
-/// The repository's Cargo configuration is exactly `.cargo/config.toml`, as reviewed.
+/// The repository's Cargo configuration is exactly `.cargo/config.toml`, as reviewed. The
+/// directory is matched without ASCII case: on a case-insensitive volume Cargo reads
+/// `.CARGO/config` as `.cargo/config`, and prefers it.
 fn check_cargo_config(index: &Index, text: &str) -> Result<(), String> {
     let files: Vec<&String> = index
         .keys()
-        .filter(|path| path.starts_with(".cargo/"))
+        .filter(|path| {
+            path.split('/')
+                .next()
+                .is_some_and(|first| first.eq_ignore_ascii_case(".cargo"))
+        })
         .collect();
     if files != [CARGO_CONFIG] || !REGULAR_MODES.contains(&index[CARGO_CONFIG].as_str()) {
         return Err(format!(
@@ -383,7 +408,7 @@ fn files_in(
         .map(|(name, id)| (id.as_str(), name.as_str()))
         .collect();
     let mut seen = BTreeSet::new();
-    let mut files = BTreeSet::new();
+    let mut units = Vec::new();
     for line in stdout.lines() {
         let message = json::parse(line)
             .map_err(|e| format!("`cargo check` wrote a line that is not JSON: {e}"))?;
@@ -430,17 +455,16 @@ fn files_in(
                 unit.name
             ));
         }
-        let paths = dep_info(&message, kind)
-            .and_then(|paths| require_entry(paths, entry))
-            .map_err(|e| format!("the {kind} `{}` of {name}: {e}", unit.name))?;
         if !seen.insert(unit.clone()) {
             return Err(format!(
                 "`cargo check` reported the {kind} `{}` of {name} twice",
                 unit.name
             ));
         }
-        files.extend(paths);
+        units.push((unit, entry, name, message));
     }
+    // The set of units first, so a target compiled twice is reported as such, whichever copy
+    // Cargo reports first; then each unit's dep-info.
     if let Some(missing) = scope.expected.keys().find(|unit| !seen.contains(*unit)) {
         return Err(format!(
             "`cargo check --release {}` compiled no unit for the {} `{}` of {}",
@@ -449,6 +473,13 @@ fn files_in(
             missing.name,
             names.get(missing.package.as_str()).unwrap_or(&"?")
         ));
+    }
+    let mut files = BTreeSet::new();
+    for (unit, entry, name, message) in &units {
+        let paths = dep_info(message, unit.kind)
+            .and_then(|paths| require_entry(paths, entry))
+            .map_err(|e| format!("the {} `{}` of {name}: {e}", unit.kind, unit.name))?;
+        files.extend(paths);
     }
     Ok(files.into_iter().collect())
 }
