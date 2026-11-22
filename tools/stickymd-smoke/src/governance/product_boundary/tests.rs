@@ -10,44 +10,63 @@ fn the_real_repository_keeps_the_product_boundary() {
     verify(&root).unwrap();
 }
 
-/// A scratch Git workspace: `apps/ship` (the shipped bin) depends on the lib at `base`, and
-/// `tools/aside` is a member outside its closure. `extra` adds or replaces files; files named in
-/// `untracked` stay out of the index.
-fn probe(base: &str, extra: &[(&str, &str)], untracked: &[&str]) -> TemporaryDirectory {
+fn package(name: &str, rest: &str) -> String {
+    format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n{rest}")
+}
+
+/// A scratch workspace: `apps/ship` (the shipped bin) depends on the lib `crates/base`, and
+/// `tools/aside` is a member outside its closure.
+fn workspace() -> BTreeMap<String, String> {
+    [
+        (
+            "Cargo.toml",
+            "[workspace]\nresolver = \"2\"\nmembers = [\"apps/ship\", \"crates/base\", \"tools/aside\"]\n"
+                .to_owned(),
+        ),
+        (
+            "apps/ship/Cargo.toml",
+            package(
+                "ship",
+                "[dependencies]\nbase = { path = \"../../crates/base\" }\n",
+            ),
+        ),
+        (
+            "apps/ship/src/main.rs",
+            "fn main() {\n    base::f();\n}\n".to_owned(),
+        ),
+        ("crates/base/Cargo.toml", package("base", "")),
+        ("crates/base/src/lib.rs", "pub fn f() {}\n".to_owned()),
+        ("tools/aside/Cargo.toml", package("aside", "")),
+        ("tools/aside/src/main.rs", "fn main() {}\n".to_owned()),
+        ("docs/x.md", "one\n".to_owned()),
+    ]
+    .into_iter()
+    .map(|(path, text)| (path.to_owned(), text))
+    .collect()
+}
+
+/// Git for the scratch repository alone: an inherited `GIT_DIR` or `GIT_INDEX_FILE` (a hook, a
+/// caller's environment) would point it at another repository.
+fn scratch_git(root: &Path) -> std::process::Command {
+    let mut command = crate::release::platform_inputs::git(root);
+    for variable in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(variable);
+    }
+    command
+}
+
+/// Writes `files` into a new Git repository, with a lock file, and adds all but `untracked`.
+fn probe(files: &BTreeMap<String, String>, untracked: &[&str]) -> TemporaryDirectory {
     let directory = TemporaryDirectory::new("product-probe").unwrap();
     let root = directory.path();
-    let mut files: BTreeMap<String, String> = BTreeMap::new();
-    let package = |name: &str, dependencies: &str| {
-        format!(
-            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\n{dependencies}"
-        )
-    };
-    files.insert(
-        "Cargo.toml".to_owned(),
-        format!(
-            "[workspace]\nresolver = \"2\"\nmembers = [\"apps/ship\", \"{base}\", \"tools/aside\"]\n"
-        ),
-    );
-    files.insert(
-        "apps/ship/Cargo.toml".to_owned(),
-        package("ship", &format!("base = {{ path = \"../../{base}\" }}\n")),
-    );
-    files.insert(
-        "apps/ship/src/main.rs".to_owned(),
-        "fn main() {\n    base::f();\n}\n".to_owned(),
-    );
-    files.insert(format!("{base}/Cargo.toml"), package("base", ""));
-    files.insert(format!("{base}/src/lib.rs"), "pub fn f() {}\n".to_owned());
-    files.insert("tools/aside/Cargo.toml".to_owned(), package("aside", ""));
-    files.insert(
-        "tools/aside/src/main.rs".to_owned(),
-        "fn main() {}\n".to_owned(),
-    );
-    files.insert("docs/x.md".to_owned(), "one\n".to_owned());
-    for (path, text) in extra {
-        files.insert((*path).to_owned(), (*text).to_owned());
-    }
-    for (path, text) in &files {
+    for (path, text) in files {
         let path = root.join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
@@ -61,15 +80,24 @@ fn probe(base: &str, extra: &[(&str, &str)], untracked: &[&str]) -> TemporaryDir
         );
     };
     run(compiled::cargo().args(["generate-lockfile", "--offline"]));
-    run(crate::release::platform_inputs::git(root).args(["init", "-q"]));
+    run(scratch_git(root).args(["init", "-q"]));
     let tracked: Vec<&String> = files
         .keys()
         .filter(|path| !untracked.contains(&path.as_str()))
         .collect();
-    run(crate::release::platform_inputs::git(root)
+    run(scratch_git(root)
         .args(["add", "Cargo.lock", "--"])
         .args(tracked));
     directory
+}
+
+/// The probe workspace with `changes` applied.
+fn probe_with(changes: &[(&str, &str)], untracked: &[&str]) -> TemporaryDirectory {
+    let mut files = workspace();
+    for (path, text) in changes {
+        files.insert((*path).to_owned(), (*text).to_owned());
+    }
+    probe(&files, untracked)
 }
 
 /// The probe's build: every platform's metadata, the workspace selection, the macOS classifier.
@@ -79,21 +107,39 @@ const PROBE: Build = Build {
     selection: &["--workspace"],
     shipped: "ship",
     outside: &["aside"],
-    pinned: &[],
+    command: ("", ""),
 };
 
 /// The probe's files, or the reason the compilation or the files are refused.
 fn check(root: &Path, build: &Build) -> Result<Vec<String>, String> {
     let files = compiled_files(root, build)?;
-    check_files(&files, &git_index(root)?, build.platform)?;
+    // The scratch repository's own index, whatever the caller's Git environment.
+    let output = scratch_git(root)
+        .args(["ls-files", "-z", "--cached", "--stage"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let index = super::super::package_boundary::parse_index(&output.stdout)?;
+    check_files(&files, &index, build.platform)?;
     Ok(files)
 }
 
 #[test]
 fn the_closure_s_registered_files_are_counted_tracked_files() {
-    let directory = probe("crates/base", &[], &[]);
+    let directory = probe(&workspace(), &[]);
     let files = check(directory.path(), &PROBE).unwrap();
     assert_eq!(files, ["apps/ship/src/main.rs", "crates/base/src/lib.rs"]);
+    directory.close().unwrap();
+}
+
+#[test]
+fn the_shipped_member_s_lib_is_checked_with_its_bin() {
+    let directory = probe_with(&[("apps/ship/src/lib.rs", "pub fn g() {}\n")], &[]);
+    let files = check(directory.path(), &PROBE).unwrap();
+    assert!(
+        files.iter().any(|file| file == "apps/ship/src/lib.rs"),
+        "{files:?}"
+    );
     directory.close().unwrap();
 }
 
@@ -102,7 +148,7 @@ fn the_closure_s_registered_files_are_counted_tracked_files() {
 #[test]
 fn an_include_that_leaves_the_tracked_spelling_is_refused() {
     let lib = "pub fn f() {}\npub const X: &str = include_str!(\"../../../docs/x.md\");\n";
-    let directory = probe("crates/base", &[("crates/base/src/lib.rs", lib)], &[]);
+    let directory = probe_with(&[("crates/base/src/lib.rs", lib)], &[]);
     let error = check(directory.path(), &PROBE).unwrap_err();
     assert!(
         error.contains("crates/base/src/../../../docs/x.md")
@@ -115,8 +161,7 @@ fn an_include_that_leaves_the_tracked_spelling_is_refused() {
 #[test]
 fn an_untracked_file_is_refused() {
     let lib = "pub fn f() {}\npub const Y: &str = include_str!(\"y.txt\");\n";
-    let directory = probe(
-        "crates/base",
+    let directory = probe_with(
         &[
             ("crates/base/src/lib.rs", lib),
             ("crates/base/src/y.txt", "y"),
@@ -125,7 +170,8 @@ fn an_untracked_file_is_refused() {
     );
     let error = check(directory.path(), &PROBE).unwrap_err();
     assert!(
-        error.contains("crates/base/src/y.txt") && error.contains("does not track"),
+        error.contains("crates/base/src/y.txt")
+            && error.contains("does not track under that spelling"),
         "{error}"
     );
     directory.close().unwrap();
@@ -135,7 +181,29 @@ fn an_untracked_file_is_refused() {
 /// still refused, since the fingerprint does not count them.
 #[test]
 fn a_file_the_platform_does_not_count_is_refused() {
-    let directory = probe("experiments/base", &[], &[]);
+    let mut files = workspace();
+    files.retain(|path, _| !path.starts_with("crates/base/"));
+    files.insert(
+        "Cargo.toml".to_owned(),
+        "[workspace]\nresolver = \"2\"\nmembers = [\"apps/ship\", \"experiments/base\", \"tools/aside\"]\n"
+            .to_owned(),
+    );
+    files.insert(
+        "apps/ship/Cargo.toml".to_owned(),
+        package(
+            "ship",
+            "[dependencies]\nbase = { path = \"../../experiments/base\" }\n",
+        ),
+    );
+    files.insert(
+        "experiments/base/Cargo.toml".to_owned(),
+        package("base", ""),
+    );
+    files.insert(
+        "experiments/base/src/lib.rs".to_owned(),
+        "pub fn f() {}\n".to_owned(),
+    );
+    let directory = probe(&files, &[]);
     let error = check(directory.path(), &PROBE).unwrap_err();
     assert!(
         error.contains("experiments/base/src/lib.rs")
@@ -145,10 +213,40 @@ fn a_file_the_platform_does_not_count_is_refused() {
     directory.close().unwrap();
 }
 
+/// A local package the workspace excludes is linked into the product but is no member: refused
+/// before anything compiles.
+#[test]
+fn a_local_package_outside_the_workspace_is_refused() {
+    let directory = probe_with(
+        &[
+            (
+                "Cargo.toml",
+                "[workspace]\nresolver = \"2\"\nmembers = [\"apps/ship\", \"crates/base\", \"tools/aside\"]\nexclude = [\"experiments/vendor\"]\n",
+            ),
+            (
+                "apps/ship/Cargo.toml",
+                &package(
+                    "ship",
+                    "[dependencies]\nbase = { path = \"../../crates/base\" }\nvendor = { path = \"../../experiments/vendor\" }\n",
+                ),
+            ),
+            ("experiments/vendor/Cargo.toml", &package("vendor", "")),
+            ("experiments/vendor/src/lib.rs", "pub fn v() {}\n"),
+        ],
+        &[],
+    );
+    let error = check(directory.path(), &PROBE).unwrap_err();
+    assert!(
+        error.contains("vendor") && error.contains("local package outside the workspace"),
+        "{error}"
+    );
+    directory.close().unwrap();
+}
+
 #[test]
 fn an_environment_read_is_refused() {
     let lib = "pub fn f() {}\npub const V: Option<&str> = option_env!(\"STICKYMD_PROBE_UNSET\");\n";
-    let directory = probe("crates/base", &[("crates/base/src/lib.rs", lib)], &[]);
+    let directory = probe_with(&[("crates/base/src/lib.rs", lib)], &[]);
     let error = check(directory.path(), &PROBE).unwrap_err();
     assert!(
         error.contains("STICKYMD_PROBE_UNSET") && error.contains("environment"),
@@ -160,11 +258,7 @@ fn an_environment_read_is_refused() {
 /// The build script's own unit is checked too: a module it declares outside the tracked spelling.
 #[test]
 fn a_build_script_s_files_are_checked() {
-    let directory = probe(
-        "crates/base",
-        &[("apps/ship/build.rs", "fn main() {}\n")],
-        &[],
-    );
+    let directory = probe_with(&[("apps/ship/build.rs", "fn main() {}\n")], &[]);
     let files = check(directory.path(), &PROBE).unwrap();
     assert!(
         files.iter().any(|file| file == "apps/ship/build.rs"),
@@ -172,21 +266,42 @@ fn a_build_script_s_files_are_checked() {
     );
     directory.close().unwrap();
     let script = "#[path = \"../../docs/m.rs\"]\nmod m;\nfn main() {}\n";
-    let directory = probe(
-        "crates/base",
-        &[("apps/ship/build.rs", script), ("docs/m.rs", "\n")],
-        &[],
-    );
+    let directory = probe_with(&[("apps/ship/build.rs", script), ("docs/m.rs", "\n")], &[]);
     let error = check(directory.path(), &PROBE).unwrap_err();
-    assert!(error.contains("apps/ship/../../docs/m.rs"), "{error}");
+    assert!(
+        error.contains("apps/ship/../../docs/m.rs")
+            && error.contains("does not track under that spelling"),
+        "{error}"
+    );
+    directory.close().unwrap();
+}
+
+/// The packaging step takes the binary by the member's name: a renamed bin, or a second one, is
+/// refused rather than checked in its place.
+#[test]
+fn the_shipped_member_has_exactly_one_bin_named_like_it() {
+    let renamed = package(
+        "ship",
+        "[[bin]]\nname = \"other\"\npath = \"src/main.rs\"\n\n[dependencies]\nbase = { path = \"../../crates/base\" }\n",
+    );
+    let directory = probe_with(&[("apps/ship/Cargo.toml", &renamed)], &[]);
+    let error = check(directory.path(), &PROBE).unwrap_err();
+    assert!(
+        error.contains("[\"other\"]") && error.contains("exactly one, named ship"),
+        "{error}"
+    );
+    directory.close().unwrap();
+    let directory = probe_with(&[("apps/ship/src/bin/extra.rs", "fn main() {}\n")], &[]);
+    let error = check(directory.path(), &PROBE).unwrap_err();
+    assert!(error.contains("exactly one, named ship"), "{error}");
     directory.close().unwrap();
 }
 
 /// The partition is closed: a compiled member outside the closure must be listed, and a listed
-/// member must not be in the closure.
+/// member must exist and not be in the closure.
 #[test]
 fn every_compiled_member_is_in_the_closure_or_listed_outside_it() {
-    let directory = probe("crates/base", &[], &[]);
+    let directory = probe(&workspace(), &[]);
     let unlisted = Build {
         outside: &[],
         ..PROBE
@@ -207,14 +322,33 @@ fn every_compiled_member_is_in_the_closure_or_listed_outside_it() {
         ..PROBE
     };
     let error = check(directory.path(), &unknown).unwrap_err();
-    assert!(error.contains("ghost"), "{error}");
+    assert!(
+        error.contains("ghost") && error.contains("not a workspace member"),
+        "{error}"
+    );
+    directory.close().unwrap();
+}
+
+/// A selection that does not build the shipped binary leaves an expected unit uncompiled.
+#[test]
+fn every_expected_unit_must_be_compiled() {
+    let directory = probe(&workspace(), &[]);
+    let partial = Build {
+        selection: &["-p", "base"],
+        ..PROBE
+    };
+    let error = check(directory.path(), &partial).unwrap_err();
+    assert!(
+        error.contains("compiled no unit for the bin `ship`"),
+        "{error}"
+    );
     directory.close().unwrap();
 }
 
 /// A unit reused from an earlier compilation of the same directory carries old dep-info.
 #[test]
 fn a_reused_unit_is_refused() {
-    let directory = probe("crates/base", &[], &[]);
+    let directory = probe(&workspace(), &[]);
     let root = directory.path();
     let scope = scope(&cargo_metadata(root, None).unwrap(), &PROBE).unwrap();
     let build_directory = root.join("check");
@@ -225,46 +359,118 @@ fn a_reused_unit_is_refused() {
 }
 
 #[test]
-fn a_build_script_rule_names_its_own_directory() {
+fn a_dep_info_must_name_its_unit_s_entry() {
+    let paths = vec!["a/src/lib.rs".to_owned(), "a/src/x.rs".to_owned()];
+    assert!(require_entry(paths.clone(), "a/src/lib.rs").is_ok());
+    let error = require_entry(paths, "b/src/lib.rs").unwrap_err();
+    assert!(
+        error.contains("does not name its entry b/src/lib.rs"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_build_script_rule_names_only_its_dep_info_and_executable() {
+    let dep_info = "/t/b/x-1/build_script_build-1.d";
     let good = "/t/b/x-1/build_script_build-1.d: a/build.rs\n\n/t/b/x-1/build_script_build-1: a/build.rs\n\na/build.rs:\n";
     assert_eq!(
-        compiled::parse_build_script(good, "/t/b/x-1").unwrap(),
+        compiled::parse_build_script(good, dep_info).unwrap(),
         ["a/build.rs"]
     );
     for output in [
+        "/t/b/x-1/build_script_build-2",
+        "/t/b/x-1/build_script_build-other.txt",
         "/t/b/x-2/build_script_build-1",
-        "/t/b/x-1/other-1",
         "/t/b/x-1/sub/build_script_build-1",
     ] {
-        let bad = format!("{output}: a/build.rs\n\na/build.rs:\n");
+        let bad = format!("{dep_info}: a/build.rs\n\n{output}: a/build.rs\n\na/build.rs:\n");
         assert!(
-            compiled::parse_build_script(&bad, "/t/b/x-1").is_err(),
+            compiled::parse_build_script(&bad, dep_info).is_err(),
             "{output}"
         );
     }
+    let exe = format!(
+        "{dep_info}: a/build.rs\n\n/t/b/x-1/build_script_build-1.exe: a/build.rs\n\na/build.rs:\n"
+    );
+    assert_eq!(
+        compiled::parse_build_script(&exe, dep_info).is_ok(),
+        cfg!(windows)
+    );
+    assert!(compiled::parse_build_script(good, "/t/b/x-1/build_script_build-1").is_err());
     // A lib's rules stay as they were.
     assert!(compiled::parse(good).is_err());
 }
 
 #[test]
-fn the_pinned_commands_must_still_run() {
-    let directory = TemporaryDirectory::new("product-pins").unwrap();
-    let root = directory.path();
-    std::fs::create_dir_all(root.join(".github/workflows")).unwrap();
-    std::fs::write(
-        root.join(".github/workflows/release.yml"),
-        "run: cargo build --workspace --locked\n",
-    )
-    .unwrap();
-    let error = check_pinned(root, &WINDOWS).unwrap_err();
-    assert!(
-        error.contains("no longer runs `cargo build --workspace --release --locked`"),
-        "{error}"
-    );
-    directory.close().unwrap();
+fn the_build_command_is_the_one_repeated() {
+    let command = "clean cargo build -p x --release";
+    let target = Some("target=t");
+    let good = "#!/bin/sh\ntarget=t\n  clean cargo build -p x --release\n";
+    assert!(check_command(good, command, target).is_ok());
+    assert!(check_command(&good.replace('\n', "\r\n"), command, target).is_ok());
+    for (bad, why) in [
+        (
+            "target=t\nclean cargo build -p x --release --features y\n",
+            "a flag on the same line",
+        ),
+        (
+            "target=t\n# clean cargo build -p x --release\nclean cargo build -p y --release\n",
+            "a comment keeping the old command",
+        ),
+        (
+            "target=t\nclean cargo build -p x --release\ncargo build -p z\n",
+            "a second build",
+        ),
+        ("target=t\n", "no build"),
+        (
+            "target=u\nclean cargo build -p x --release\n",
+            "another target",
+        ),
+        (
+            "target=t\ntarget=u\nclean cargo build -p x --release\n",
+            "a second target",
+        ),
+    ] {
+        assert!(check_command(bad, command, target).is_err(), "{why}");
+    }
 }
 
-/// The shipped binaries, the selections, the outside lists and the pinned commands are plan 11's.
+#[test]
+fn a_pinned_file_must_equal_its_copy_up_to_line_ends() {
+    assert!(check_pin("f", "a\r\nb\r\n", "a\nb\n").is_ok());
+    let error = check_pin("f", "a\nc\n", "a\nb\n").unwrap_err();
+    assert!(error.contains("f differs from its pinned copy"), "{error}");
+}
+
+#[test]
+fn the_cargo_configuration_is_the_reviewed_file_alone() {
+    let index = |entries: &[(&str, &str)]| -> Index {
+        entries
+            .iter()
+            .map(|(path, mode)| ((*path).to_owned(), (*mode).to_owned()))
+            .collect()
+    };
+    let good = index(&[(".cargo/config.toml", "100644"), ("Cargo.toml", "100644")]);
+    assert!(check_cargo_config(&good, CARGO_CONFIG_PIN).is_ok());
+    assert!(check_cargo_config(&good, &CARGO_CONFIG_PIN.replace('\n', "\r\n")).is_ok());
+    let changed = format!("{CARGO_CONFIG_PIN}include = [\"../docs/release.toml\"]\n");
+    let error = check_cargo_config(&good, &changed).unwrap_err();
+    assert!(error.contains("differs from its pinned copy"), "{error}");
+    for bad in [
+        index(&[
+            (".cargo/config.toml", "100644"),
+            (".cargo/config", "100644"),
+        ]),
+        index(&[(".cargo/config.toml", "120000")]),
+        index(&[("Cargo.toml", "100644")]),
+    ] {
+        let error = check_cargo_config(&bad, CARGO_CONFIG_PIN).unwrap_err();
+        assert!(error.contains("admits exactly the regular file"), "{error}");
+    }
+}
+
+/// The shipped binaries, the selections, the outside lists and the commands are plan 11's, and
+/// each command is the pinned build the selection repeats.
 #[test]
 fn the_builds_are_the_contract_s() {
     let root = crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap();
@@ -279,8 +485,7 @@ fn the_builds_are_the_contract_s() {
         .find("闭包外的 workspace 单元只能属于下列成员")
         .unwrap();
     let to = from + bullet[from..].find("其他单元一律拒绝").unwrap();
-    let listed = &bullet[from..to];
-    let windows: BTreeSet<&str> = listed
+    let windows: BTreeSet<&str> = bullet[from..to]
         .split_once("Windows 为 ")
         .unwrap()
         .1
@@ -298,21 +503,40 @@ fn the_builds_are_the_contract_s() {
             "{}",
             build.shipped
         );
-    }
-    assert!(bullet.contains("`--workspace --release`"));
-    assert_eq!(WINDOWS.selection, ["--workspace"]);
-    let mac = format!(
-        "`-p stickymd-mac --release --target {}`",
-        MACOS.triple.unwrap()
-    );
-    assert!(bullet.contains(&mac), "{mac}");
-    assert_eq!(
-        MACOS.selection,
-        ["-p", "stickymd-mac", "--target", MACOS.triple.unwrap()]
-    );
-    assert!(bullet.contains(&format!("`{}`", WINDOWS.pinned[0].1)));
-    for build in [&WINDOWS, &MACOS] {
         assert_eq!(build.platform.target(), build.triple.unwrap());
         assert_eq!(build.platform.host_package(), build.shipped);
     }
+    // Windows: the workflow's build line is the selection, with `--release --locked`.
+    assert_eq!(WINDOWS.selection, ["--workspace"]);
+    assert!(bullet.contains("`--workspace --release`"));
+    assert_eq!(
+        WINDOWS.command.1,
+        format!(
+            "run: cargo build {} --release --locked",
+            WINDOWS.selection.join(" ")
+        )
+    );
+    assert!(bullet.contains(&format!(
+        "`{}`",
+        WINDOWS.command.1.trim_start_matches("run: ")
+    )));
+    // macOS: the script builds the one package for the target its target line names.
+    let triple = MACOS.triple.unwrap();
+    assert_eq!(MACOS.selection, ["-p", "stickymd-mac", "--target", triple]);
+    assert!(bullet.contains(&format!("`-p stickymd-mac --release --target {triple}`")));
+    assert_eq!(MACOS_TARGET_LINE, format!("target={triple}"));
+    assert!(
+        MACOS.command.1.starts_with(
+            "clean cargo build -p stickymd-mac --release --locked --target \"$target\" "
+        )
+    );
+    // The workflow equals its pin (the packaging boundary); the script's pin is checked here.
+    check_command(
+        &read_text(&root, WINDOWS.command.0).unwrap(),
+        WINDOWS.command.1,
+        None,
+    )
+    .unwrap();
+    check_command(BUILD_APP_PIN, MACOS.command.1, Some(MACOS_TARGET_LINE)).unwrap();
+    assert_eq!(MACOS.command.0, BUILD_APP);
 }

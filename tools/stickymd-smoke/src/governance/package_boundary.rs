@@ -159,7 +159,7 @@ pub(super) fn git_index(root: &Path) -> Result<Index, String> {
 }
 
 /// `<mode> <object> <stage>\t<path>` records, each ended by NUL.
-fn parse_index(stdout: &[u8]) -> Result<Index, String> {
+pub(super) fn parse_index(stdout: &[u8]) -> Result<Index, String> {
     let mut index = BTreeMap::new();
     for record in stdout.split(|byte| *byte == 0).filter(|r| !r.is_empty()) {
         let record =

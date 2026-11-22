@@ -1,11 +1,12 @@
-//! The product crates' compile-time inputs (plan 11 #platform-artifact-reuse, "产品发布图"): every
-//! file rustc registers compiling the shipped binary's dependency closure is an input the
-//! platform's fingerprint counts, so changing only an excluded file (`docs/` and the like) cannot
-//! change the release bytes while the fingerprint stays. On a Windows x64 or macOS arm64 host the
-//! check repeats that platform's pinned release build as a fresh `cargo check` in a private
-//! directory, scopes it with Cargo metadata, and reads each unit's dep-info; elsewhere only the
-//! pinned commands are compared. Facts only: Cargo's metadata and messages, rustc's dep-info, the
-//! Git index and raw searches; nothing here parses Rust.
+//! The product crates' compile-time inputs (plan 11 #platform-artifact-reuse, "产品发布图" and
+//! "Cargo 配置"): every file the Rust front end registers compiling the shipped binary's
+//! dependency closure is an input the platform's fingerprint counts, so changing only an excluded
+//! file (`docs/` and the like) cannot change what rustc reads while the fingerprint stays. On a
+//! Windows x64 or macOS arm64 host the check repeats that platform's pinned release build as a
+//! fresh `cargo check` in a private directory, scopes it with Cargo metadata and reads each unit's
+//! dep-info; on every host it compares the macOS build script and the Cargo configuration with
+//! their pinned copies. Facts only: Cargo's metadata and messages, rustc's dep-info, the Git
+//! index, pinned copies and raw searches; nothing here parses Rust, shell or TOML.
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse
 
 use super::package_boundary::compiled;
@@ -23,12 +24,12 @@ pub(super) struct Build {
     pub(super) triple: Option<&'static str>,
     /// What follows `cargo check --locked --release`: the pinned build's selection and target.
     pub(super) selection: &'static [&'static str],
-    /// The member whose binary ships.
+    /// The host member, whose one bin target, named like it, ships.
     pub(super) shipped: &'static str,
     /// The workspace members the pinned selection compiles outside the shipped closure.
     pub(super) outside: &'static [&'static str],
-    /// The pinned build's command, found by raw search in the file that runs it.
-    pub(super) pinned: &'static [(&'static str, &'static str)],
+    /// The file that runs the pinned build and its one `cargo build` line, trimmed.
+    pub(super) command: (&'static str, &'static str),
 }
 
 pub(super) const WINDOWS: Build = Build {
@@ -43,10 +44,10 @@ pub(super) const WINDOWS: Build = Build {
         "stickymd-posix",
         "stickymd-smoke",
     ],
-    pinned: &[(
+    command: (
         ".github/workflows/release.yml",
-        "cargo build --workspace --release --locked",
-    )],
+        "run: cargo build --workspace --release --locked",
+    ),
 };
 
 pub(super) const MACOS: Build = Build {
@@ -55,50 +56,112 @@ pub(super) const MACOS: Build = Build {
     selection: &["-p", "stickymd-mac", "--target", "aarch64-apple-darwin"],
     shipped: "stickymd-mac",
     outside: &[],
-    pinned: &[
-        (BUILD_APP, "target=aarch64-apple-darwin\n"),
-        (
-            BUILD_APP,
-            "cargo build -p stickymd-mac --release --locked --target \"$target\"",
-        ),
-    ],
+    command: (
+        BUILD_APP,
+        "clean cargo build -p stickymd-mac --release --locked --target \"$target\" --target-dir \"$repo/target\"",
+    ),
 };
 
-/// The build this host can repeat: each platform checks its own, any other host neither.
-fn host_build() -> Option<&'static Build> {
-    if cfg!(all(windows, target_arch = "x86_64", target_env = "msvc")) {
-        Some(&WINDOWS)
-    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        Some(&MACOS)
+/// The one line of the macOS build script that sets the target its `cargo build` uses.
+const MACOS_TARGET_LINE: &str = "target=aarch64-apple-darwin";
+/// The reviewed macOS build script; the Windows workflow has its own pin (`workflow` module).
+const BUILD_APP_PIN: &str = include_str!("product_boundary/pins/build-app.sh");
+const CARGO_CONFIG: &str = ".cargo/config.toml";
+/// The reviewed Cargo configuration: no `include`, no `@file` argument.
+const CARGO_CONFIG_PIN: &str = include_str!("product_boundary/pins/cargo-config.toml");
+
+/// The build this host repeats: each platform's own on its release architecture, none on another
+/// system, a refusal on another architecture of either, which cannot repeat the release build.
+fn host_build() -> Result<Option<&'static Build>, String> {
+    if cfg!(windows) {
+        if cfg!(all(target_arch = "x86_64", target_env = "msvc")) {
+            Ok(Some(&WINDOWS))
+        } else {
+            Err("this Windows host is not x86_64 MSVC and cannot repeat the Windows x64 release build plan 11's product check needs".to_owned())
+        }
+    } else if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            Ok(Some(&MACOS))
+        } else {
+            Err("this macOS host is not arm64 and cannot repeat the macOS arm64 release build plan 11's product check needs".to_owned())
+        }
     } else {
-        None
+        Ok(None)
     }
 }
 
 pub(super) fn verify(root: &Path) -> Result<(), String> {
-    for build in [&WINDOWS, &MACOS] {
-        check_pinned(root, build)?;
-    }
-    let Some(build) = host_build() else {
+    let index = git_index(root)?;
+    let build_app = read_text(root, BUILD_APP)?;
+    check_pin(BUILD_APP, &build_app, BUILD_APP_PIN)?;
+    check_cargo_config(&index, &read_text(root, CARGO_CONFIG)?)?;
+    check_command(
+        &read_text(root, WINDOWS.command.0)?,
+        WINDOWS.command.1,
+        None,
+    )
+    .map_err(|e| format!("{}: {e}", WINDOWS.command.0))?;
+    check_command(&build_app, MACOS.command.1, Some(MACOS_TARGET_LINE))
+        .map_err(|e| format!("{BUILD_APP}: {e}"))?;
+    let Some(build) = host_build()? else {
         return Ok(());
     };
-    let index = git_index(root)?;
     let files = compiled_files(root, build)?;
     check_files(&files, &index, build.platform)
 }
 
-/// The check repeats the pinned build only while that build still runs the same command.
-fn check_pinned(root: &Path, build: &Build) -> Result<(), String> {
-    for (file, command) in build.pinned {
-        let text = std::fs::read(root.join(file)).map_err(|e| format!("{file}: {e}"))?;
-        let found = text
-            .windows(command.len())
-            .any(|window| window == command.as_bytes());
-        if !found {
+fn read_text(root: &Path, relative: &str) -> Result<String, String> {
+    let bytes = std::fs::read(root.join(relative)).map_err(|e| format!("{relative}: {e}"))?;
+    String::from_utf8(bytes).map_err(|_| format!("{relative} is not UTF-8"))
+}
+
+/// `text` equals the reviewed copy once both end lines with LF.
+fn check_pin(path: &str, text: &str, pin: &str) -> Result<(), String> {
+    if text.replace("\r\n", "\n") == pin.replace("\r\n", "\n") {
+        Ok(())
+    } else {
+        Err(format!(
+            "{path} differs from its pinned copy; plan 11 has the product check repeat the reviewed build, so change both"
+        ))
+    }
+}
+
+/// The repository's Cargo configuration is exactly `.cargo/config.toml`, as reviewed.
+fn check_cargo_config(index: &Index, text: &str) -> Result<(), String> {
+    let files: Vec<&String> = index
+        .keys()
+        .filter(|path| path.starts_with(".cargo/"))
+        .collect();
+    if files != [CARGO_CONFIG] || !REGULAR_MODES.contains(&index[CARGO_CONFIG].as_str()) {
+        return Err(format!(
+            "the tracked Cargo configuration is {files:?}; plan 11 admits exactly the regular file {CARGO_CONFIG}"
+        ));
+    }
+    check_pin(CARGO_CONFIG, text, CARGO_CONFIG_PIN)
+}
+
+/// Exactly one line runs `cargo build`, and it is `command` (both trimmed); with `target`, exactly
+/// one line starts with `target=`, and it is that one. A comment keeping an old command, a flag
+/// added on the same line or a second build all fail.
+fn check_command(text: &str, command: &str, target: Option<&str>) -> Result<(), String> {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let builds: Vec<&&str> = lines
+        .iter()
+        .filter(|line| line.contains("cargo build"))
+        .collect();
+    if builds != [&command] {
+        return Err(format!(
+            "runs `cargo build` on {builds:?}; plan 11's product check repeats exactly `{command}`"
+        ));
+    }
+    if let Some(target) = target {
+        let targets: Vec<&&str> = lines
+            .iter()
+            .filter(|line| line.starts_with("target="))
+            .collect();
+        if targets != [&target] {
             return Err(format!(
-                "{file} no longer runs `{}`, the build plan 11's product check repeats for {}",
-                command.trim_end(),
-                build.platform.label()
+                "sets the target on {targets:?}; plan 11's product check repeats `{target}`"
             ));
         }
     }
@@ -114,11 +177,11 @@ struct Unit {
     name: String,
 }
 
-/// The workspace's view for one build: member ids by name, the closure's expected units, and the
-/// members outside the closure.
+/// The workspace's view for one build: member ids by name, the closure's expected units with
+/// their entry files, and the closure's member ids.
 struct Scope {
     members: BTreeMap<String, String>,
-    expected: BTreeSet<Unit>,
+    expected: BTreeMap<Unit, String>,
     closure: BTreeSet<String>,
 }
 
@@ -145,8 +208,13 @@ fn cargo_metadata(root: &Path, triple: Option<&str>) -> Result<Value, String> {
 }
 
 /// The members the shipped member reaches through normal and build edges, and the units they
-/// must compile: the shipped member's bins, every other member's lib, every build script.
+/// must compile: the shipped member's one bin named like it and any lib, every other member's
+/// lib, every build script. No local package outside the workspace may be in the graph.
 fn scope(metadata: &Value, build: &Build) -> Result<Scope, String> {
+    let workspace_root = format!(
+        "{}/",
+        compiled::normalize(metadata.field("workspace_root")?.string()?)?.trim_end_matches('/')
+    );
     let workspace: BTreeSet<&str> = metadata
         .field("workspace_members")?
         .array()?
@@ -157,10 +225,16 @@ fn scope(metadata: &Value, build: &Build) -> Result<Scope, String> {
     let mut targets: BTreeMap<String, &[Value]> = BTreeMap::new();
     for package in metadata.field("packages")?.array()? {
         let id = package.field("id")?.string()?;
+        let name = package.field("name")?.string()?;
         if workspace.contains(id) {
-            let name = package.field("name")?.string()?.to_owned();
             targets.insert(id.to_owned(), package.field("targets")?.array()?);
-            members.insert(name, id.to_owned());
+            members.insert(name.to_owned(), id.to_owned());
+        } else if matches!(package.field("source")?, Value::Null) {
+            // A path package outside the workspace (through `[patch]`, or a path dependency
+            // that `workspace.exclude` keeps out): no member rule and no dep-info check sees it.
+            return Err(format!(
+                "{name} ({id}) is a local package outside the workspace; plan 11 admits none"
+            ));
         }
     }
     let shipped = members
@@ -201,7 +275,7 @@ fn scope(metadata: &Value, build: &Build) -> Result<Scope, String> {
         }
     }
     let mut closure = BTreeSet::new();
-    let mut expected = BTreeSet::new();
+    let mut expected = BTreeMap::new();
     for (name, id) in &members {
         if !reached.contains(id.as_str()) {
             continue;
@@ -213,25 +287,46 @@ fn scope(metadata: &Value, build: &Build) -> Result<Scope, String> {
             ));
         }
         closure.insert(id.clone());
+        let mut bins = Vec::new();
         for target in targets[id] {
             let kinds = target.field("kind")?.array()?;
+            let target_name = target.field("name")?.string()?;
             let kind = if kinds.iter().any(|k| k.string() == Ok("custom-build")) {
                 Some("build-script")
             } else {
-                // A member's bins ship only for the shipped member; its lib links into it.
                 match compiled::lib_or_bin(kinds) {
-                    Some("bin") if *id == shipped => Some("bin"),
+                    Some("bin") if *id == shipped => {
+                        bins.push(target_name.to_owned());
+                        Some("bin")
+                    }
+                    // A dependency's bins are not built for the shipped binary; its lib links in.
                     Some("lib") => Some("lib"),
                     _ => None,
                 }
             };
             if let Some(kind) = kind {
-                expected.insert(Unit {
-                    package: id.clone(),
-                    kind,
-                    name: target.field("name")?.string()?.to_owned(),
-                });
+                let entry = compiled::normalize(target.field("src_path")?.string()?)?
+                    .strip_prefix(&workspace_root)
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        format!("{name}'s target {target_name} is outside the workspace")
+                    })?;
+                expected.insert(
+                    Unit {
+                        package: id.clone(),
+                        kind,
+                        name: target_name.to_owned(),
+                    },
+                    entry,
+                );
             }
+        }
+        // The pinned packaging step takes the binary by this name, so the check must be about it.
+        if *id == shipped && bins != [build.shipped] {
+            return Err(format!(
+                "{} has the bin targets {bins:?}; plan 11 ships exactly one, named {}",
+                build.shipped, build.shipped
+            ));
         }
     }
     Ok(Scope {
@@ -296,7 +391,8 @@ fn files_in(
             continue;
         }
         let package = message.field("package_id")?.string()?;
-        // A package outside the workspace comes from the registry, pinned by `Cargo.lock`.
+        // Not a member and, by `scope`, not local either: a registry or git package, whose
+        // content `Cargo.lock` pins.
         let Some(name) = names.get(package) else {
             continue;
         };
@@ -322,12 +418,12 @@ fn files_in(
             kind,
             name: target.field("name")?.string()?.to_owned(),
         };
-        if !scope.expected.contains(&unit) {
+        let Some(entry) = scope.expected.get(&unit) else {
             return Err(format!(
                 "`cargo check` built the {kind} `{}` of {name}, which is not a unit of {}'s binary",
                 unit.name, build.shipped
             ));
-        }
+        };
         if !matches!(message.field("fresh")?, Value::Bool(false)) {
             return Err(format!(
                 "the {kind} `{}` of {name} was not compiled afresh; its dep-info could be from another source state",
@@ -335,6 +431,7 @@ fn files_in(
             ));
         }
         let paths = dep_info(&message, kind)
+            .and_then(|paths| require_entry(paths, entry))
             .map_err(|e| format!("the {kind} `{}` of {name}: {e}", unit.name))?;
         if !seen.insert(unit.clone()) {
             return Err(format!(
@@ -344,7 +441,7 @@ fn files_in(
         }
         files.extend(paths);
     }
-    if let Some(missing) = scope.expected.iter().find(|unit| !seen.contains(*unit)) {
+    if let Some(missing) = scope.expected.keys().find(|unit| !seen.contains(*unit)) {
         return Err(format!(
             "`cargo check --release {}` compiled no unit for the {} `{}` of {}",
             build.selection.join(" "),
@@ -356,8 +453,18 @@ fn files_in(
     Ok(files.into_iter().collect())
 }
 
-/// The files a unit's dep-info registers: next to its `.rmeta` for a lib or bin, in the build
-/// directory of the executable Cargo reports for a build script.
+/// A dep-info belongs to its unit only if it registers the unit's own entry file.
+fn require_entry(paths: Vec<String>, entry: &str) -> Result<Vec<String>, String> {
+    if paths.iter().any(|path| path == entry) {
+        Ok(paths)
+    } else {
+        Err(format!("its dep-info does not name its entry {entry}"))
+    }
+}
+
+/// The files a unit's dep-info registers: next to its `.rmeta` for a lib or bin; for a build
+/// script, the one hashed dep-info in the directory of the executable Cargo reports, whose rules
+/// may name only that dep-info and the hashed executable beside it.
 fn dep_info(message: &Value, kind: &str) -> Result<Vec<String>, String> {
     let filenames: Vec<&str> = message
         .field("filenames")?
@@ -413,8 +520,8 @@ fn dep_info(message: &Value, kind: &str) -> Result<Vec<String>, String> {
         ));
     };
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let directory = compiled::normalize(&directory.to_string_lossy())?;
-    compiled::parse_build_script(&text, &directory).map_err(|e| format!("{}: {e}", path.display()))
+    let dep_info = compiled::normalize(&path.to_string_lossy())?;
+    compiled::parse_build_script(&text, &dep_info).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Each registered file is a regular file of the Git index, spelled as Git records it (so no

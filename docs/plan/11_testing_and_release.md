@@ -802,35 +802,50 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
     - **workflow：** 每个发布 workflow 的全文等于 `stickymd-smoke` 中的固定副本；副本恰为分类器计入的 `.github/` 文件（两个发布 workflow），副本经审查
       具有上文 `dependency-policy` 与三个发布 job 的结构，改动 workflow 须同时改副本。
     - **清单与合同：** 代码中的脚本清单、构建脚本清单、profile 与下文“产品发布图”的闭包外成员清单恰为本条所列；测试按本条原文核对，
-      改清单须同时改合同。两个固定发布构建的命令（`release` 中的与 `build-app.sh` 中的）按原样搜索须仍是“产品发布图”所对照的命令。
+      改清单须同时改合同。
     - **名字：** 在打包 crate 中编译器读过的文件、清单中的脚本、`build-app.sh`、`crates/` 与 `apps/` 下被 Git 跟踪的全部文件（产品 crate 与构建脚本，
       含构建脚本可能声明的模块），以及每个固定副本中从 `  build-package:` 行到 `  verify-artifact:` 行之间的文本里原样搜索（不分大小写，注释也算）：
       不出现 `stickymd-smoke`、`stickymd_smoke`、`invoke-smoke.ps1`、`Invoke-StickyMdReleaseTool` 与 `tools/smoke/`（两种分隔符）。
-    - **产品发布图（USER 决定 2026-11-22，“采用 B”）：** 产品 crate 在编译期读入的文件都计入本平台指纹。governance 在 Windows x64 与
-      macOS arm64 主机上各检查本平台（其他主机不适用，例如只跑 governance 的 Linux CI）。每次检查新建私有目录（同时作为 Cargo 的 target 与
-      build 目录），按固定发布构建的选择与 profile 运行一次 `cargo check`：Windows 为 `--workspace --release`，不加 `--target`，与 `release` 的
-      `cargo build --workspace --release --locked` 相同（feature 按同一组成员合并）；macOS 为 `-p stickymd-mac --release --target aarch64-apple-darwin`，
-      与 `build-app.sh` 相同。发布二进制（Windows 为 `stickymd-win`，macOS 为 `stickymd-mac`）的依赖闭包，由该平台的
-      `cargo metadata --filter-platform` 中 normal 与 build 边所达的 workspace 成员组成。闭包内的发布二进制恰有一个新编译的 bin 单元，其余成员
-      各恰有一个新编译的 lib 单元，每个有构建脚本的成员另有一个新编译的构建脚本单元；闭包外的 workspace 单元只能属于下列成员，不检查
-      （它们不进入发布二进制，例如在 Windows 上编译为桩的两个 macOS 成员）：Windows 为 `stickymd-mac`、`stickymd-posix`、`stickymd-package`、
-      `stickymd-smoke`，macOS 为空；其他单元一律拒绝。这些单元的 dep-info 按上文同样读取（规则行与逐文件行一致，不得有环境读取），登记的每个
-      本地文件在 Git 索引中是普通文件，按索引中的原样拼写（因此不含 `..` 与绝对路径），且为本平台的输入（分类器 `is_input`）。与上文一样，
-      检查只观察本 job 的编译（见前提）。
+    - **产品发布图（USER 决定 2026-11-22，“采用 B”）：** 发布二进制编译时由 Rust 前端登记的文件都计入本平台指纹。governance 在 Windows x64 与
+      macOS arm64 主机上各检查本平台；在其他架构的 Windows 或 macOS 主机上检查失败（它们不能重复发布构建）；在其他系统上不适用（例如只跑
+      governance 的 Linux CI；两个平台的 `self-check` 都在原生主机上运行）。
+      - **构建：** 每次检查新建私有目录（同时作为 Cargo 的 target 与 build 目录），按固定发布构建的选择与 profile 运行一次 `cargo check`：Windows 为
+        `--workspace --release`，不加 `--target`，与 `release` 的 `cargo build --workspace --release --locked` 相同（feature 按同一组成员合并）；macOS 为
+        `-p stickymd-mac --release --target aarch64-apple-darwin`，与 `build-app.sh` 相同。`build-app.sh` 的全文（行尾统一为 LF 后）等于 `stickymd-smoke`
+        中的固定副本，改动脚本须同时改副本；它与 Windows 发布 workflow 的固定副本（见上文 workflow 一条）中各恰有一行运行 `cargo build`，即上述命令。
+      - **范围：** 发布二进制是宿主成员（Windows 为 `stickymd-win`，macOS 为 `stickymd-mac`）中与成员同名的 bin target，宿主成员恰有这一个 bin。它的
+        依赖闭包由该平台的 `cargo metadata --filter-platform` 中 normal 与 build 边求出。闭包内的 workspace 成员各恰有一个新编译的单元（宿主成员为它的
+        bin，其余成员为 lib；宿主成员若有 lib 也计入），有构建脚本的成员另有一个新编译的构建脚本单元。同一成员以不同 feature 编译两次（例如同时作为
+        normal 与 build 依赖）也被拒，出现时须先改本条。闭包外的 workspace 单元只能属于下列成员，不检查（它们不进入发布二进制，例如在 Windows 上编译
+        为桩的两个 macOS 成员）：Windows 为 `stickymd-mac`、`stickymd-posix`、`stickymd-package`、`stickymd-smoke`，macOS 为空；其他单元一律拒绝。
+        依赖图中不得有 workspace 之外的本地包（metadata 中 `source` 为空的非成员，例如经 `[patch]` 或 path 依赖引入、由 `workspace.exclude` 排除的包），
+        否则它们的文件不在任何检查之内。
+      - **文件：** 这些单元的 dep-info 按上文同样读取（规则行与逐文件行一致，不得有环境读取），并登记该单元自己的入口文件（metadata 的 `src_path`）；
+        构建脚本单元的规则只指向这份 dep-info 与同名的可执行文件。登记的每个本地文件在 Git 索引中是普通文件，按索引中的原样拼写（因此不含 `..`
+        与绝对路径），且为本平台的输入（分类器 `is_input`）。与上文一样，检查只观察本 job 的编译（见前提）。
+    - **Cargo 配置：** Git 索引中 `.cargo/` 下恰有 `config.toml`，其全文（行尾统一为 LF 后）等于 `stickymd-smoke` 中的固定副本。副本经审查，不转引
+      其他配置文件（`include`），也不让 rustc 从文件读取参数（`@文件`），因为这两种读取都不登记在 dep-info 中。
 
     **前提：** `self-check` 与 `build-package` 运行同一份固定 workflow、同一 runner 标签、同一检出与工具链；两者的有效编译配置（runner 环境中的
     `RUSTFLAGS`、`CARGO_BUILD_TARGET`、Cargo home 中的配置）相同。检查只能观察本 job 的编译，这一前提不由它证明。能检查的只有一部分：固定副本不含下列字面串（原样
     搜索、不分大小写：`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`、`RUSTC_WRAPPER`、`RUSTC_WORKSPACE_WRAPPER`、`CARGO_BUILD_TARGET`、
-    `CARGO_BUILD_BUILD_DIR`、`CARGO_TARGET_DIR`、`RUSTUP_TOOLCHAIN`、`RUSTC:`、`RUSTC=`、`env:RUSTC`），仓库内的 `.cargo/config.toml` 计入指纹。
+    `CARGO_BUILD_BUILD_DIR`、`CARGO_TARGET_DIR`、`RUSTUP_TOOLCHAIN`、`RUSTC:`、`RUSTC=`、`env:RUSTC`），仓库内的 Cargo 配置计入指纹并等于固定副本（见“Cargo 配置”）。
     其他拼写与其他改变编译的变量（如 `CARGO_PROFILE_*`）、runner 镜像与 Cargo home 的配置，以及各调用点对环境的处理（例如 `build-app.sh` 以
     `env -i` 清空环境后再运行打包工具，而检查器与 workflow 中的其他调用继承环境）仍属前提。打包 crate 没有依赖与 feature，workspace 的 feature 合并改变不了它。
 
-    **剩余：** 以下不能由这些事实证明，由代码审查承担：清单中的文件在运行时做什么，例如运行时拼出的名字或路径（`Join-Path` 的目录参数）、不含
-    上述名字的命令，以及已审文件在运行时选择读取的被排除文件（之后只改被读文件时，指纹不变）；清单中构建脚本运行时读什么
-    （它的模块与引入的文件由“产品发布图”核对）；产品 crate 经过程宏读入、而不展开为 include 宏的文件（过程宏在编译器中运行，rustc 不登记
-    这类读取）。检查器与固定副本本身
-    位于被排除的验证工具中，它们的改动由代码审查与 R 上的重新校验承担。在这些前提下，产出字节的代码既不运行验证工具，也不读它计入范围之外的
-    文件（版本规范化按根清单的成员表读取每个成员的清单，其中的 `tools/stickymd-smoke/Cargo.toml` 是计入的输入）。
+    **剩余：** 以下不能由这些事实证明，由代码审查承担：
+    - 清单中的文件在运行时做什么，例如运行时拼出的名字或路径（`Join-Path` 的目录参数）、不含上述名字的命令，以及已审文件在运行时选择读取的
+      被排除文件（之后只改被读文件时，指纹不变）。
+    - 参与构建、但不由受检单元的 dep-info 登记的读取与副作用：
+      - 任何构建脚本运行时读写什么；受检构建脚本单元自己的模块与引入的文件由“产品发布图”核对。
+      - 过程宏在编译器中的文件访问，只要它不展开为 `include!`、`#[path]` 等登记形式；包括闭包外成员与 registry 包所用的过程宏。
+      - registry 与 git 包：内容由 `Cargo.lock` 的校验和锁定，但它们的构建脚本与过程宏读什么同属此列。
+      - 编译器后端与链接器读入的文件，例如 `global_asm!` 中的 `.incbin`、链接参数指向的文件。
+      - `cargo check` 与 `cargo build` 的展开差异，例如按输出种类选择 include 的过程宏。
+    - 检查器与固定副本本身位于被排除的验证工具中，它们的改动由代码审查与 R 上的重新校验承担。
+
+    在这些前提成立、上述审查也成立时，产出字节的代码既不运行验证工具，也不读它计入范围之外的文件。版本规范化按根清单的成员表读取每个成员的
+    清单，其中的 `tools/stickymd-smoke/Cargo.toml` 是计入的输入。
   - **只改验证工具时：** 即 `tools/stickymd-smoke/` 中上文三个例外以外的文件。两个平台都可以沿用，不重新构建；按下文“沿用后”，受影响的门用
     R 的工具在同一份字节上重跑。
   - **产出字节的 job 只运行计入指纹的代码（USER 决定 2026-11-21，方案 A）：** 每个发布 workflow 在依赖策略 job（`dependency-policy`，

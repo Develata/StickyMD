@@ -211,19 +211,29 @@ pub(in crate::governance) fn parse(text: &str) -> Result<Vec<String>, String> {
     })
 }
 
-/// [`parse`] for a build script's unit, which links an executable: each rule names a file in
-/// `directory` (the unit's own build directory, as Cargo reported it) whose name starts with
-/// `build_script_build-`, the executable or its dep-info.
+/// [`parse`] for a build script's unit, which links an executable: each rule names `dep_info`
+/// itself (the hashed `build_script_build-HASH.d` that was read) or the hashed executable beside
+/// it (`.exe` on Windows). Windows compares paths without ASCII case, as its file system does.
 pub(in crate::governance) fn parse_build_script(
     text: &str,
-    directory: &str,
+    dep_info: &str,
 ) -> Result<Vec<String>, String> {
-    let prefix = format!("{}/build_script_build-", directory.trim_end_matches('/'));
+    let executable = dep_info
+        .strip_suffix(".d")
+        .ok_or_else(|| format!("{dep_info} is not a dep-info"))?;
+    let windows_executable = format!("{executable}.exe");
+    let same = |left: &str, right: &str| {
+        if cfg!(windows) {
+            left.eq_ignore_ascii_case(right)
+        } else {
+            left == right
+        }
+    };
     parse_rules(text, &|output| {
         normalize(output).is_ok_and(|output| {
-            output
-                .strip_prefix(&prefix)
-                .is_some_and(|name| !name.contains('/'))
+            same(&output, dep_info)
+                || same(&output, executable)
+                || (cfg!(windows) && same(&output, &windows_executable))
         })
     })
 }
