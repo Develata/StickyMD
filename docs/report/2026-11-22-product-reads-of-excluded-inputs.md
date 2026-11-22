@@ -7,6 +7,8 @@
 
 ## 结论
 
+> 本节是分析时（实现前）的结论。Develata 已决定采用 B，实现与两轮复审的处理见文末各节，当前状态见最后一节。
+
 - **能发生，已验证。** 产品 crate 可以在编译期用 `include_str!` 等读取被排除的文件。之后只改这个文件时，两个平台的 Platform Build Input
   Fingerprint 都不变，`verify-reuse` 判为可沿用，而 macOS 的 release 二进制变了（见“正向对照”；Windows 的 exe 没有构建，同理推断）。现有检查都不拦这种读取：分类器只看路径，闭合世界检查只覆盖
   打包 crate。
@@ -234,3 +236,29 @@ Develata 的回复：“采用 B”。决定 2（过程宏绊线）与决定 3�
 - **重复单元（实现复核第 7 项）：** 新增负例：同一成员同时作为 normal 与 build 依赖。release 下构建依赖用另一个 profile，会多出一个单元，而且该单元
   完整编译、规则指向 `.rlib`。为了让它以“编译两次”的理由被拒，检查改为两遍：先核对单元集合，包括重复与缺失，再读各单元的 dep-info。
 - **Windows 原生收据（实现复核第 8 项）：** 仍是 P18-P12 的 `NOT TESTED`，本机无法补。
+
+### 当前状态（`9e76a09`，2026-11-22）
+
+分支 `feat/product-input-closure` 叠在 `feat/package-crate-split` 的 `51ba15a` 上，worktree 为 `.claude/worktrees/product-input-closure`，未 push。
+提交依次为 `68bf115`（分析与合同）、`f2e732f`（实现）、`90b9432`（第一轮复审的修正）、`a7b1336`（窄复审的修正）、`9e76a09`（P18-P11 的锚点）。
+
+**已验证（macOS 27.2 arm64，`9e76a09`）：**
+- `cargo fmt --all --check`；
+- `cargo clippy --workspace --exclude stickymd-win --all-targets --locked -- -D warnings`；
+- `cargo clippy -p stickymd-package -p stickymd-smoke --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings`；
+- `cargo test --workspace --exclude stickymd-win --locked`：1886 通过、0 失败；
+- `stickymd-smoke phase 00` PASS，其中 governance 约 13 秒。
+- 端到端对照：在 HEAD 的 scratch 克隆中给 `stickymd-core` 加入读 `docs/control.md` 的 include 并提交，`phase 00` 的 governance 判为 FAILED，理由是
+  `crates/stickymd-core/src/../../../docs/control.md` 不是跟踪拼写。
+- 两个平台的 Platform Build Input Fingerprint 在 `51ba15a` 与 `9e76a09` 上相同：Windows 为 `0cb7c8c0…`，macOS 为 `907a000e…`。本分支只改
+  验证工具与文档，不使任何已构建的发布物失去沿用资格。
+
+**未验证：**
+- Windows 主机从未运行（P18-P12 `NOT TESTED`），包括构建脚本单元的 `filenames`、`.exe` 规则输出与 `rustc -vV` 的主机判定。检查接在 governance 的
+  `verify` 中，Windows 路径若有错，每次 Windows governance 都会失败：PR 的 headless job 与发布 `self-check` 都在内。
+- Linux 上没有运行 probe 测试。
+- CI 上的耗时未测。
+- `a7b1336` 的修正没有经过复审。
+
+**未决（不是 USER 决定）：** 没有做过程宏绊线；分支叠在尚未合并的父分支上，合并前须 rebase。本分支改了父分支的 `package_boundary/compiled.rs`
+（可见性、`parse_rules`、`parse_build_script`）、`package_boundary.rs`（可见性），以及 plan 11 中“构建脚本”“清单与合同”“前提”“剩余”四段。
