@@ -303,3 +303,18 @@ Develata 的回复：“采用 B”。决定 2（过程宏绊线）与决定 3�
 - **结论：** P18-P12 仍为 `NOT TESTED`。它要求的测试集合在 Windows 上没有完整运行，证据栏记录了真实仓库检查的通过。其余 job 均通过：
   plan 与 governance（Linux）、依赖策略、Linux smoke CLI、Linux portable-core、Windows format 与 lint、Windows release build、
   Windows headless performance、macOS host。
+
+### Windows CI 重跑（`4e3683a`，2026-11-22）
+
+Develata 授权“修好后推送重跑 CI”，由顶层 session 转达。父 session 在 `feat/package-crate-split` 上用 `fb97b82` 修复了两项 Windows 失败，原因是
+输出守卫经 `std::path::absolute`（即 `GetFullPathNameW`）折叠了 `..`，并把 `NUL:` 映射为 `\\.\NUL`。
+
+1. 将 `fb97b82` 合入本分支，得到 `4e3683a`。
+2. 本机基线：fmt、两组 clippy 均为 exit 0，测试 1888 项通过、0 失败，`phase 00` PASS。
+3. 核对推送范围：`origin/feat/product-input-closure..HEAD` 恰为 `ef2cdae`、`fb97b82` 与合并提交。
+4. 推送后重跑 `ci.yml`，得到 run [45034204091](https://github.com/Develata/StickyMD/actions/runs/45034204091)。**结论为 success，所有 job 通过。**
+   Windows tests 分片中，governance PASSED，用时 75 秒；workspace tests PASSED，其中包括那两项原失败测试，以及 `stickymd_smoke` 中的全部
+   `product_boundary` 测试。P18-P12 因此改为 AUTOMATED PASS。
+
+`fb97b82` 之后将由父分支的修订版 `47474cc` 取代：复审发现它会误拒按盘符或根目录给出的相对路径。父 session 要求在那份复审通过前，本分支不再合并或推送。
+这次重跑的授权已经用掉，再次推送需要新的授权。产品检查的代码不受该修订影响。
