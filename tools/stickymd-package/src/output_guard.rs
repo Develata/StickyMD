@@ -122,11 +122,13 @@ impl<'a> Guard<'a> {
     fn check(&self, path: &Path) -> Result<(), String> {
         let root = self.root;
         let target = normalize(&root.join(path));
+        // A target that is a root (`/`, `c:/`) already ends in its separator: anything under it
+        // starts with it, with no separator left in the suffix.
         let in_link = self.link_targets.iter().any(|linked| {
             target == *linked
                 || target
                     .strip_prefix(linked.as_str())
-                    .is_some_and(|suffix| suffix.starts_with('/'))
+                    .is_some_and(|suffix| linked.ends_with('/') || suffix.starts_with('/'))
         });
         if in_link
             || reaches(root, path, EVIDENCE)
@@ -339,6 +341,22 @@ mod tests {
             );
         }
         assert!(super::check_directory(&cwd, Path::new("C:\\out\\a\0b")).is_err());
+    }
+
+    /// A link in the evidence tree that points at a root makes everything under that root
+    /// reserved: the root's own trailing separator must not stop the prefix match.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_root_reserves_everything_under_it() {
+        let directory = crate::temporary::TemporaryDirectory::new("guard-root-link").unwrap();
+        let root = directory.path();
+        fs::create_dir_all(root.join("dist/evidence")).unwrap();
+        std::os::unix::fs::symlink("/", root.join("dist/evidence/everything")).unwrap();
+        let elsewhere = std::env::temp_dir().join("stickymd-guard-root-link-elsewhere.txt");
+        let error = super::check_file(root, &elsewhere).unwrap_err();
+        assert!(error.contains("coordinator-owned"), "{error}");
+        fs::remove_file(root.join("dist/evidence/everything")).unwrap();
+        directory.close().unwrap();
     }
 
     /// The ancestors checked besides the path itself: relative `..` steps are kept (they resolve
