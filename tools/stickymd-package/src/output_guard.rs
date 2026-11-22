@@ -110,7 +110,9 @@ impl<'a> Guard<'a> {
     /// are checked, since they resolve against the working directory. Resolving with the writers'
     /// own function keeps the guard and the writer on the same file, whatever form the path takes.
     fn check_ancestors(&self, path: &Path) -> Result<(), String> {
-        resolve(path)?;
+        // The path itself always, whatever its form: a bare `C:` is that drive's working
+        // directory, which may lie inside reserved storage.
+        self.check(&resolve(path)?)?;
         for ancestor in checked_ancestors(path) {
             self.check(&resolve(ancestor)?)?;
         }
@@ -150,10 +152,10 @@ pub fn check_directory(root: &Path, directory: &Path) -> Result<(), String> {
     Guard::new(root)?.check_directory(directory)
 }
 
-/// `path` and its lexical ancestors, without the empty one and without those made only of a drive
-/// prefix and a root.
+/// The lexical ancestors of `path` (not `path` itself, which is always checked), without the
+/// empty one and without those made only of a drive prefix and a root.
 fn checked_ancestors(path: &Path) -> impl Iterator<Item = &Path> {
-    path.ancestors().filter(|ancestor| {
+    path.ancestors().skip(1).filter(|ancestor| {
         !ancestor.as_os_str().is_empty()
             && !ancestor.components().all(|part| {
                 matches!(
@@ -339,8 +341,9 @@ mod tests {
         assert!(super::check_directory(&cwd, Path::new("C:\\out\\a\0b")).is_err());
     }
 
-    /// The ancestors checked: relative `..` steps are kept (they resolve against the working
-    /// directory, which may lie inside reserved storage); only a bare drive or root is dropped.
+    /// The ancestors checked besides the path itself: relative `..` steps are kept (they resolve
+    /// against the working directory, which may lie inside reserved storage); only a bare drive
+    /// or root is dropped. The path itself is checked whatever its form (see `check_ancestors`).
     #[test]
     fn relative_parents_are_checked_and_bare_roots_are_not() {
         let listed = |path: &str| -> Vec<String> {
@@ -352,11 +355,15 @@ mod tests {
         let parents = format!("..{separator}..{separator}SHA256SUMS.txt");
         assert_eq!(
             listed(&parents),
-            [parents.clone(), format!("..{separator}.."), "..".to_owned()]
+            [format!("..{separator}.."), "..".to_owned()]
         );
         let rooted = format!("{separator}out{separator}x.txt");
-        assert_eq!(listed(&rooted), [rooted.clone(), format!("{separator}out")]);
+        assert_eq!(listed(&rooted), [format!("{separator}out")]);
+        assert!(listed(&separator.to_string()).is_empty());
         #[cfg(windows)]
-        assert_eq!(listed(r"C:\out\x.txt"), [r"C:\out\x.txt", r"C:\out"]);
+        {
+            assert_eq!(listed(r"C:\out\x.txt"), [r"C:\out"]);
+            assert!(listed("C:").is_empty());
+        }
     }
 }
