@@ -390,3 +390,40 @@ Develata 的回复：“保留为前提”。
 
 `build-app.sh` 以 `env -i` 清空环境后运行打包工具、检查器与 workflow 中的其他调用继承环境，这一差异留在合同 `11` #platform-artifact-reuse 的
 “前提”中（“各调用点对环境的处理”），不改成检查。合同文字不变。
+
+## Windows 输出守卫的修复与收口（2026-11-22）
+
+**来由：** `feat/product-input-closure`（基于本分支 `51ba15a`）的 CI [run 45028821289](https://github.com/Develata/StickyMD/actions/runs/45028821289)
+中，从本分支迁来的打包代码第一次在 Windows 上运行，`stickymd-package` 的两个测试失败：`atomic.rs` 的
+`ambiguous_spellings_are_refused_before_writing`（守卫放行了 `NUL:`）与 `commands.rs` 的 `release_writers_cannot_target_qualification_storage`
+（守卫放行了 `dist/evidence\..\SHA256SUMS.txt`，命令随后以 os error 3 失败）。同一次 run 中 Windows 的 “governance contracts” 任务通过，
+即闭合世界的边界检查已在 Windows 上运行过一次。
+
+**根因：** 拆分（`fc6fc09`）时输出守卫改为先以 `std::path::absolute` 解析再检查。Windows 上它调用 `GetFullPathNameW`，会折叠 `..`
+（守卫看不到路径经过 `dist/evidence`）并把 `NUL:` 映射为设备路径 `\\.\NUL`（拼写规则看不到设备名）。macOS 上 `absolute` 保留 `..`，
+所以那里不出错。这两个测试断言本身是拆分时新加的，拆分前守卫也用 `absolute`，但那时没有测试覆盖这两种输入。
+
+**修复（最终形态，`9ca7942`）：** 守卫与写入器用同一个解析函数 `std::path::absolute`；拼写规则先作用在调用方给出的原样路径上
+（与写入器相同），再作用在解析后的路径上；然后检查解析后的路径本身，以及它的每个词法祖先（`create_dir_all` 正是逐个创建这些祖先），
+只跳过仅由盘符与根组成的祖先；`path_identity::normalize` 只在 Windows 上把 `\` 当作分隔符；证据树中指向根（`/`、整个盘）的链接
+使其下的一切都受保护。中间的 `fb97b82`、`47474cc`、`d37be8b`、`b635e98`、`654a852`、`99629ee`、`44df73b` 是按跨模型复审逐轮修正的过程，
+其中手写 Win32 路径解析的尝试（`47474cc`–`d37be8b`）已全部删除。
+
+**Resolution：** Develata 的回复：“接受，就此收口”。收口标准：
+
+- 守卫**错误放行**本应拒绝的路径（真漏洞）：仍须修复，并只对该修复做窄复审。
+- 守卫只**过度拒绝**发布 workflow 从不会传入的特殊拼写或环境：在报告中记为已知的保守（fail-closed）行为，不再改代码、不再复审。
+
+**按此标准记录的已知过度拒绝与待验证项：**
+
+- 输出为裸盘符 `C:`，而该盘的当前目录恰好名为 `…\stickymd\qualification-ledger` 之类的协调者存储片段时被拒（第 7 轮）。
+- 输出为服务器名后连写两个分隔符的 `\\server\\share\…` 时，祖先中的 `\\server` 也被检查；只有证据树中的链接恰好指向它时才会误拒（待在 Windows 上验证）。
+- 当前目录本身是 verbatim 路径（`\\?\…`）时的解析行为与写入器一致（同一个 `absolute`），未在真实 runner 上观察。
+- 证据树中指向整个盘根的链接（`9ca7942`）只在 Unix 上有测试，Windows 的规范形式（`//?/d:/`）按源码推导覆盖。
+- 裸盘符的行为没有在 Windows 子进程中做回归测试（测试无法安全地改变并行测试的当前目录）；由 `check_ancestors` 首行无条件检查解析后的路径
+  与 `checked_ancestors("C:")` 为空的测试共同支撑。
+
+复审：`44df73b`（裸盘符）与 `9ca7942`（根链接）的窄复审均为 PASS。
+
+**已验证（macOS 27.2 arm64）：** fmt；Clippy（macOS 目标与 `x86_64-pc-windows-msvc` 目标，含测试代码）；`stickymd-package` 与 `stickymd-smoke`
+的测试全部通过（707 项）；共享测试从 `/` 运行也通过。**未验证：** Windows 上的实际运行（仅 Windows 编译的测试从未运行），留给下一次 CI。
