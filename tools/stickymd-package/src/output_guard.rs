@@ -129,30 +129,77 @@ pub fn check_directory(root: &Path, directory: &Path) -> Result<(), String> {
     Guard::new(root)?.check_directory(directory)
 }
 
+/// `path` against the working directory, as the writers resolve it. Elsewhere than Windows,
+/// `std::path::absolute` keeps `..` and every name as written.
+#[cfg(not(windows))]
+fn resolve(path: &Path) -> Result<PathBuf, String> {
+    std::path::absolute(path)
+        .map_err(|error| format!("cannot resolve output {}: {error}", path.display()))
+}
+
 /// `path` against the working directory, as the writers resolve it, and kept as written: no `..`
 /// collapsed and no device spelling mapped, so the spelling rules see the name the writer will be
 /// asked to create and [`reaches`] sees a reserved directory the path passes through.
-/// `std::path::absolute` cannot serve here: on Windows it goes through `GetFullPathNameW`, which
-/// turns `dist/evidence\..\x` into `dist\x` and `NUL:` into `\\.\NUL`. A path relative to a drive
-/// or to the current drive's root (`C:x`, `\x`) has no single meaning to keep, and is refused.
+/// `std::path::absolute` cannot serve whole: on Windows it goes through `GetFullPathNameW`, which
+/// turns `dist/evidence\..\x` into `dist\x` and `NUL:` into `\\.\NUL`.
+#[cfg(windows)]
 fn resolve(path: &Path) -> Result<PathBuf, String> {
+    resolve_windows(path, &std::env::current_dir, &|head: &Path| {
+        std::path::absolute(head)
+    })
+}
+
+/// Only the head that Win32 gives a base to is resolved, and the rest is appended as written:
+/// - an absolute path is kept as given;
+/// - a drive-relative path (`C:x`) takes that drive's working directory (`absolute("C:")`);
+/// - a root-relative path (`\x`) takes the current drive's root (`absolute("\")`);
+/// - any other relative path takes the working directory, which must not be verbatim (`\\?\`):
+///   joining onto a verbatim base folds `..` too.
+///
+/// An empty path, or one holding a NUL, names nothing and is refused, as `absolute` refuses it.
+#[cfg(windows)]
+fn resolve_windows(
+    path: &Path,
+    current_dir: &dyn Fn() -> std::io::Result<PathBuf>,
+    absolute: &dyn Fn(&Path) -> std::io::Result<PathBuf>,
+) -> Result<PathBuf, String> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Component, Prefix};
+    let fail = |why: String| format!("cannot resolve output {}: {why}", path.display());
+    let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if wide.is_empty() || wide.contains(&0) {
+        return Err(fail("the path is empty or holds a NUL".to_owned()));
+    }
     if path.is_absolute() {
         return Ok(path.to_path_buf());
     }
-    if path.has_root()
-        || matches!(
-            path.components().next(),
-            Some(std::path::Component::Prefix(_))
-        )
-    {
-        return Err(format!(
-            "output {} is relative to a drive or a root, not to the working directory; give an absolute path",
-            path.display()
-        ));
-    }
-    let directory = std::env::current_dir()
-        .map_err(|error| format!("cannot resolve output {}: {error}", path.display()))?;
-    Ok(directory.join(path))
+    let (head, base) = match path.components().next() {
+        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_)) => {
+            let head = prefix.as_os_str();
+            (head.encode_wide().count(), absolute(Path::new(head)))
+        }
+        Some(Component::Prefix(_)) => {
+            return Err(fail("an unsupported relative prefix".to_owned()));
+        }
+        Some(Component::RootDir) => (1, absolute(Path::new("\\"))),
+        _ => {
+            let directory = current_dir().map_err(|error| fail(error.to_string()))?;
+            if matches!(
+                directory.components().next(),
+                Some(Component::Prefix(prefix)) if prefix.kind().is_verbatim()
+            ) {
+                return Err(fail(
+                    "the working directory is a verbatim path, where joining would fold `..`; give an absolute output path"
+                        .to_owned(),
+                ));
+            }
+            return Ok(directory.join(path));
+        }
+    };
+    let base = base.map_err(|error| fail(error.to_string()))?;
+    let rest = OsString::from_wide(&wide[head..]);
+    Ok(base.join(rest))
 }
 
 /// The store always lives at `<git common dir>/stickymd/qualification-ledger`. Matching
@@ -255,31 +302,66 @@ fn existing_directory(base: &Path, pointer: &str, label: &str) -> Result<PathBuf
 mod tests {
     use std::path::Path;
 
-    /// Relative outputs join the working directory as written: a `..` stays, so a reserved
-    /// directory the path passes through is still seen; an absolute path is kept as given.
+    /// Relative outputs join the working directory with their `..` kept, so a reserved
+    /// directory the path passes through is still seen; an absolute path is kept as given; an
+    /// empty path names nothing. The expected text is built apart from the code under test.
     #[test]
-    fn outputs_resolve_against_the_working_directory_as_written() {
+    fn outputs_resolve_against_the_working_directory_keeping_parents() {
         let cwd = std::env::current_dir().unwrap();
-        let relative = Path::new("dist").join("evidence").join("..").join("x.txt");
-        assert_eq!(super::resolve(&relative).unwrap(), cwd.join(&relative));
+        let separator = std::path::MAIN_SEPARATOR;
+        let relative = format!("dist{separator}evidence{separator}..{separator}x.txt");
+        let resolved = super::resolve(Path::new(&relative)).unwrap();
+        assert_eq!(
+            resolved.as_os_str(),
+            format!("{}{separator}{relative}", cwd.display()).as_str()
+        );
+        assert!(
+            resolved
+                .components()
+                .any(|part| part == std::path::Component::ParentDir)
+        );
         let absolute = cwd.join("a").join("..").join("b");
         assert_eq!(super::resolve(&absolute).unwrap(), absolute);
+        assert!(super::resolve(Path::new("")).is_err());
+        assert!(super::check_file(&cwd, Path::new("")).is_err());
     }
 
-    /// Windows: no `GetFullPathNameW` folding of `..` or of a device name, and no guess for a
-    /// path relative to a drive or to the current root.
+    /// Windows: only the head Win32 gives a base to is resolved; the rest, `..`, `/` and device
+    /// spellings included, is kept as written. Expected text is built from `absolute` of the head
+    /// alone, apart from the code under test.
     #[cfg(windows)]
     #[test]
-    fn windows_paths_keep_their_spelling_or_are_refused() {
+    fn windows_paths_keep_their_spelling_after_the_head() {
+        use std::path::PathBuf;
+        let text = |path: PathBuf| path.into_os_string().into_string().unwrap();
         for kept in [r"C:\a\evidence\..\x.txt", r"C:\a\fresh\NUL:"] {
-            assert_eq!(super::resolve(Path::new(kept)).unwrap(), Path::new(kept));
+            assert_eq!(text(super::resolve(Path::new(kept)).unwrap()), kept);
         }
-        for ambiguous in [r"C:x.txt", r"\x.txt"] {
-            let error = super::resolve(Path::new(ambiguous)).unwrap_err();
-            assert!(
-                error.contains("relative to a drive or a root"),
-                "{ambiguous}: {error}"
-            );
+        let cwd = text(std::env::current_dir().unwrap());
+        assert_eq!(
+            text(super::resolve(Path::new(r"dist/evidence\..\x.txt")).unwrap()),
+            format!(r"{cwd}\dist/evidence\..\x.txt")
+        );
+        let root = text(std::path::absolute(Path::new("\\")).unwrap());
+        assert_eq!(
+            text(super::resolve(Path::new(r"\out\..\SHA256SUMS.txt")).unwrap()),
+            format!(r"{}\out\..\SHA256SUMS.txt", root.trim_end_matches('\\'))
+        );
+        let drive = &cwd[..2];
+        let drive_cwd = text(std::path::absolute(Path::new(drive)).unwrap());
+        assert_eq!(
+            text(super::resolve(Path::new(&format!(r"{drive}out\..\NUL:"))).unwrap()),
+            format!(r"{}\out\..\NUL:", drive_cwd.trim_end_matches('\\'))
+        );
+        for refused in ["", "a\0b"] {
+            assert!(super::resolve(Path::new(refused)).is_err(), "{refused:?}");
         }
+        let verbatim = super::resolve_windows(
+            Path::new(r"dist\evidence\..\x.txt"),
+            &|| Ok(PathBuf::from(r"\\?\C:\repo")),
+            &|head: &Path| std::path::absolute(head),
+        )
+        .unwrap_err();
+        assert!(verbatim.contains("verbatim"), "{verbatim}");
     }
 }
