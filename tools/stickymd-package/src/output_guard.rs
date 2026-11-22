@@ -129,9 +129,30 @@ pub fn check_directory(root: &Path, directory: &Path) -> Result<(), String> {
     Guard::new(root)?.check_directory(directory)
 }
 
+/// `path` against the working directory, as the writers resolve it, and kept as written: no `..`
+/// collapsed and no device spelling mapped, so the spelling rules see the name the writer will be
+/// asked to create and [`reaches`] sees a reserved directory the path passes through.
+/// `std::path::absolute` cannot serve here: on Windows it goes through `GetFullPathNameW`, which
+/// turns `dist/evidence\..\x` into `dist\x` and `NUL:` into `\\.\NUL`. A path relative to a drive
+/// or to the current drive's root (`C:x`, `\x`) has no single meaning to keep, and is refused.
 fn resolve(path: &Path) -> Result<PathBuf, String> {
-    std::path::absolute(path)
-        .map_err(|error| format!("cannot resolve output {}: {error}", path.display()))
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    if path.has_root()
+        || matches!(
+            path.components().next(),
+            Some(std::path::Component::Prefix(_))
+        )
+    {
+        return Err(format!(
+            "output {} is relative to a drive or a root, not to the working directory; give an absolute path",
+            path.display()
+        ));
+    }
+    let directory = std::env::current_dir()
+        .map_err(|error| format!("cannot resolve output {}: {error}", path.display()))?;
+    Ok(directory.join(path))
 }
 
 /// The store always lives at `<git common dir>/stickymd/qualification-ledger`. Matching
@@ -228,4 +249,37 @@ fn existing_directory(base: &Path, pointer: &str, label: &str) -> Result<PathBuf
         ));
     }
     Ok(directory)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    /// Relative outputs join the working directory as written: a `..` stays, so a reserved
+    /// directory the path passes through is still seen; an absolute path is kept as given.
+    #[test]
+    fn outputs_resolve_against_the_working_directory_as_written() {
+        let cwd = std::env::current_dir().unwrap();
+        let relative = Path::new("dist").join("evidence").join("..").join("x.txt");
+        assert_eq!(super::resolve(&relative).unwrap(), cwd.join(&relative));
+        let absolute = cwd.join("a").join("..").join("b");
+        assert_eq!(super::resolve(&absolute).unwrap(), absolute);
+    }
+
+    /// Windows: no `GetFullPathNameW` folding of `..` or of a device name, and no guess for a
+    /// path relative to a drive or to the current root.
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_keep_their_spelling_or_are_refused() {
+        for kept in [r"C:\a\evidence\..\x.txt", r"C:\a\fresh\NUL:"] {
+            assert_eq!(super::resolve(Path::new(kept)).unwrap(), Path::new(kept));
+        }
+        for ambiguous in [r"C:x.txt", r"\x.txt"] {
+            let error = super::resolve(Path::new(ambiguous)).unwrap_err();
+            assert!(
+                error.contains("relative to a drive or a root"),
+                "{ambiguous}: {error}"
+            );
+        }
+    }
 }
