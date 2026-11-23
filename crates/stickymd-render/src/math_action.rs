@@ -78,6 +78,12 @@ pub fn run_math_action(
         }
         .into());
     }
+    // Known limit (plan 07): the editor and the source maps split lines only at `\n`, while
+    // Comrak also breaks at a `\r` that no `\n` follows. Past the first such `\r` their
+    // positions disagree and a replacement could land on other bytes, so the pass refuses.
+    if has_isolated_cr(&snapshot.text) {
+        return Ok(None);
+    }
     let joined = join_math_equals_lines(&snapshot.text, scope.clone());
     let joined_snapshot = joined.as_ref().map(|joined| DocumentSnapshot {
         text: joined.text().into(),
@@ -93,6 +99,16 @@ pub fn run_math_action(
         Some(converted) => Some(MathActionPass::Converted(joined, converted)),
         None => joined.map(MathActionPass::Joined),
     })
+}
+
+/// Whether `text` holds a `\r` that is not followed by `\n`: one pass over the bytes, no
+/// allocation. A `\r\n` pair is one line break for both Comrak and the source maps.
+fn has_isolated_cr(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .any(|(index, &byte)| byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
 }
 
 #[cfg(test)]
@@ -118,28 +134,53 @@ mod tests {
     }
 
     /// Known limit (plan 07): plan 05 keeps an isolated `\r` as an ordinary character and the
-    /// source maps count only `\n`, while Comrak reads `\r` as a line break. Where the two
-    /// disagree both steps give up, so a document whose lines end in a bare `\r` is left
-    /// byte-identical, including its equals lines and plain formulas.
+    /// source maps count only `\n`, while Comrak reads `\r` as a line break. A document that
+    /// holds any `\r` without a following `\n` is left byte-identical. The first two inputs
+    /// were rewritten before the refusal: a formula before the first `\r`, and, with mixed
+    /// endings, the code span `\(y\)` that the shifted positions pointed at.
     #[test]
-    fn phase11b_math_action_leaves_bare_cr_documents_unchanged() {
-        for text in [
-            "\\[\ra\r=\rb\r\\]\r",
-            "$$\ra\r=\rb\r$$\r",
-            "p\r\\(x\\) q\r",
-            "p\r\\[\rx\r\\]\r",
-        ] {
+    fn phase11b_math_action_leaves_documents_with_an_isolated_cr_unchanged() {
+        let pass = |text: &str| {
             let snapshot = stickymd_core::DocumentSnapshot {
                 text: std::sync::Arc::from(text),
                 generation: stickymd_core::Generation::initial(),
                 line_ending: stickymd_core::LineEnding::Lf,
             };
-            let pass = super::run_math_action(&snapshot, None).unwrap();
-            assert!(
-                pass.is_none(),
-                "{text:?} changed to {:?}",
-                pass.map(|pass| pass.into_text())
-            );
+            super::run_math_action(&snapshot, None)
+                .unwrap()
+                .map(|pass| pass.into_text())
+        };
+        for text in [
+            "\\(x\\)\rp\r",
+            "# p\r# \\(x\\)\na`\\(y\\)`\n",
+            "\\[\ra\r=\rb\r\\]\r",
+            "$$\ra\r=\rb\r$$\r",
+            "p\r\\(x\\) q\r",
+            "p\r\\[\rx\r\\]\r",
+            "\\(x\\)\n\n$$a\n=\nb$$\nlast\r",
+        ] {
+            assert_eq!(pass(text), None, "{text:?} changed");
+        }
+        // Control: the same documents with `\n` or `\r\n` still convert.
+        assert_eq!(pass("\\(x\\)\np\n").as_deref(), Some("$x$\np\n"));
+        assert_eq!(pass("\\(x\\)\r\np\r\n").as_deref(), Some("$x$\r\np\r\n"));
+        assert_eq!(
+            pass("# p\n# \\(x\\)\na`\\(y\\)`\n").as_deref(),
+            Some("# p\n# $x$\na`\\(y\\)`\n")
+        );
+    }
+
+    #[test]
+    fn an_isolated_cr_is_a_cr_without_a_following_lf() {
+        for (text, isolated) in [
+            ("", false),
+            ("a\nb", false),
+            ("a\r\nb", false),
+            ("a\r\r\nb", true),
+            ("a\rb", true),
+            ("a\r", true),
+        ] {
+            assert_eq!(super::has_isolated_cr(text), isolated, "{text:?}");
         }
     }
 

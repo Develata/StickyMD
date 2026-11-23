@@ -155,12 +155,14 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
 ## 2026-11-19 数学按钮已知限制
 
 - Plan / feature：plan 07 `semantic-math-delimiter-conversion` 的“已知限制”（USER 2026-11-19
-  接受）→ 数学公式 `$` 按钮。行为不变，本节只锁定现状。
-- Preconditions：以孤立 `\r` 分行的文档，分别含等号行的 `\[...\]` 与 `$$...$$`、普通
-  `\(...\)`、普通 `\[...\]`。
+  接受；含孤立 `\r` 即整篇放弃，USER 2026-11-24 批准）→ 数学公式 `$` 按钮。
+- Preconditions：含后面不接 `\n` 的 `\r` 的文档：第一个 `\r` 之前的普通 `\(...\)`；混合换行下
+  标题中的公式加下一行行内代码中的 `\(y\)`；以孤立 `\r` 分行、含等号行的 `\[...\]` 与
+  `$$...$$`；普通 `\(...\)`；普通 `\[...\]`；其余全为 `\n`、只在文末有一个孤立 `\r` 的文档。
+  对照：同样内容改用 `\n` 或 `\r\n`。
 - Action：对整篇执行 `$` action 的同一纯函数 `run_math_action`。
-- Expected：四种输入均为完整 no-op，字节不变。
-- Failure signals：任何字节被改写；panic。
+- Expected：含孤立 `\r` 的输入均为完整 no-op，字节不变；对照输入照常转换，行内代码不变。
+- Failure signals：任何字节被改写；对照输入不转换；panic。
 - Automated entry：`phase11b_` selector 包含 `math_action` 的
-  `phase11b_math_action_leaves_bare_cr_documents_unchanged`。
+  `phase11b_math_action_leaves_documents_with_an_isolated_cr_unchanged`。
 - Manual：不需要；文本参数内等号行被连接的行为见 plan 07，未另设用例。
