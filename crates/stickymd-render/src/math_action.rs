@@ -140,16 +140,17 @@ mod tests {
     /// endings, the code span `\(y\)` that the shifted positions pointed at.
     #[test]
     fn phase11b_math_action_leaves_documents_with_an_isolated_cr_unchanged() {
-        let pass = |text: &str| {
+        let pass_in = |text: &str, scope: Option<std::ops::Range<usize>>| {
             let snapshot = stickymd_core::DocumentSnapshot {
                 text: std::sync::Arc::from(text),
                 generation: stickymd_core::Generation::initial(),
                 line_ending: stickymd_core::LineEnding::Lf,
             };
-            super::run_math_action(&snapshot, None)
+            super::run_math_action(&snapshot, scope)
                 .unwrap()
                 .map(|pass| pass.into_text())
         };
+        let pass = |text: &str| pass_in(text, None);
         for text in [
             "\\(x\\)\rp\r",
             "# p\r# \\(x\\)\na`\\(y\\)`\n",
@@ -167,6 +168,13 @@ mod tests {
         assert_eq!(
             pass("# p\n# \\(x\\)\na`\\(y\\)`\n").as_deref(),
             Some("# p\n# $x$\na`\\(y\\)`\n")
+        );
+        // A selection of `\(x\)` that leaves the `\r` outside still refuses; with `\r\n` only,
+        // the same selection converts.
+        assert_eq!(pass_in("\\(x\\)\r\r\n", Some(0..5)), None);
+        assert_eq!(
+            pass_in("\\(x\\)\r\n", Some(0..5)).as_deref(),
+            Some("$x$\r\n")
         );
     }
 
@@ -246,6 +254,18 @@ mod tests {
         let mut text = "x".repeat(super::MAX_PREVIEW_SOURCE_BYTES - 10);
         text.push_str("\n\n$$a\n=\nb$$");
         assert_eq!(text.len(), super::MAX_PREVIEW_SOURCE_BYTES + 1);
+        let result = run_math_action(&snapshot(&text), None);
+        assert!(
+            matches!(
+                result,
+                Err(super::SemanticConversionError::Parse(
+                    super::PreviewParseError::SourceTooLarge { .. }
+                ))
+            ),
+            "{result:?}"
+        );
+        // The size check comes first: an isolated `\r` does not turn it into a no-op.
+        text.push('\r');
         let result = run_math_action(&snapshot(&text), None);
         assert!(
             matches!(

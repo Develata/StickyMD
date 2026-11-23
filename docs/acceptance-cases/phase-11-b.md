@@ -158,10 +158,11 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   接受；含孤立 `\r` 即整篇放弃，USER 2026-11-24 批准）→ 数学公式 `$` 按钮。
 - Preconditions：含后面不接 `\n` 的 `\r` 的文档：第一个 `\r` 之前的普通 `\(...\)`；混合换行下
   标题中的公式加下一行行内代码中的 `\(y\)`；以孤立 `\r` 分行、含等号行的 `\[...\]` 与
-  `$$...$$`；普通 `\(...\)`；普通 `\[...\]`；其余全为 `\n`、只在文末有一个孤立 `\r` 的文档。
-  对照：同样内容改用 `\n` 或 `\r\n`。
-- Action：对整篇执行 `$` action 的同一纯函数 `run_math_action`。
-- Expected：含孤立 `\r` 的输入均为完整 no-op，字节不变；对照输入照常转换，行内代码不变。
+  `$$...$$`；普通 `\(...\)`；普通 `\[...\]`；其余全为 `\n`、只在文末有一个孤立 `\r` 的文档；
+  选区只含 `\(x\)`、孤立 `\r` 在选区外（`\r\r\n`）。对照：同样内容改用 `\n` 或 `\r\n`。
+- Action：对整篇或所给选区执行 `$` action 的同一纯函数 `run_math_action`。
+- Expected：含孤立 `\r` 的输入均为完整 no-op，字节不变；对照输入照常转换，行内代码不变。超过
+  大小上限的文本即使含孤立 `\r` 也照旧报 `SourceTooLarge`（由同文件的超限测试锁定）。
 - Failure signals：任何字节被改写；对照输入不转换；panic。
 - Automated entry：`phase11b_` selector 包含 `math_action` 的
   `phase11b_math_action_leaves_documents_with_an_isolated_cr_unchanged`。
