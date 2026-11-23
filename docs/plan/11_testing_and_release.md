@@ -373,6 +373,10 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 <a id="macos-readiness-check"></a>
 ##### 就绪核对与 R 上的源码测试收据（M5）
 
+状态：源码测试收据的格式按上表“格式由 M5 定”的授权定下。以下四项是 M5 实现时的提议，待 USER 确认（[M5 报告](../report/2026-11-24-m5-macos-readiness-check.md)）：
+Phase 16 行的分类（W15、W16、V05 不进 macOS 门，P01 由包完整性一类承担）、账本判定（某一身份下的 FAIL 不妨碍另一身份的干净运行）、
+同键互斥的结果并入源码测试收据、核对程序只在 R 的干净检出中运行。
+
 - **源码测试的运行：** `stickymd-smoke release macos-source-tests --release-source <R>` 在 macOS 主机上依次：核对 HEAD 等于 R、工作树干净
   （`git status --porcelain --untracked-files=normal` 为空），不符即不运行、不写收据；以同一组包的 `cargo test --locked … --no-run --message-format=json`
   求出应运行的测试二进制（`profile.test` 为真且有可执行文件的 `compiler-artifact`），以 `cargo metadata --no-deps --locked` 求出应运行文档测试的库；
