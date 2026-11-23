@@ -139,9 +139,7 @@ USER 对“需要 Develata 决定”四项与四项待确认提议的回复（�
 
 未验证：
 
-- 虚拟机里的实际运行：`--zip` 下的 R03（嵌套布局的 `.app` 是否同样被随机化、挂载行的匹配与提示）与 schema 5 的 `mac-resources` 运行都没有在
-  `mac-test` 中跑过；需要你同意后在虚拟机里各跑一次。`mac-gui` 的运行前核对、证据写 `zip_sha256` 与 `translocation::run` 的新布局只经编译检查，
-  证据字段名与账本读取的一致是读代码确认的，没有测试把两者连起来。在这次虚拟机运行之前，R03 不能在门中 PASS。
+- schema 5 的 `mac-resources` 没有在 `mac-test` 中跑过（R03 的虚拟机运行见下节）。
 - 新测试在 Windows 上只编译检查（clippy），由 CI 运行。
 
 ### Resolution（2026-11-24，生产者改动）
@@ -152,3 +150,22 @@ USER 在父会话（M5 就绪核对）中对上面三点与“推送并开 PR、
 
 据此：R02 取各场景有效运行的中位数，对照 `10` 的 0.1% 硬失败线；V03 在 USER 定下发布用的规则之前不由程序判定，保持 `NOT TESTED`，每版可
 waiver；R03 的 ZIP 摘要不参与分组。`11` #macos-readiness-check 的状态行与 #phase-16-macos-host 的 R02 一条已改为已批准。
+
+### R03 在 `mac-test` 中的运行（2026-11-24）
+
+这是实现的验证，不是发布证据：ZIP 由本机打包，不是晋升的候选。
+
+- **被测字节：** 在分支提交 `be6cce1` 的干净克隆中，`build-app.sh` 构建 app，`stickymd-package macos-package` 按发布布局打出
+  `StickyMD-0.2.0-macos-arm64-portable.zip`：ZIP `f99e819c…`，bundle 清单 `14fd817a…`，可执行文件 `92531ef9…`，产品输入指纹 `01b7c840…`，
+  签名 AD_HOC。本 worktree 嵌在主检出之下，主检出的 `.cargo/config.toml` 是祖先目录的 Cargo 配置，`app-inputs` 按设计拒绝在这里构建，所以改在克隆中构建。
+- **驱动：** `74d5b52` 的开发版（unwind）`stickymd-smoke`，`30a86491…`。
+- **命令：** 虚拟机（macOS 27.2，26B123，`hv_vmm_present` 为 1）中执行
+  `stickymd-smoke mac-gui --app StickyMD.app --zip StickyMD-0.2.0-macos-arm64-portable.zip --only R03 --batch m5p-1`。
+- **结果：** R03 PASS，六项检查全部通过，证据 `finished` 为真，顶层 `zip_sha256` 等于 ZIP 的摘要：
+  - 运行前核对通过；
+  - 解出的 `download/StickyMD/StickyMD.app` 以 App Translocation 的只读 nullfs 挂载启动，挂载行的源路径就是嵌套布局的路径；
+  - 模态提示窗出现，stderr 给出“请先把 StickyMD.app 拖进‘应用程序’，或把整个 StickyMD 文件夹移到别处”；
+  - Return 后退出，runningboard 记录为 `(0, 0, 256)`；
+  - `StickyMD/` 文件夹前后同为 `LICENSE.txt`、`README.txt`、`StickyMD.app`、`THIRD_PARTY_NOTICES.txt`、`licenses`。
+- **证据：** 已忽略的 `dist/evidence/mac-vm-2026-11-24-m5p/`（`mac-gui.json` 的 SHA-256 为 `b3499710…`），在本 worktree 中。
+- **账本：** 用 `mac-ledger record` 登记进真实账本的一份副本（真实账本未改动）。原有 337 行照常读取，新增的 R03 记录带 `zip_sha256`、批次 `m5p-1`。
