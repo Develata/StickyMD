@@ -185,8 +185,7 @@ fn identity(receipt: &Receipt, release: &str) -> Result<(), String> {
             receipt.command
         ));
     }
-    if receipt.same_key.command != same_key_command() || receipt.same_key.tests != SAME_KEY_TESTS
-    {
+    if receipt.same_key.command != same_key_command() || receipt.same_key.tests != SAME_KEY_TESTS {
         return Err("the same-key run is not the required command".to_owned());
     }
     if receipt.host.product_name != "macOS" || receipt.host.arch != "arm64" {
@@ -200,10 +199,7 @@ fn identity(receipt: &Receipt, release: &str) -> Result<(), String> {
 
 fn main(receipt: &Receipt) -> Outcome {
     if receipt.exit_code != Some(0) {
-        return Outcome::Fail(format!(
-            "cargo test exited with {:?}",
-            receipt.exit_code
-        ));
+        return Outcome::Fail(format!("cargo test exited with {:?}", receipt.exit_code));
     }
     if let Some(run) = receipt.binaries.iter().find(|run| run.counts.failed > 0) {
         return Outcome::Fail(format!(
@@ -230,7 +226,9 @@ fn main(receipt: &Receipt) -> Outcome {
     if ran != expected {
         return Outcome::NotTested(format!(
             "the run covered {} of the {} test binaries and doc-test libraries Cargo listed",
-            ran.iter().filter(|target| expected.contains(target)).count(),
+            ran.iter()
+                .filter(|target| expected.contains(target))
+                .count(),
             expected.len()
         ));
     }

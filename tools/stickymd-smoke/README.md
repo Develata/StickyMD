@@ -602,7 +602,8 @@ cargo run --quiet -p stickymd-smoke --locked -- release macos-ready --release-so
 `macos-source-tests` starts only on a clean checkout of R, removes any earlier receipt, runs
 the row's exact `cargo test --locked` over the eight packages plus the explicit same-key run,
 and writes `dist/evidence/release-source-tests-macos.json` with libtest's counts per test
-binary and the source identity at both ends. `macos-ready` is read-only: it resolves the
+binary and the source identity at both ends. `macos-ready` is read-only and also runs only
+on a clean checkout of R, so the gate is judged with R's own tools: it resolves the
 promoted candidate, reads the `mac-gui` ledger and that receipt, prints every gate row and
 Phase 16 row with its verdict, and exits non-zero unless all hold. Rows with no evidence
 source yet (R03 on the release ZIP, the download path, release receipts and waivers, the

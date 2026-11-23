@@ -392,7 +392,8 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
   2. 记下的失败：`exit_code` 不为 0（含被信号结束），或某项 failed 非 0，源码测试行为 `FAIL`；同键互斥运行的退出码不为 0 或 failed 非 0，该行为 `FAIL`。
   3. 完整：`problems` 为空，`binaries` 与 `expected` 是同一集合且每项只出现一次，八个包都至少有一项，每项 filtered_out 为 0 且 passed、failed、
      ignored、measured 之和等于运行数，源码测试行才 PASS；同键互斥 passed 为 2、ignored 为 0 且数目相符才 PASS。否则为 `NOT TESTED`。
-- **核对程序：** `stickymd-smoke release macos-ready --release-source <R> [--batch <名>]` 只读，在 macOS 主机上运行：经 resolver 取得候选（resolver
+- **核对程序：** `stickymd-smoke release macos-ready --release-source <R> [--batch <名>]` 只读，在 macOS 主机上 R 的干净检出中运行（门用 R 的工具判定，
+  见 #platform-artifact-reuse“沿用后”；HEAD 不是 R 或工作树不干净即拒绝）：经 resolver 取得候选（resolver
   返回它读到的 receipt 摘要与两项字节身份），读账本与源码测试收据，逐行打印结论，全部成立才成功退出；没有强制通过的选项。判定是纯函数，
   坏样本测试在所有平台运行。
 - **Phase 16 行的分类**是核对程序中的一张表，测试核对它恰好覆盖矩阵中的全部 P16 行，且与各行的 Mode 一致（Mode 一改即须重新分类）：

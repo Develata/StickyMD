@@ -55,6 +55,15 @@ pub(in super::super) fn ready_command(
     if let Some(name) = batch.filter(|name| !crate::mac_ledger::is_batch(name)) {
         return Err(format!("batch {name:?} is not 1-64 of [A-Za-z0-9._-]"));
     }
+    // The gate is judged with R's own tools (plan 11 #platform-artifact-reuse, after reuse): its
+    // row table and rules are those of a clean checkout of R.
+    let here = crate::evidence::SourceIdentity::capture(root);
+    if here.commit.to_ascii_lowercase() != release || here.worktree_dirty {
+        return Err(format!(
+            "macOS readiness is checked on a clean checkout of {release}; HEAD is {} (dirty {})",
+            here.commit, here.worktree_dirty
+        ));
+    }
     let matrix = std::fs::read_to_string(root.join("docs/acceptance-cases/phase-16.md"))
         .map_err(|error| format!("cannot read the Phase 16 matrix: {error}"))?;
     rows::check_against(&crate::governance::phase16_modes(&matrix)?)?;
@@ -91,9 +100,9 @@ pub(in super::super) fn ready_command(
             Ok(receipt) => Read::Present(receipt),
             Err(error) => Read::Invalid(format!("the source-test receipt is invalid: {error}")),
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Read::Missing(
-            "no source-test receipt: run release macos-source-tests on R".to_owned(),
-        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Read::Missing("no source-test receipt: run release macos-source-tests on R".to_owned())
+        }
         Err(error) => Read::Invalid(format!("cannot read the source-test receipt: {error}")),
     };
     let inputs = judge::Inputs {
@@ -134,9 +143,16 @@ pub(in super::super) fn ready_command(
     } else {
         let open = lines
             .iter()
-            .filter(|line| !matches!(line.verdict, judge::Verdict::Pass | judge::Verdict::Excluded))
+            .filter(|line| {
+                !matches!(
+                    line.verdict,
+                    judge::Verdict::Pass | judge::Verdict::Excluded
+                )
+            })
             .count();
-        Err(format!("macOS readiness: NOT READY ({open} rows do not hold)"))
+        Err(format!(
+            "macOS readiness: NOT READY ({open} rows do not hold)"
+        ))
     }
 }
 
