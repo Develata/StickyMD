@@ -165,5 +165,7 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   大小上限的文本即使含孤立 `\r` 也照旧报 `SourceTooLarge`（由同文件的超限测试锁定）。
 - Failure signals：任何字节被改写；对照输入不转换；panic。
 - Automated entry：`phase11b_` selector 包含 `math_action` 的
-  `phase11b_math_action_leaves_documents_with_an_isolated_cr_unchanged`。
-- Manual：不需要；文本参数内等号行被连接的行为见 plan 07，未另设用例。
+  `phase11b_math_action_leaves_documents_with_an_isolated_cr_unchanged`；文本参数内的等号行
+  （`$$\text{a`、`=`、`b}$$` 三行连接为 `$$\text{a=b}$$`）由
+  `phase11b_math_action_joins_an_equals_line_inside_a_text_argument` 锁定。
+- Manual：不需要。

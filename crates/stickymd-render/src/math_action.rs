@@ -159,6 +159,8 @@ mod tests {
             "p\r\\(x\\) q\r",
             "p\r\\[\rx\r\\]\r",
             "\\(x\\)\n\n$$a\n=\nb$$\nlast\r",
+            // The first `\r` is half of a `\r\n`; the isolated one comes later.
+            "\\(x\\)\r\np\r",
         ] {
             assert_eq!(pass(text), None, "{text:?} changed");
         }
@@ -175,6 +177,22 @@ mod tests {
         assert_eq!(
             pass_in("\\(x\\)\r\n", Some(0..5)).as_deref(),
             Some("$x$\r\n")
+        );
+    }
+
+    /// Known limit (plan 07): the equals-line join does not tell text-mode arguments apart, so
+    /// an equals line inside `\text{...}` is joined and its spaces go.
+    #[test]
+    fn phase11b_math_action_joins_an_equals_line_inside_a_text_argument() {
+        let snapshot = stickymd_core::DocumentSnapshot {
+            text: std::sync::Arc::from("$$\\text{a\n=\nb}$$"),
+            generation: stickymd_core::Generation::initial(),
+            line_ending: stickymd_core::LineEnding::Lf,
+        };
+        let pass = super::run_math_action(&snapshot, None).unwrap();
+        assert_eq!(
+            pass.map(|pass| pass.into_text()).as_deref(),
+            Some("$$\\text{a=b}$$")
         );
     }
 
