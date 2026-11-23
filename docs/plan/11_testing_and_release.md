@@ -308,7 +308,7 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
   不符即拒绝；场景与整份证据的状态字段不作依据。有效运行指状态为 `VALID`、没有清理错误且有读数的运行。
   - R01：每个场景恰有 `repetitions`（至少 5）次运行且全部有效、每次的 `phys_footprint` 都不超过 `10` #macos-gates 的临时硬门为 PASS；
     任一有效运行超过硬门为 FAIL；其余为 NOT_TESTED。
-  - R02（提议，待 USER 确认）：每个场景取有效运行 60 s 空闲 CPU 的中位数，对照 `10` 目标表的硬失败条件“> 0.1%”。四个场景都完整（同 R01）
+  - R02（USER 2026-11-24 批准）：每个场景取有效运行 60 s 空闲 CPU 的中位数，对照 `10` 目标表的硬失败条件“> 0.1%”。四个场景都完整（同 R01）
     且中位数都不超过 0.1% 为 PASS；任一场景有效运行的中位数超过 0.1% 为 FAIL；其余为 NOT_TESTED。取中位数沿用这一行以往的判定（按周期开关光标
     图层时 Split 中位 0.103% 判为超过硬门）；替代是取最大值，更严，但单次读数即可使整行失败。唤醒次数仍只作观察。
   - V03 不由 `mac-resources` 判定：它要求同一批次中基线与新包交替运行 `mac-latency`，呈现器计数只在 `mac-latency` 的证据中，而
@@ -397,9 +397,9 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 状态：源码测试收据的格式按上表“格式由 M5 定”的授权定下。USER 2026-11-24 批准（[M5 报告](../report/2026-11-24-m5-macos-readiness-check.md)
 末尾的 Resolution）M5 实现时的四项提议——Phase 16 行的分类（W15、W16、V05 不进 macOS 门，P01 由包完整性一类承担）、账本判定（某一身份下的
 FAIL 不妨碍另一身份的干净运行）、同键互斥的结果并入源码测试收据、核对程序只在 R 的干净检出中运行——以及下文的发布用 USER 记录。
-R03 与资源行的生产者改动按同一 Resolution 另开分支落地（#phase-16-macos-host 的“R03 的输入 ZIP”与“资源运行进账本”）。实现时的三项提议待 USER
-确认（[M5 报告](../report/2026-11-24-m5-macos-readiness-check.md)“生产者改动”节）：R02 取各场景中位数；V03 不由程序判定，仍可 waiver；R03 的 ZIP
-不参与分组。
+R03 与资源行的生产者改动按同一 Resolution 另开分支落地（#phase-16-macos-host 的“R03 的输入 ZIP”与“资源运行进账本”）。USER 2026-11-24 批准
+（[M5 报告](../report/2026-11-24-m5-macos-readiness-check.md)“生产者改动”节的 Resolution）实现时的三项提议：R02 取各场景中位数；V03 在 USER 定下
+发布用的规则之前不由程序判定，每版可 waiver；R03 的 ZIP 不参与分组。
 
 - **源码测试的运行：** `stickymd-smoke release macos-source-tests --release-source <R>` 在 macOS 主机上依次：核对 HEAD 等于 R、工作树干净
   （`git status --porcelain --untracked-files=normal` 为空），不符即不运行、不写收据；以同一组包的 `cargo test --locked … --no-run --message-format=json`

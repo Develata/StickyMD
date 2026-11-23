@@ -19,7 +19,7 @@ screen, warms up 30 s from then and measures the same way; the window must
 still be off screen at both samples.
 P16-R01: every run valid and within 72/96/128/48 MiB. P16-R02: each scenario's
 median idle CPU over its valid runs at most 0.1% (plan 10's hard failure line;
-the statistic awaits USER confirmation). Wake-ups are observations, with no gate.
+USER 2026-11-24). Wake-ups are observations, with no gate.
 Exit 0 means both rows PASS; it is not release readiness.
 Off macOS, measurement exits non-zero with NOT_TESTED.
 Writes mac-resources.json (schema 5) atomically, with the bundle's manifest and

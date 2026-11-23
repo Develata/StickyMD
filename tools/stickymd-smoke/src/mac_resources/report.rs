@@ -143,7 +143,7 @@ impl Evidence {
             format!(",\"app_inputs\":{}", quote(inputs))
         });
         format!(
-            "{{\"schema_version\":5,\"tool\":\"mac-resources\",\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"finished\":{},\"environment\":{}{inputs},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":{{\"statistic\":\"median of the valid runs per scenario (proposal awaiting USER confirmation)\",\"hard_failure_above_percent\":{}}},\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"rows\":[{rows}],\"scenarios\":[{}]}}\n",
+            "{{\"schema_version\":5,\"tool\":\"mac-resources\",\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"finished\":{},\"environment\":{}{inputs},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":{{\"statistic\":\"median of the valid runs per scenario (USER 2026-11-24)\",\"hard_failure_above_percent\":{}}},\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"rows\":[{rows}],\"scenarios\":[{}]}}\n",
             if self.passed() {
                 "SCENARIOS_PASS"
             } else {
@@ -197,7 +197,7 @@ impl Evidence {
             println!("P16-{}: {} ({})", row.row, row.verdict, row.detail);
         }
         println!(
-            "Wake-ups are observations only. The R02 statistic (median per scenario) awaits USER confirmation."
+            "Wake-ups are observations only. R02 compares each scenario's median idle CPU (USER 2026-11-24)."
         );
     }
 }

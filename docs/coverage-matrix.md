@@ -3,7 +3,7 @@
 2026-11-24 macOS 发布门的两项生产者改动（M5 报告 Resolution 第 3 项，[M5 报告](report/2026-11-24-m5-macos-readiness-check.md)“生产者改动”节）：
 
 - **Plan：** `11` `phase-16-macos-host`（“R03 的输入 ZIP”“资源运行进账本”：`mac-gui --zip`、证据与账本的 `zip_sha256`、`mac-resources` schema 5、
-  R01 与 R02 的判定，R02 的中位数规则待 USER 确认）、`macos-readiness-check`（资源行与 R03 的账本判定，V03 是唯一尚无来源的行）。
+  R01 与 R02 的判定，R02 的中位数规则 USER 2026-11-24 批准）、`macos-readiness-check`（资源行与 R03 的账本判定，V03 是唯一尚无来源的行）。
 - **验收：** [Phase 18](acceptance-cases/phase-18.md) P18-G04；P18-G02、G03 随判定更新；[Phase 16](acceptance-cases/phase-16.md) P16-R02、R03 的要求注明新来源。
 - **代码：** `tools/stickymd-smoke/src/mac_gui/staging.rs`（R03 的下载目录：候选 ZIP 或自行打包、两项字节身份的核对）、`mac_gui/runner.rs`
   （运行前核对 `--zip`、证据的 `zip_sha256`）、`mac_ledger/record.rs`（R03 记录的可选字段）、`mac_ledger/resources.rs`（资源证据的登记）、

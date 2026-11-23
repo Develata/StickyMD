@@ -9,7 +9,7 @@ use super::model::{self, SCENARIOS};
 use crate::release::json::Value;
 
 /// `10`'s target table: idle CPU (a 60 s average) above 0.1% is a hard failure. R02 compares each
-/// scenario's median over its valid runs with it (proposal awaiting USER confirmation, plan 11).
+/// scenario's median over its valid runs with it (USER 2026-11-24, plan 11 #phase-16-macos-host).
 pub(super) const CPU_HARD_FAILURE_PERCENT: f64 = 0.1;
 
 /// What a valid run read: its `phys_footprint` after the warm-up and its idle CPU percent.
