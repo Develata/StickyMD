@@ -14,9 +14,11 @@ pub(super) enum Class {
     Gui,
     /// Judged by the USER: a release receipt or waiver bound to the candidate.
     Manual,
-    /// Measured by `mac-resources` / `mac-latency`, whose evidence does not yet bind both byte
-    /// identities and is not recorded in the ledger.
+    /// Measured by `mac-resources`: a ledger PASS on the candidate's bytes, as for `Gui`.
     Resources,
+    /// V03: baseline and new package alternating through `mac-latency` and `mac-resources`;
+    /// `mac-latency` is not in the ledger and has no release rule, so only a waiver holds it.
+    Comparison,
     /// R03: App Translocation of the release ZIP itself.
     Translocation,
     /// A Windows regression of the shared layer; Windows readiness judges it.
@@ -76,7 +78,7 @@ pub(super) const ROWS: &[(&str, Class)] = &[
     ("R03", Class::Translocation),
     ("V01", Class::Source),
     ("V02", Class::Source),
-    ("V03", Class::Resources),
+    ("V03", Class::Comparison),
     ("V04", Class::Manual),
     ("V05", Class::Windows),
 ];
@@ -86,7 +88,11 @@ pub(super) const ROWS: &[(&str, Class)] = &[
 /// and the source rows may not be waived; Windows rows are not macOS release rows.
 pub(crate) fn waivable(row: &str) -> bool {
     ROWS.iter().any(|(id, class)| {
-        *id == row && matches!(class, Class::Gui | Class::Manual | Class::Resources)
+        *id == row
+            && matches!(
+                class,
+                Class::Gui | Class::Manual | Class::Resources | Class::Comparison
+            )
     })
 }
 
@@ -94,9 +100,12 @@ pub(crate) fn waivable(row: &str) -> bool {
 /// disagree, so the row must be classified again (plan 11 #macos-readiness-check).
 fn agrees(class: Class, mode: &str) -> bool {
     match class {
-        Class::Source | Class::Package | Class::Gui | Class::Resources | Class::Translocation => {
-            mode == "Automated"
-        }
+        Class::Source
+        | Class::Package
+        | Class::Gui
+        | Class::Resources
+        | Class::Comparison
+        | Class::Translocation => mode == "Automated",
         Class::Manual => matches!(mode, "Manual" | "Review" | "Agent"),
         // W15 and W16 are waived in the matrix (mode `—`); V05 is the Windows regression receipt.
         Class::Windows => matches!(mode, "—" | "Manual"),

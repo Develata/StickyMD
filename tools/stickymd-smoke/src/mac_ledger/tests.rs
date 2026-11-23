@@ -37,6 +37,7 @@ fn run(row: &str, verdict: &str, identity: Identity, digest: char) -> Record {
         evidence_sha256: hex(digest),
         run_unix: None,
         batch: None,
+        zip: None,
         recorded_unix: 1,
     }
 }

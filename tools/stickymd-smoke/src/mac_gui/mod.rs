@@ -4,7 +4,8 @@
 //! presenter diagnostic and captures the window (`visual`). W12's logout is not driven: it ends
 //! the VM's GUI session, and loginwindow ends this driver with it; W12 sends the product the quit request and the
 //! SIGTERM a logout brings directly instead. R03 opens a quarantined copy through LaunchServices
-//! with the user-approved quarantine bit preset (USER 2026-11-19; `translocation`). W15 needs
+//! with the user-approved quarantine bit preset (USER 2026-11-19; `translocation`), from the
+//! release ZIP given with `--zip` (`staging`). W15 needs
 //! Windows. These are never inferred PASS.
 //! W11/W12 inject the save failure by taking write permission from the fixture's note directory
 //! (USER 2026-11-11).
@@ -54,6 +55,9 @@ mod scenario_tests;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod scenarios;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod staging;
 #[cfg(test)]
 mod tests;
 #[cfg(any(target_os = "macos", test))]

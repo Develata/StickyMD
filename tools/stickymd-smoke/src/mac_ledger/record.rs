@@ -3,7 +3,9 @@
 //! the built app's hashes for audit. A revocation records the USER withdrawing one of them; the
 //! withdrawn result stays as history and is never reused. Every line is validated on read: a malformed or out-of-range
 //! record rejects the whole ledger. Records written before the input fingerprint (no
-//! `app_inputs`) are read as history and never reused.
+//! `app_inputs`) are read as history and never reused. An R03 record names the release ZIP it
+//! opened (`zip_sha256`) when `mac-gui --zip` gave one; records without it read as before. A
+//! finished `mac-resources` run is recorded too (`resources`).
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::release::ReleaseRecord;
 use crate::release::json::{self, Value};
@@ -60,6 +62,9 @@ pub(crate) enum Record {
         run_unix: Option<u64>,
         /// The acceptance batch, for the never-reused rows (plan 11 #phase-16-macos-host).
         batch: Option<String>,
+        /// The SHA-256 of the release ZIP R03 opened (`mac-gui --zip`); only R03 records carry it,
+        /// and only when a ZIP was given (plan 11 #phase-16-macos-host).
+        zip: Option<String>,
         recorded_unix: u64,
     },
     Manual {
@@ -103,14 +108,18 @@ fn quote(s: &str) -> String {
     format!("\"{}\"", crate::evidence::escape_json(s))
 }
 
-/// Optional trailing members, each with its leading comma; absent values write nothing.
-fn optional_members(run_unix: Option<u64>, batch: Option<&String>) -> String {
+/// Optional trailing members, each with its leading comma; absent values write nothing, so a
+/// record without them is written as before.
+fn optional_members(run_unix: Option<u64>, batch: Option<&String>, zip: Option<&String>) -> String {
     let mut out = String::new();
     if let Some(run_unix) = run_unix {
         out.push_str(&format!(",\"run_unix\":{run_unix}"));
     }
     if let Some(batch) = batch {
         out.push_str(&format!(",\"batch\":{}", quote(batch)));
+    }
+    if let Some(zip) = zip {
+        out.push_str(&format!(",\"zip_sha256\":{}", quote(zip)));
     }
     out
 }
@@ -134,6 +143,7 @@ impl Record {
                 evidence_sha256,
                 run_unix,
                 batch,
+                zip,
                 recorded_unix,
             } => format!(
                 "{{\"kind\":\"automated\",\"row\":{},\"verdict\":{}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"image\":{},\"system\":{},\"evidence\":{},\"evidence_sha256\":{}{},\"recorded_unix\":{recorded_unix}}}",
@@ -147,7 +157,7 @@ impl Record {
                 quote(&identity.system),
                 quote(evidence),
                 quote(evidence_sha256),
-                optional_members(*run_unix, batch.as_ref()),
+                optional_members(*run_unix, batch.as_ref(), zip.as_ref()),
             ),
             Self::Manual {
                 row,
@@ -164,7 +174,7 @@ impl Record {
                 quote(app_executable),
                 quote(environment),
                 quote(words),
-                optional_members(None, batch.as_ref()),
+                optional_members(None, batch.as_ref(), None),
             ),
             Self::Revocation {
                 row,
@@ -219,10 +229,17 @@ impl Record {
                 evidence,
                 evidence_sha256,
                 batch: run_batch,
+                zip,
                 ..
             } => {
                 nonempty("row", row)?;
                 batch(run_batch.as_ref())?;
+                if let Some(zip) = zip {
+                    if row != "R03" {
+                        return Err(format!("only R03 opens a ZIP; P16-{row} names one"));
+                    }
+                    hash("zip_sha256", zip)?;
+                }
                 if !VERDICTS.contains(&verdict.as_str()) {
                     return Err(format!("unknown verdict {verdict:?}"));
                 }
@@ -293,6 +310,7 @@ impl Record {
                 evidence_sha256: text("evidence_sha256")?,
                 run_unix: optional_unsigned(&value, "run_unix")?,
                 batch: optional_text(&value, "batch")?,
+                zip: optional_text(&value, "zip_sha256")?,
                 recorded_unix,
             },
             "manual" if text("verdict")? == "MANUAL PASS" => Self::Manual {
@@ -337,16 +355,18 @@ impl Record {
     }
 
     /// The record with every digest lowercased; the ledger's bytes stay as written.
-    fn normalized(mut self) -> Self {
+    pub(super) fn normalized(mut self) -> Self {
         let lower = |s: &mut String| s.make_ascii_lowercase();
         match &mut self {
             Self::Automated {
                 identity,
                 built,
                 evidence_sha256,
+                zip,
                 ..
             } => {
                 identity.inputs.as_mut().map(lower);
+                zip.as_mut().map(lower);
                 lower(&mut identity.driver);
                 lower(&mut built.executable);
                 lower(&mut built.bundle);
@@ -372,7 +392,7 @@ impl Record {
 }
 
 /// A number member that may be absent; present with any other type, it is an error.
-fn optional_unsigned(value: &Value, key: &str) -> Result<Option<u64>, String> {
+pub(super) fn optional_unsigned(value: &Value, key: &str) -> Result<Option<u64>, String> {
     match value.field(key) {
         Ok(member) => Ok(Some(member.unsigned()?)),
         Err(_) => Ok(None),
@@ -380,7 +400,7 @@ fn optional_unsigned(value: &Value, key: &str) -> Result<Option<u64>, String> {
 }
 
 /// A string member that may be absent; present with any other type, it is an error.
-fn optional_text(value: &Value, key: &str) -> Result<Option<String>, String> {
+pub(super) fn optional_text(value: &Value, key: &str) -> Result<Option<String>, String> {
     match value.field(key) {
         Ok(member) => Ok(Some(member.string()?.to_owned())),
         Err(_) => Ok(None),
@@ -487,13 +507,23 @@ pub(super) fn from_evidence(
 ) -> Result<Vec<Record>, String> {
     let text = std::str::from_utf8(bytes).map_err(|e| format!("evidence is not UTF-8: {e}"))?;
     let value = json::parse(text)?;
+    if optional_text(&value, "tool")?.as_deref() == Some(super::resources::TOOL) {
+        return super::resources::from_evidence(&value, bytes, evidence, image, recorded_unix);
+    }
     // Schema 2 is the first whose `finished` only the current rules set and that names the batch
     // the run was started for; an older file cannot say either, so it is rerun, not recorded.
     if !matches!(
         value.field("schema_version").and_then(Value::unsigned),
         Ok(2)
     ) {
-        return Err("the evidence is not schema 2 (an older driver); it cannot be recorded".into());
+        return Err("the evidence is not schema 2 of mac-gui (an older driver) nor schema 5 of mac-resources; it cannot be recorded".into());
+    }
+    // The release ZIP R03 opened, kept with R03 alone.
+    let zip = optional_text(&value, "zip_sha256")?;
+    if let Some(digest) = zip.as_deref().filter(|d| !is_sha256(d)) {
+        return Err(format!(
+            "the evidence names a ZIP digest that is not a SHA-256: {digest:?}"
+        ));
     }
     let batch = optional_text(&value, "batch")?;
     if let Some(name) = batch.as_deref().filter(|b| !super::options::is_batch(b)) {
@@ -580,6 +610,7 @@ pub(super) fn from_evidence(
             ));
         }
         let record = Record::Automated {
+            zip: zip.clone().filter(|_| row == "R03"),
             row,
             verdict,
             identity: identity.clone(),
@@ -596,6 +627,15 @@ pub(super) fn from_evidence(
     }
     if records.is_empty() {
         return Err("the evidence has no rows".into());
+    }
+    if zip.is_some()
+        && !records
+            .iter()
+            .any(|r| matches!(r, Record::Automated { row, .. } if row == "R03"))
+    {
+        return Err(
+            "the evidence names a ZIP but has no R03 row, the only row that opens one".into(),
+        );
     }
     Ok(records)
 }

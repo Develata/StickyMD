@@ -1,9 +1,10 @@
 //! P16-R03: a package downloaded from the internet starts under App Translocation, shows the
 //! product's own prompt, and exits after it without writing anything. The driver stands in for
-//! the browser and for the USER's first-open approval: it zips the app under test, marks the
-//! archive and every extracted file with a quarantine attribute whose user-approved bit (0x40) is
-//! set, so macOS skips its first-open confirmation (USER 2026-11-19, the acceptance ladder
-//! report). It opens the copy through LaunchServices, as a double click does.
+//! the browser and for the USER's first-open approval: it takes the candidate ZIP given with
+//! `--zip` (or, without one, zips the app under test; `staging`), marks the archive and every
+//! extracted file with a quarantine attribute whose user-approved bit (0x40) is set, so macOS
+//! skips its first-open confirmation (USER 2026-11-19, the acceptance ladder report). It opens the
+//! copy through LaunchServices, as a double click does.
 //!
 //! The prompt is shown before the application has finished launching, so its Accessibility
 //! requests do not complete (macOS 27.2 VM: `kAXErrorCannotComplete`) and it owns no AX window.
@@ -68,7 +69,8 @@ pub(super) struct Observed {
     pub exited: Option<bool>,
     /// runningboard's termination record for the PID, e.g. `(0, 0, 0)`.
     pub termination: Option<String>,
-    /// The download directory's entries before the start and after the exit.
+    /// The entries of the folder holding the bundle (where a portable `note/` would be
+    /// written) before the start and after the exit.
     pub before: Vec<String>,
     pub after: Vec<String>,
 }
@@ -231,6 +233,7 @@ mod live {
         live::{command, command_within},
         model::{Row, Trace, Window},
         native::{events, windows},
+        staging::{self, Bytes, Candidate},
     };
     use std::{
         fs,
@@ -441,12 +444,14 @@ mod live {
         Ok(())
     }
 
-    /// Runs R03 in `dir` (the scenario's session directory) for the app under test, whose
-    /// bundle manifest must be `bundle`. Leaves no process of its own running.
+    /// Runs R03 in `dir` (the scenario's session directory) for the app under test, whose byte
+    /// identities must be `expected`, from the candidate ZIP `zip` when one was given. Leaves no
+    /// process of its own running.
     pub(in crate::mac_gui) fn run(
         app: &Path,
         dir: &Path,
-        bundle: &str,
+        expected: &Bytes,
+        zip: Option<&Candidate>,
         started: Instant,
         row: &mut Row,
     ) -> Result<(), String> {
@@ -459,37 +464,23 @@ mod live {
         if !products()?.is_empty() {
             return Err("a StickyMD process is already running; refused before R03".into());
         }
-        let download = dir.join("download");
-        fs::create_dir(&download).map_err(|e| e.to_string())?;
-        let download = fs::canonicalize(&download).map_err(|e| e.to_string())?;
-        let zip = download.join("StickyMD.zip");
-        let copy = download.join("StickyMD.app");
-        let text = |p: &Path| p.to_string_lossy().into_owned();
-        command(
-            "/usr/bin/ditto",
-            &["-c", "-k", "--keepParent", &text(app), &text(&zip)],
-        )?;
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| e.to_string())?
             .as_secs();
         let value = format!("{QUARANTINE_FLAGS};{stamp:x};Safari;");
-        command(
-            "/usr/bin/xattr",
-            &["-w", "com.apple.quarantine", &value, &text(&zip)],
-        )?;
-        command(
-            "/usr/bin/ditto",
-            &["-x", "-k", &text(&zip), &text(&download)],
-        )?;
-        // As Archive Utility does, every extracted file carries the archive's attribute.
-        command(
-            "/usr/bin/xattr",
-            &["-w", "-r", "com.apple.quarantine", &value, &text(&copy)],
-        )?;
-        if crate::mac_common::fixture::bundle_hash(&copy)? != bundle {
-            return Err("extracted bundle manifest differs from the app under test".into());
-        }
+        let staged = staging::stage(&dir.join("download"), app, expected, zip, &value)?;
+        note(
+            row,
+            match &staged.zip_sha256 {
+                Some(digest) => format!("candidate ZIP sha256={digest}"),
+                None => "no --zip: the app under test was zipped here; no ZIP is named".into(),
+            },
+        );
+        let copy = staged.copy;
+        // The folder holding the bundle: a portable note/ would be written there.
+        let watched = staged.watched;
+        let text = |p: &Path| p.to_string_lossy().into_owned();
         let mut o = Observed {
             quarantine: command(
                 "/usr/bin/xattr",
@@ -497,7 +488,7 @@ mod live {
             )
             .ok()
             .map(|q| q.trim().to_owned()),
-            before: entries(&download)?,
+            before: entries(&watched)?,
             ..Observed::default()
         };
         let stderr = dir.join("stderr.log");
@@ -546,7 +537,7 @@ mod live {
             ));
         }
         observed?;
-        o.after = entries(&download)?;
+        o.after = entries(&watched)?;
         // macOS detaches the translocation after the process ends; wait for it before cleanup.
         let start = Instant::now();
         while start.elapsed().as_secs() < 10 {

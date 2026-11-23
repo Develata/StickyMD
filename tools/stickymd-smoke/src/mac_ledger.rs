@@ -14,12 +14,17 @@ mod append;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) mod decide;
 mod options;
+#[cfg(test)]
+mod producer_tests;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) mod record;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) mod release;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod resources;
 #[cfg(target_os = "macos")]
 mod run;
 #[cfg(test)]

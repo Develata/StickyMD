@@ -19,7 +19,7 @@ fn valid_run(repetition: usize, footprint_bytes: u64) -> Run {
     run.status = "VALID";
     run.metrics = Some(Metrics {
         footprint_bytes,
-        idle_cpu_percent: 100.0,
+        idle_cpu_percent: 0.001,
         interrupt_wakeups_per_second: 100.0,
         idle_wakeups_per_second: 25.0,
     });
@@ -187,11 +187,15 @@ fn cli_parses_paths_defaults_equals_help_and_rejects_incomplete_or_ambiguous_opt
     }
 }
 
-#[test]
-fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
-    let mut evidence = Evidence {
-        environment: "{}".into(),
+/// A finished campaign in the VM: every scenario's runs valid and within the gates.
+pub(super) fn evidence() -> Evidence {
+    Evidence {
+        environment: "{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\n\",\"hv_vmm_present\":\"1\",\"unix_seconds\":7}".into(),
         app_hash: "a".repeat(64),
+        bundle_hash: "c".repeat(64),
+        inputs: Some("e".repeat(64)),
+        driver: "d".repeat(64),
+        finished: true,
         fixture_hash: "b".repeat(64),
         repetitions: 5,
         timebase: (125, 3),
@@ -199,7 +203,24 @@ fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
             .iter()
             .map(|scenario| (1..=5).map(|i| valid_run(i, scenario.limit)).collect())
             .collect(),
-    };
+    }
+}
+
+/// A good campaign's JSON for the ledger's tests; `busy` gives Split a median idle CPU of 0.103%
+/// (an R02 FAIL), with rows that agree.
+pub(crate) fn evidence_json(busy: bool) -> String {
+    let mut evidence = evidence();
+    if busy {
+        for run in &mut evidence.scenarios[2] {
+            run.metrics.as_mut().unwrap().idle_cpu_percent = 0.103;
+        }
+    }
+    evidence.json()
+}
+
+#[test]
+fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
+    let mut evidence = evidence();
     assert!(evidence.passed());
     let text = evidence.json();
     assert!(!text.contains("\"wakeups_per_second\""));

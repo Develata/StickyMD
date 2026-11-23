@@ -140,15 +140,15 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
                 item,
                 ..package.clone()
             },
-            Class::Gui => waived(inputs, gui(inputs, &item, row), row),
+            Class::Gui | Class::Resources => waived(inputs, automated(inputs, &item, row), row),
             Class::Translocation => translocation(inputs, &item, row),
             Class::Manual => waived(inputs, manual(inputs, &item, row), row),
-            Class::Resources => waived(
+            Class::Comparison => waived(
                 inputs,
                 line(
                     &item,
                     Verdict::NotTested,
-                    "no evidence binds both byte identities: mac-resources records only the executable and is not in the ledger",
+                    "no producer: V03 alternates a baseline through mac-latency, which is not in the ledger and has no release rule (plan 11 #macos-readiness-check)",
                 ),
                 row,
             ),
@@ -275,8 +275,16 @@ enum Ledger {
 /// Records of `row` on exactly the candidate's bytes (both digests) and, for the never-reused
 /// rows, of `batch`, grouped by identity. A group is clean when it holds a PASS of the row and
 /// no FAIL, NOT_TESTED or revoked PASS of it: neither run start nor import order proves which
-/// came first (plan 11 #phase-16-macos-host), so any such record spoils the group.
-fn ledger(records: &[Record], row: &str, built: &Built, batch: Option<&str>) -> Ledger {
+/// came first (plan 11 #phase-16-macos-host), so any such record spoils the group. With `zip`
+/// (R03), the PASS that counts must have opened that ZIP; the ZIP does not split groups, so a
+/// spoiling record through another ZIP, or through none, still spoils.
+fn ledger(
+    records: &[Record],
+    row: &str,
+    built: &Built,
+    batch: Option<&str>,
+    zip: Option<&str>,
+) -> Ledger {
     let in_scope = |record: &&Record| match record {
         Record::Automated {
             row: r,
@@ -299,6 +307,8 @@ fn ledger(records: &[Record], row: &str, built: &Built, batch: Option<&str>) -> 
     };
     let mut clean = Vec::new();
     let mut latest = String::new();
+    // A clean group whose PASS did not open the required ZIP.
+    let mut other_zip = false;
     for record in &scoped {
         let Record::Automated { identity, .. } = record else {
             continue;
@@ -314,11 +324,21 @@ fn ledger(records: &[Record], row: &str, built: &Built, batch: Option<&str>) -> 
             matches!(r, Record::Automated { verdict, evidence_sha256, .. }
                 if verdict != "PASS" || revoked(evidence_sha256))
         });
-        if !spoiled {
-            if let Some(Record::Automated { evidence, .. }) = group.last().map(|r| **r) {
+        if spoiled {
+            continue;
+        }
+        let counted = group.iter().rev().find_map(|r| match r {
+            Record::Automated {
+                evidence, zip: z, ..
+            } if zip.is_none_or(|wanted| z.as_deref() == Some(wanted)) => Some(evidence),
+            _ => None,
+        });
+        match counted {
+            Some(evidence) => {
                 latest = evidence.clone();
+                clean.push(identity.clone());
             }
-            clean.push(identity.clone());
+            None => other_zip = true,
         }
     }
     if !clean.is_empty() {
@@ -336,7 +356,12 @@ fn ledger(records: &[Record], row: &str, built: &Built, batch: Option<&str>) -> 
         matches!(r, Record::Automated { row: rr, built: b, verdict, .. }
             if rr == row && verdict == "PASS" && b.executable == built.executable && b.bundle != built.bundle)
     });
-    Ledger::None(if !scoped.is_empty() {
+    Ledger::None(if other_zip {
+        format!(
+            "a PASS of P16-{row} on the candidate's bytes exists, but none opened the candidate ZIP {} (a ZIP zipped from the .app names none)",
+            zip.unwrap_or_default()
+        )
+    } else if !scoped.is_empty() {
         format!(
             "every record of P16-{row} on the candidate's bytes is NOT_TESTED or revoked, or sits beside one"
         )
@@ -351,7 +376,8 @@ fn ledger(records: &[Record], row: &str, built: &Built, batch: Option<&str>) -> 
     })
 }
 
-fn gui(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
+/// A row judged from the ledger alone: a `mac-gui` row or a `mac-resources` row.
+fn automated(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     let (records, candidate) = match evidence(inputs, item) {
         Ok(found) => found,
         Err(line) => return line,
@@ -366,7 +392,7 @@ fn gui(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     let mut common: Option<Vec<Identity>> = None;
     let mut evidence_of_row = String::new();
     for member in &group {
-        match ledger(records, member, &candidate.built, inputs.batch) {
+        match ledger(records, member, &candidate.built, inputs.batch, None) {
             Ledger::Clean(identities, evidence) => {
                 if member == row {
                     evidence_of_row = evidence;
@@ -398,25 +424,31 @@ fn gui(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     }
 }
 
-/// R03 must be judged on the release ZIP itself; the probe still zips the `.app`, so a PASS on
-/// the candidate's bundle is not that ZIP (plan 11 #macos-release-gate). A FAIL on these bytes is
-/// an observed violation and counts.
+/// R03 is judged on the release ZIP itself (plan 11 #macos-release-gate): a PASS counts only
+/// when it opened the candidate's ZIP (`mac-gui --zip`); one from a ZIP zipped from the `.app`,
+/// even around the same bundle, does not. It cannot be waived. A FAIL on these bytes with no
+/// clean group is an observed violation and counts, whichever ZIP it came through.
 fn translocation(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     let (records, candidate) = match evidence(inputs, item) {
         Ok(found) => found,
         Err(line) => return line,
     };
-    let found = match ledger(records, row, &candidate.built, inputs.batch) {
-        Ledger::Fail(reason) => return line(item, Verdict::Fail, reason),
-        Ledger::Clean(..) => "a PASS on the candidate's bundle exists, but",
-        Ledger::None(_) => "no evidence binds it:",
-    };
-    line(
-        item,
-        Verdict::NotTested,
-        format!(
-            "{found} R03 must run on the candidate ZIP {} and the probe zips the .app itself (M5 report)",
-            candidate.zip_sha256
+    match ledger(
+        records,
+        row,
+        &candidate.built,
+        inputs.batch,
+        Some(&candidate.zip_sha256),
+    ) {
+        Ledger::Clean(_, evidence) => line(
+            item,
+            Verdict::Pass,
+            format!(
+                "ledger PASS on the candidate ZIP {} ({evidence})",
+                candidate.zip_sha256
+            ),
         ),
-    )
+        Ledger::Fail(reason) => line(item, Verdict::Fail, reason),
+        Ledger::None(reason) => line(item, Verdict::NotTested, reason),
+    }
 }

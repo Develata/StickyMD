@@ -16,12 +16,17 @@ then measure 60 s of idle CPU and wake-ups. Hidden opens in Source, waits for
 the window, chooses the menu-bar item 隐藏 through Accessibility (this binary
 needs the permission; checked before any run), waits until the window is off
 screen, warms up 30 s from then and measures the same way; the window must
-still be off screen at both samples. Memory maxima must be within
-72/96/128/48 MiB. CPU and wake-ups are observations, with no gate.
-Exit 0 means all requested runs are valid and within their memory gates;
-it does not mean full P16-R01/P16-R02 acceptance or release readiness.
+still be off screen at both samples.
+P16-R01: every run valid and within 72/96/128/48 MiB. P16-R02: each scenario's
+median idle CPU over its valid runs at most 0.1% (plan 10's hard failure line;
+the statistic awaits USER confirmation). Wake-ups are observations, with no gate.
+Exit 0 means both rows PASS; it is not release readiness.
 Off macOS, measurement exits non-zero with NOT_TESTED.
-Writes mac-resources.json atomically; no acceptance matrix is updated.";
+Writes mac-resources.json (schema 5) atomically, with the bundle's manifest and
+executable SHA-256, its input fingerprint, this driver's SHA-256, sw_vers and
+kern.hv_vmm_present; `finished` is true only after the last run. A finished
+run in the VM can be recorded with `mac-ledger record --evidence <file>
+--image <digest>`; no acceptance matrix is updated.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Options {

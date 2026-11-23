@@ -138,7 +138,16 @@ fn standalone_parser_never_needs_an_existing_app() {
     assert_eq!(o.batch, None);
     let o = parse(&["--app", "x", "--batch", "rel-0.3.0"]).unwrap();
     assert_eq!(o.batch.as_deref(), Some("rel-0.3.0"));
+    assert_eq!(o.zip, None);
+    // R03 takes the release ZIP; with every row or with R03 named, --zip is accepted.
+    let o = parse(&["--app", "x", "--zip", "c.zip"]).unwrap();
+    assert_eq!(o.zip.as_deref(), Some(std::path::Path::new("c.zip")));
+    assert!(parse(&["--app", "x", "--only", "W02,R03", "--zip", "c.zip"]).is_ok());
+    let error = parse(&["--app", "x", "--only", "W02", "--zip", "c.zip"]).unwrap_err();
+    assert!(error.contains("only for R03"), "{error}");
     for args in [
+        vec!["--app", "x", "--zip"],
+        vec!["--app", "x", "--zip", "a.zip", "--zip", "b.zip"],
         vec!["--app"],
         vec!["--app", "x", "--only", "W99"],
         vec!["--app", "x", "--only", "W01,W01"],

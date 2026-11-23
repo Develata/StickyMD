@@ -8,7 +8,7 @@ use super::{
     report::{Evidence, quote},
 };
 use crate::mac_common::{
-    fixture::{contained_executable, copy_fixture},
+    fixture::{app_inputs, bundle_hash, contained_executable, copy_fixture},
     session::Session,
 };
 use std::path::Path;
@@ -34,6 +34,12 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     let mut evidence = Evidence {
         environment: environment()?,
         app_hash: crate::integrity::sha256(&executable)?,
+        bundle_hash: bundle_hash(&app)?,
+        inputs: app_inputs(&app)?,
+        driver: crate::integrity::sha256(
+            &std::env::current_exe().map_err(|e| format!("driver path: {e}"))?,
+        )?,
+        finished: false,
         fixture_hash: crate::integrity::sha256_bytes(fixture.as_bytes())?,
         repetitions: options.repetitions,
         timebase: native::timebase()?,
@@ -73,12 +79,15 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             }
         }
     }
+    // Every run ran: only now is the campaign finished (a cut-short one returned above).
+    evidence.finished = true;
+    crate::atomic_evidence::write(&output, evidence.json().as_bytes())?;
     evidence.print_summary();
     println!("Evidence: {}", output.display());
     if evidence.passed() {
         Ok(())
     } else {
-        Err("Scenarios incomplete or failed: every requested run must be valid and within its memory gate; see mac-resources.json".into())
+        Err("P16-R01 or P16-R02 is not PASS: every run must be valid and within its memory gate, and each scenario's median idle CPU at most 0.1%; see mac-resources.json".into())
     }
 }
 
@@ -280,10 +289,33 @@ fn stays_hidden(run: &mut Run, pid: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// `sysctl -n <name>` trimmed, or `unavailable`; as `mac-gui` reads `kern.hv_vmm_present`.
+fn sysctl(name: &str) -> String {
+    Command::new("/usr/sbin/sysctl")
+        .args(["-n", name])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map_or_else(
+            || "unavailable".into(),
+            |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        )
+}
+
 fn environment() -> Result<String, String> {
     let [pixel_width, pixel_height, point_width, point_height] = native::display()?;
+    // The ledger takes the system from `sw_vers` as it does for mac-gui runs, so one image digest
+    // names one system across both tools.
+    let sw_vers = Command::new("/usr/bin/sw_vers")
+        .output()
+        .map_err(|e| format!("sw_vers: {e}"))?;
+    if !sw_vers.status.success() {
+        return Err("sw_vers failed".into());
+    }
     Ok(format!(
-        "{{\"macos_version\":{},\"os_build\":{},\"model\":{},\"cpu\":{},\"ram_bytes\":{},\"architecture\":{},\"unix_seconds\":{},\"main_display\":{{\"pixel_width\":{},\"pixel_height\":{},\"point_width\":{},\"point_height\":{},\"scale_x\":{},\"scale_y\":{}}},\"release_build\":\"caller-supplied; not inferred from binary\",\"desktop_conditions\":\"caller must keep desktop unlocked, display on, and avoid interaction\"}}",
+        "{{\"os\":{},\"hv_vmm_present\":{},\"macos_version\":{},\"os_build\":{},\"model\":{},\"cpu\":{},\"ram_bytes\":{},\"architecture\":{},\"unix_seconds\":{},\"main_display\":{{\"pixel_width\":{},\"pixel_height\":{},\"point_width\":{},\"point_height\":{},\"scale_x\":{},\"scale_y\":{}}},\"release_build\":\"caller-supplied; not inferred from binary\",\"desktop_conditions\":\"caller must keep desktop unlocked, display on, and avoid interaction\"}}",
+        quote(&String::from_utf8_lossy(&sw_vers.stdout)),
+        quote(&sysctl("kern.hv_vmm_present")),
         quote(&native::system_text(c"kern.osproductversion")?),
         quote(&native::system_text(c"kern.osversion")?),
         quote(&native::system_text(c"hw.model")?),

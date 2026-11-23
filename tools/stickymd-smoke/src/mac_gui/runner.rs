@@ -11,6 +11,7 @@ use super::{
     },
     options::IDS,
     scenarios::{self, Driver},
+    staging::{self, Bytes, Candidate},
 };
 use crate::mac_common::{
     fixture::{bundle_hash, contained_executable, copy_fixture},
@@ -30,6 +31,17 @@ struct AppHash {
     inputs: Option<String>,
     /// This driver's own executable, so the ledger can tell which driver produced the evidence.
     driver: String,
+    /// The candidate ZIP R03 opens (`--zip`), checked to hold this bundle before any row runs.
+    zip: Option<Candidate>,
+}
+
+impl AppHash {
+    fn bytes(&self) -> Bytes {
+        Bytes {
+            executable: self.executable.clone(),
+            bundle: self.bundle.clone(),
+        }
+    }
 }
 pub(super) fn execute(options: &Options) -> Result<(), String> {
     // This must precede app canonicalization, TCC checks, output creation and native GUI APIs.
@@ -66,14 +78,23 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     if app.extension().is_none_or(|e| e != "app") || !app.is_dir() {
         return Err("--app must be a .app directory".into());
     }
-    let hash = AppHash {
+    let mut hash = AppHash {
         executable: crate::integrity::sha256(&contained_executable(&app)?)?,
         driver: crate::integrity::sha256(
             &std::env::current_exe().map_err(|e| format!("driver path: {e}"))?,
         )?,
         bundle: bundle_hash(&app)?,
         inputs: crate::mac_common::fixture::app_inputs(&app)?,
+        zip: None,
     };
+    // A ZIP that does not hold this bundle refuses the run: it is the operator's mistake, not an
+    // R03 result (plan 11 #phase-16-macos-host).
+    if let Some(zip) = &options.zip {
+        let mut scratch = Session::new()?;
+        let checked = staging::check(zip, &hash.bytes(), scratch.path());
+        scratch.cleanup()?;
+        hash.zip = Some(checked?);
+    }
     // Prevent output from ever targeting the supplied bundle or its canonical note directory.
     let out = output_path(&options.out)?;
     if out.starts_with(&app)
@@ -286,8 +307,12 @@ fn save(
     batch: Option<&str>,
 ) -> Result<(), String> {
     let batch = batch.map_or_else(String::new, |b| format!(",\"batch\":{}", quote(b)));
+    // The candidate ZIP R03 opened; mac-ledger records it with R03 alone.
+    let zip = hash.zip.as_ref().map_or_else(String::new, |zip| {
+        format!(",\"zip_sha256\":{}", quote(&zip.sha256))
+    });
     let json = format!(
-        "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished}{batch},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
+        "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished}{batch},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{}{zip},\"scenarios\":[{}]}}\n",
         hash.inputs
             .as_ref()
             .map_or_else(String::new, |inputs| format!(
@@ -320,7 +345,8 @@ fn one(
             return super::translocation::run(
                 app,
                 session.path(),
-                &hash.bundle,
+                &hash.bytes(),
+                hash.zip.as_ref(),
                 input.backend.started,
                 row,
             );

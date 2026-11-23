@@ -293,6 +293,26 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 - **复用**：`plan` 只读账本，不启动被测程序，需要传入目标虚拟机运行前的 `sw_vers`。某行在账本里已有 PASS，且产品输入指纹、驱动、镜像、系统四项与当前完全一致时，复用这次 PASS；只看最近的一次 PASS：同一身份下这一行记过任何 FAIL 或 NOT_TESTED，或有任何一次 PASS 被 USER 撤销（都不论先后）时，不复用，该行列入要运行的清单，也不回退去复用更早的 PASS。被撤销的 PASS 与 FAIL 同样处理：导入顺序和墙钟都不能证明哪次运行在撤销之后，所以重新导入同一次运行改写过字节的证据、或撤销之后才登记的较早运行，都不能恢复复用。因此同一身份下失败过或被撤销过的行，直到身份改变之前每次都重跑（I01–I03 与 R03 只看本批，在新批次重跑）；历史记录保留；这次 PASS 记录的 app 字节与当前不同时，作为审计信息列出。没有产品输入指纹的 app 或记录（指纹引入之前的）不参与复用。其余行列入要运行的 `--only` 清单。FAIL 与 NOT_TESTED 从不复用。
 - **人工收据**：`receipt` 按行记录 USER 的确认，绑定 app 的产品输入指纹（app 可执行文件的 SHA-256 只供审计）；没有指纹的 app 不能记收据。指纹变了，收据不再成立，`plan` 会列出待重新确认的人工行。Mode 为 `Review` 的行同样以收据记录 USER 的判定，收据与 Agent 的判定记录绑定相同的字段（同一次运行的证据摘要、行与子项、所看画面的角色与哈希、判定标准的版本、对照）；账本记录这种收据之前，`receipt` 拒绝 Review 行，Review 行不能为 `MANUAL PASS`。I01–I03 与 R03 从不沿用：收据、运行结果与判定都只代表这一批验收。批次由 `--batch` 命名：运行的批次由 `mac-gui --batch` 在运行开始时写进证据，`record` 从证据读取，不能在登记时指定（旧运行因此不能被算作新一批）；收据的批次在 `receipt` 时指定。只有本批的结果计数：同批次内的补跑可以沿用，下一批即使四项身份相同也要重做；不给批次时这四行一律待做。V05 是 Windows 回归，收据在 Windows 回归报告里，不用 `mac-ledger receipt`。发布用的收据、waiver 与下载路径记录绑定候选 receipt 的摘要，
   见 #macos-readiness-check；本节的复用不读它们。
+- **R03 的输入 ZIP**（USER 2026-11-24，[M5 报告](../report/2026-11-24-m5-macos-readiness-check.md)“生产者改动”节）：`mac-gui --zip <ZIP>`
+  让 R03 直接使用给出的 ZIP，不从 `--app` 打包。运行任何一行之前，驱动把 ZIP 解进临时目录，核对其中 `StickyMD/StickyMD.app`
+  （#macos-release-artifact 的布局）的 bundle 清单与可执行文件两项 SHA-256 都等于 `--app`，不符即拒绝整次运行（不写成 R03 的 FAIL）。
+  R03 运行时把 ZIP 复制进下载目录，复制件的 SHA-256 须等于开始时读到的值；隔离标记加在复制件与解出的整个文件夹上；观察 `.app` 所在的文件夹
+  （便携版的 `note/` 会写在那里），解出的 bundle 再按两项摘要核对一次。证据（仍为 schema 2）在顶层记 `zip_sha256`；`record` 只把它记进 R03
+  那条自动化记录的可选字段 `zip_sha256`，证据有 ZIP 摘要而没有 R03 行即拒绝；没有这个字段的旧记录照常读取。给了 `--zip` 而本次不跑 R03 时拒绝。
+  不给 `--zip` 时探针照旧从 `.app` 打包（Phase 16 的批次没有候选 ZIP），证据与记录都不含 ZIP 摘要，发布门不计（#macos-readiness-check）。
+- **资源运行进账本**（USER 2026-11-24，同上）：`mac-resources` 的证据升为 schema 5，带 `"tool":"mac-resources"`，另记 bundle 清单 SHA-256、
+  产品输入指纹（bundle 有时）、驱动的 SHA-256、`sw_vers` 原文、`kern.hv_vmm_present` 与 `finished`（最后一次运行之后才写 `true`；检查点与因清理失败
+  而中止的运行写 `false`）。`record` 接受它：与 `mac-gui` 证据一样只登记在虚拟机中跑完的运行，身份取同样的四项（系统同样由 `sw_vers` 得出，
+  所以一个镜像 digest 仍只对应一个系统），bundle 清单与可执行文件两项摘要都记下；场景、内存门、预热与测量时长须等于当前工具的设定，
+  schema 4 及更早的证据不能登记。`record` 从各次运行的原始事实（运行状态、清理错误、读数）重新得出 P16-R01 与 P16-R02 两行，与证据写下的结论
+  不符即拒绝；场景与整份证据的状态字段不作依据。有效运行指状态为 `VALID`、没有清理错误且有读数的运行。
+  - R01：每个场景恰有 `repetitions`（至少 5）次运行且全部有效、每次的 `phys_footprint` 都不超过 `10` #macos-gates 的临时硬门为 PASS；
+    任一有效运行超过硬门为 FAIL；其余为 NOT_TESTED。
+  - R02（提议，待 USER 确认）：每个场景取有效运行 60 s 空闲 CPU 的中位数，对照 `10` 目标表的硬失败条件“> 0.1%”。四个场景都完整（同 R01）
+    且中位数都不超过 0.1% 为 PASS；任一场景有效运行的中位数超过 0.1% 为 FAIL；其余为 NOT_TESTED。取中位数沿用这一行以往的判定（按周期开关光标
+    图层时 Split 中位 0.103% 判为超过硬门）；替代是取最大值，更严，但单次读数即可使整行失败。唤醒次数仍只作观察。
+  - V03 不由 `mac-resources` 判定：它要求同一批次中基线与新包交替运行 `mac-latency`，呈现器计数只在 `mac-latency` 的证据中，而
+    `mac-latency` 是诊断，不进账本，也没有发布用的判定规则。
 - **自动化行**：验收表中 Mode 为 `Automated`、由 `mac-gui` 执行的行，只认账本里与当前产品输入指纹、驱动、镜像、系统四项一致的 PASS，不需要人工收据。P16-W12 的真实注销会结束图形会话，由 `mac-logout` 经 SSH 执行，未保存文本、导出对话框打开、保存失败三种情况各在一次新开机的虚拟机中运行，分别记为账本行 `W12-logout-text`、`W12-logout-dialog`、`W12-logout-fault`（USER 2026-11-19）；这三行与 `mac-gui` 的 W12 在同一身份下都有可复用的 PASS 时，W12 才算通过。指纹变了，这些行要在新身份下重新运行（`plan` 会列出）；还没有这样的 PASS 时状态为 `NOT TESTED`。
 - **验收阶梯**（USER 批准 2026-11-19，[提案](../report/2026-11-19-macos-acceptance-ladder.md)）：每一行（必要时拆为子项）用下列第一个可行的方式判定。可行指它的检查能拒绝事先准备的坏样本；做不到的行留在 `Manual` / `NOT TESTED`，不硬转。
   1. 程序断言（`Automated`）；
@@ -377,6 +397,8 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 状态：源码测试收据的格式按上表“格式由 M5 定”的授权定下。USER 2026-11-24 批准（[M5 报告](../report/2026-11-24-m5-macos-readiness-check.md)
 末尾的 Resolution）M5 实现时的四项提议——Phase 16 行的分类（W15、W16、V05 不进 macOS 门，P01 由包完整性一类承担）、账本判定（某一身份下的
 FAIL 不妨碍另一身份的干净运行）、同键互斥的结果并入源码测试收据、核对程序只在 R 的干净检出中运行——以及下文的发布用 USER 记录。
+R03 与资源行的生产者改动按同一 Resolution 另开分支落地（#phase-16-macos-host 的“R03 的输入 ZIP”与“资源运行进账本”）；其中 R02 的判定规则是提议，
+待 USER 确认。
 
 - **源码测试的运行：** `stickymd-smoke release macos-source-tests --release-source <R>` 在 macOS 主机上依次：核对 HEAD 等于 R、工作树干净
   （`git status --porcelain --untracked-files=normal` 为空），不符即不运行、不写收据；以同一组包的 `cargo test --locked … --no-run --message-format=json`
@@ -405,11 +427,12 @@ FAIL 不妨碍另一身份的干净运行）、同键互斥的结果并入源码
   - 源码行，由 R 上的源码测试承担：B01、B02、S01–S15、W13、W14、W17、K01、C01–C04、V01、V02；
   - `mac-gui` 行，账本中候选字节上的 PASS：W02–W04、W07–W12、K02、E01；W12 另要求三条注销行在同一组身份下 PASS；
   - 人工行，发布用 USER 收据或 waiver：W01、W05、W06、I01–I03、F01、V04；
-  - 资源行：R01、R02、V03；
+  - 资源行：R01、R02 由账本中候选字节上的 `mac-resources` PASS 判定（账本判定同 `mac-gui` 行）；V03 见“尚无来源的行”；
   - R03 是门的单独一类；P01 由“包完整性”一类承担；W15、W16、V05 是 Windows 回归，不属于 macOS 发布门。
 - **账本判定：** 只看可执行文件与 bundle 清单两项摘要都等于候选的记录，按驱动、镜像与系统分组；某一组中这一行有 PASS，且组内没有这一行的
   FAIL、NOT_TESTED 或被撤销的 PASS，这一行才 PASS（先后无法证明，与 #phase-16-macos-host 的复用规则相同）；I01–I03 与 R03 只看 `--batch`
-  所指的批次，不给批次时不计。组内有 FAIL 而没有可用的组时为 `FAIL`。
+  所指的批次，不给批次时不计。组内有 FAIL 而没有可用的组时为 `FAIL`。R03 另要求干净的组中有一次 PASS 的 `zip_sha256` 等于候选 ZIP 的 SHA-256；
+  ZIP 不参与分组，组内经别的 ZIP（含从 `.app` 打包、没有 ZIP 摘要的运行）记下的 FAIL、NOT_TESTED 与被撤销的 PASS 同样使该组不干净。
 - **发布用 USER 记录**（USER 2026-11-24）：记在账本 `dist/evidence/mac-gui-ledger/records.jsonl` 中，与其他记录同样只追加、在排他锁下原子发布。
   每条记录含候选 receipt 的 SHA-256（`candidate_receipt_sha256`，由 resolver 对给出的 R 取得，不手工输入；它绑定 ZIP 与 bundle 的两项字节身份）、
   记录所在的桌面、USER 的原话、可选的批次与时间。#phase-16-macos-host 的复用规则不读它们。
@@ -423,8 +446,9 @@ FAIL 不妨碍另一身份的干净运行）、同键互斥的结果并入源码
   - 判定：人工行有本候选的发布收据为 PASS；可 waiver 的行在其余判定为 `NOT TESTED` 且有本候选的 waiver 时为 `WAIVED`（FAIL 不能 waiver）；
     下载路径五行各有本候选的记录时成立。只认本候选的记录：以前候选的下载路径在签名方式与大版本不变时沿用的规则尚未实现，因此 fail closed。
     I01–I03 的记录只认 `--batch` 所指的批次。`WAIVED` 与 PASS 一样使该行成立。
-- **尚无来源的行**：R03（探针仍从 `.app` 打包，证据不含 ZIP 摘要）与资源行（`mac-resources` 只记可执行文件且不进账本）。两者的生产者改动另开分支
-  （M5 报告 Resolution）；在此之前 R03 为 `NOT TESTED`，门不成立；资源行可由 USER 逐行 waiver。
+- **尚无来源的行**：V03。它要求 `mac-latency` 与基线交替的运行，`mac-latency` 不进账本、没有发布用的判定规则（#phase-16-macos-host
+  “资源运行进账本”），所以核对程序判它 `NOT TESTED`，可由 USER waiver；要让它由程序判定，须先由 USER 定下发布用的规则并让 `mac-latency` 进账本。
+  R01、R02 没有候选字节上的记录时同样为 `NOT TESTED`，可 waiver；一旦记下 FAIL 便不能 waiver。
 
 <a id="qualification-process-isolation"></a>
 ### GUI qualification process isolation
