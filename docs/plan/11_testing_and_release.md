@@ -397,8 +397,9 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 状态：源码测试收据的格式按上表“格式由 M5 定”的授权定下。USER 2026-11-24 批准（[M5 报告](../report/2026-11-24-m5-macos-readiness-check.md)
 末尾的 Resolution）M5 实现时的四项提议——Phase 16 行的分类（W15、W16、V05 不进 macOS 门，P01 由包完整性一类承担）、账本判定（某一身份下的
 FAIL 不妨碍另一身份的干净运行）、同键互斥的结果并入源码测试收据、核对程序只在 R 的干净检出中运行——以及下文的发布用 USER 记录。
-R03 与资源行的生产者改动按同一 Resolution 另开分支落地（#phase-16-macos-host 的“R03 的输入 ZIP”与“资源运行进账本”）；其中 R02 的判定规则是提议，
-待 USER 确认。
+R03 与资源行的生产者改动按同一 Resolution 另开分支落地（#phase-16-macos-host 的“R03 的输入 ZIP”与“资源运行进账本”）。实现时的三项提议待 USER
+确认（[M5 报告](../report/2026-11-24-m5-macos-readiness-check.md)“生产者改动”节）：R02 取各场景中位数；V03 不由程序判定，仍可 waiver；R03 的 ZIP
+不参与分组。
 
 - **源码测试的运行：** `stickymd-smoke release macos-source-tests --release-source <R>` 在 macOS 主机上依次：核对 HEAD 等于 R、工作树干净
   （`git status --porcelain --untracked-files=normal` 为空），不符即不运行、不写收据；以同一组包的 `cargo test --locked … --no-run --message-format=json`

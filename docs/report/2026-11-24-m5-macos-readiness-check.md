@@ -129,14 +129,17 @@ USER 对“需要 Develata 决定”四项与四项待确认提议的回复（�
 - **ZIP 不参与分组。** R03 的干净组里，经别的 ZIP（含从 `.app` 打包）记下的 FAIL、NOT_TESTED 与被撤销的 PASS 同样使该组不干净；没有干净组时，
   候选字节上的 FAIL 判 FAIL，不论它经哪个 ZIP。比“把 ZIP 当作身份的一部分”更严：同一批里的开发运行也会影响发布判定，需要时换一个批次名。
 
-验证（本机 macOS 27.2 arm64，提交前的工作树，基于 `c605f27`）：
+验证（本机 macOS 27.2 arm64；实现提交 `8c47cfc`，其后一个提交只改文档与帮助文字）：
 
 - `cargo test --locked -p stickymd-smoke`：703 个测试通过（单元 683、集成 20），3 个忽略；新增 19 个，其中 `staging` 的 3 个在 macOS 上用 `ditto`
   做出真实的发布布局 ZIP。改坏检查后（不核对 ZIP 摘要、不比较 bundle 清单）相应的 3 个坏样本测试失败，恢复后通过。
 - `cargo clippy --locked --all-targets -D warnings`：八个 macOS 包无警告；`stickymd-smoke` 加 `--target x86_64-pc-windows-msvc` 无警告。`cargo fmt --check` 通过。
+- `phase 00` 在已提交的干净树上 PASS；`phase 16` PASS；`phase 18` 的三个任务（governance、release tooling 与 macOS host 测试）全部 PASSED，
+  最后的矩阵状态检查因 P18-P04 为 `NOT TESTED` 而失败，与 `c605f27` 相同（P04、P06、P07 需要真实的 `release-macos` 运行）。
 
 未验证：
 
 - 虚拟机里的实际运行：`--zip` 下的 R03（嵌套布局的 `.app` 是否同样被随机化、挂载行的匹配与提示）与 schema 5 的 `mac-resources` 运行都没有在
-  `mac-test` 中跑过；需要你同意后在虚拟机里各跑一次。
+  `mac-test` 中跑过；需要你同意后在虚拟机里各跑一次。`mac-gui` 的运行前核对、证据写 `zip_sha256` 与 `translocation::run` 的新布局只经编译检查，
+  证据字段名与账本读取的一致是读代码确认的，没有测试把两者连起来。在这次虚拟机运行之前，R03 不能在门中 PASS。
 - 新测试在 Windows 上只编译检查（clippy），由 CI 运行。

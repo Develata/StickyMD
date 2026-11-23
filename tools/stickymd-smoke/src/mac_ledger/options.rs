@@ -18,9 +18,11 @@ pub(super) const HELP: &str =
           Lists the mac-gui rows to run, the rows whose PASS is reused (same product inputs,
           driver, VM image and VM system), and the rows the USER or agents still have to judge
           for these inputs. It writes no ledger and launches no app.
-  record  --evidence <mac-gui.json> --image <digest>
-          Appends every row of a finished run in the VM. The same evidence is never recorded
-          twice for a row. Records are not ordered by time: any FAIL, NOT_TESTED or revoked PASS
+  record  --evidence <mac-gui.json | mac-resources.json> --image <digest>
+          Appends every row of a finished run in the VM: each mac-gui row (R03 with the ZIP it
+          opened, when mac-gui --zip gave one; a release's R03 needs the candidate ZIP), or
+          P16-R01 and P16-R02 of a mac-resources run (schema 5, recomputed from its runs). The
+          same evidence is never recorded twice for a row. Records are not ordered by time: any FAIL, NOT_TESTED or revoked PASS
           of a row under an identity stops reuse of that row under it.
   receipt --app <StickyMD.app> --rows <ids> --quote <the USER's words> [--batch <name>]
           Appends a USER receipt per Manual row for the app's product inputs on this desktop.
