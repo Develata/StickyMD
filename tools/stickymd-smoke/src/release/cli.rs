@@ -45,6 +45,15 @@ pub(crate) enum Command {
         directory: PathBuf,
         source: String,
     },
+    /// The source tests on the release commit and their receipt (M5).
+    MacosSourceTests {
+        release: String,
+    },
+    /// The macOS readiness check (M5), read-only.
+    MacosReady {
+        release: String,
+        batch: Option<String>,
+    },
     PlatformInputs {
         platform: super::platform::Platform,
         commit: String,
@@ -202,6 +211,13 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
         "macos-verify-artifact" => Command::MacosVerifyArtifact {
             directory: PathBuf::from(tokens.take("--directory")?),
             source: tokens.take("--source-sha")?,
+        },
+        "macos-source-tests" => Command::MacosSourceTests {
+            release: tokens.take("--release-source")?,
+        },
+        "macos-ready" => Command::MacosReady {
+            release: tokens.take("--release-source")?,
+            batch: tokens.optional("--batch"),
         },
         "platform-inputs" => Command::PlatformInputs {
             platform: super::platform::Platform::parse(&tokens.take("--platform")?)?,

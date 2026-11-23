@@ -547,11 +547,27 @@ fn install(root: &Path, staged: &Path, record: Option<&str>, receipt: &str) -> R
     Ok(())
 }
 
+/// What [`resolve`] read and checked: the staged bundle, and the identities of the receipt it
+/// checked the staging against (the release gate binds evidence to these, plan 11
+/// #macos-readiness-check).
+pub(crate) struct Resolved {
+    pub app: PathBuf,
+    pub receipt_sha256: String,
+    pub zip_sha256: String,
+    pub executable_sha256: String,
+    pub bundle_sha256: String,
+}
+
+/// Whether a candidate receipt is in place at all; the resolver alone says whether it holds.
+pub(crate) fn receipt_present(root: &Path) -> bool {
+    fs::symlink_metadata(root.join(RECEIPT)).is_ok()
+}
+
 /// The staged candidate the artifact-bound macOS runners use. The receipt must be complete; the
 /// staged files, the bundle and the executable must match it; the staged ZIP's README must name
 /// its build source, whose fingerprint must match it; and that source must be reusable on
 /// `release`, with the reuse record matching when it is not `release` itself.
-pub(crate) fn resolve(root: &Path, release: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve(root: &Path, release: &str) -> Result<Resolved, String> {
     let bytes = fs::read(root.join(RECEIPT))
         .map_err(|error| format!("no macOS candidate receipt: {error}"))?;
     let receipt =
@@ -654,7 +670,13 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<PathBuf, String> {
             }
         }
     }
-    Ok(app)
+    Ok(Resolved {
+        app,
+        receipt_sha256: integrity::sha256_bytes(&bytes)?,
+        zip_sha256: field("zip_sha256")?.to_ascii_lowercase(),
+        executable_sha256: field("app_executable_sha256")?.to_ascii_lowercase(),
+        bundle_sha256: field("app_bundle_manifest_sha256")?.to_ascii_lowercase(),
+    })
 }
 
 #[cfg(test)]
@@ -783,6 +805,51 @@ mod tests {
             }
         });
         assert!(retaken, "the lock is released when its holder is dropped");
+    }
+
+    /// A staged ZIP rebuilt from the `.app` (other archive bytes, same bundle) does not resolve:
+    /// the gate's package class and everything bound to the candidate then fail (plan 11
+    /// #macos-release-gate, the contract's first bad sample).
+    #[test]
+    fn a_staged_zip_repacked_from_the_app_does_not_resolve() {
+        let scratch = TemporaryDirectory::new("macos-resolve-repacked").unwrap();
+        let root = scratch.path();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace.package]\nversion = \"9.8.7\"\n",
+        )
+        .unwrap();
+        let zip_name = Platform::MacOsArm64.archive_name("9.8.7");
+        let staging = root.join(STAGING);
+        fs::create_dir_all(&staging).unwrap();
+        let released = b"the workflow's archive";
+        let files = [
+            (zip_name.clone(), &released[..]),
+            (Platform::MacOsArm64.checksum_file().to_owned(), b"sums"),
+            (Platform::MacOsArm64.sbom_file().to_owned(), b"sbom"),
+        ];
+        for (name, bytes) in &files {
+            fs::write(staging.join(name), bytes).unwrap();
+        }
+        let digest = |bytes: &[u8]| integrity::sha256_bytes(bytes).unwrap();
+        let hex = "a".repeat(64);
+        let receipt = format!(
+            "{{\"schema_version\":1,\"origin\":\"GITHUB_WORKFLOW_ARTIFACT\",\"platform\":\"macos-arm64\",\"source_commit\":\"{}\",\"version\":\"9.8.7\",\"cargo_lock_sha256\":\"{hex}\",\"build_inputs\":\"{hex}\",\"build_inputs_algorithm\":\"{ALGORITHM}\",\"app_inputs\":\"{hex}\",\"workflow_run_id\":1,\"workflow_attempt\":1,\"artifact_id\":2,\"artifact_name\":\"{ARTIFACT_PREFIX}1\",\"zip_name\":\"{zip_name}\",\"zip_sha256\":\"{}\",\"checksums_sha256\":\"{}\",\"sbom_sha256\":\"{}\",\"app_executable_sha256\":\"{hex}\",\"app_bundle_manifest_sha256\":\"{hex}\",\"target\":\"aarch64-apple-darwin\",\"signing\":\"AD_HOC\"}}\n",
+            "1".repeat(40),
+            digest(released),
+            digest(b"sums"),
+            digest(b"sbom"),
+        );
+        fs::create_dir_all(root.join("dist/evidence")).unwrap();
+        fs::write(root.join(RECEIPT), receipt).unwrap();
+        // The bundle is the same; only the archive was made again from it.
+        fs::write(staging.join(&zip_name), b"ditto -c -k of the staged .app").unwrap();
+        let error = resolve(root, &"1".repeat(40)).err().unwrap();
+        assert!(
+            error.contains(&format!("the staged {zip_name} does not match the receipt")),
+            "{error}"
+        );
+        assert!(receipt_present(root));
     }
 
     #[test]

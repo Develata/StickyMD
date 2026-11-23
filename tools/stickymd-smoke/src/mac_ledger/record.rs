@@ -9,7 +9,7 @@ use crate::release::json::{self, Value};
 
 /// What a reused PASS must match exactly (plan 11 #phase-16-macos-host).
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Identity {
+pub(crate) struct Identity {
     /// The product input fingerprint `build-app.sh` wrote into the bundle; `None` for an app
     /// built before that, which nothing can match.
     pub inputs: Option<String>,
@@ -29,7 +29,7 @@ impl Identity {
 /// The built app's bytes, kept for audit only: the same inputs can build different bytes, and the
 /// version label alone changes them.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Built {
+pub(crate) struct Built {
     pub executable: String,
     pub bundle: String,
 }
@@ -37,13 +37,13 @@ pub(super) struct Built {
 /// What a revocation withdraws: an automated PASS, named by the digest of the evidence it was
 /// recorded from, or the receipts for a row, named by the product inputs they hold for.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Revoked {
+pub(crate) enum Revoked {
     Evidence(String),
     Inputs(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Record {
+pub(crate) enum Record {
     Automated {
         row: String,
         verdict: String,
@@ -368,7 +368,7 @@ fn optional_text(value: &Value, key: &str) -> Result<Option<String>, String> {
 /// line is one JSON value (JSON Lines): a byte-order mark or a blank line is an error. Across
 /// lines, an evidence file is recorded once per row, and a revocation names a result recorded
 /// before it.
-pub(super) fn read_all(text: &str) -> Result<Vec<Record>, String> {
+pub(crate) fn read_all(text: &str) -> Result<Vec<Record>, String> {
     if text.starts_with('\u{feff}') {
         return Err("ledger line 1: a byte-order mark is not allowed".into());
     }

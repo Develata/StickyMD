@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 
+#[cfg(any(windows, test))]
 use super::OwnerTarget;
 use crate::release::json::{self, Value};
 
@@ -26,6 +27,7 @@ pub(crate) struct TestArtifact {
 
 impl TestArtifact {
     /// Whether this executable holds `target`'s unit tests.
+    #[cfg(any(windows, test))]
     pub(crate) fn is(&self, package: &str, target: OwnerTarget) -> bool {
         self.package == package
             && match target {

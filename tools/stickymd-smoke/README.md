@@ -592,6 +592,23 @@ Syft cache and the macOS package and product inputs) are in
 cannot depend on it (plan 11 #platform-artifact-reuse). The scripts above that build bytes
 call it; the verification commands stay here.
 
+macOS readiness (M5, plan 11 #macos-readiness-check), on a Mac:
+
+```sh
+cargo run --quiet -p stickymd-smoke --locked -- release macos-source-tests --release-source <R>
+cargo run --quiet -p stickymd-smoke --locked -- release macos-ready --release-source <R> [--batch <name>]
+```
+
+`macos-source-tests` starts only on a clean checkout of R, removes any earlier receipt, runs
+the row's exact `cargo test --locked` over the eight packages plus the explicit same-key run,
+and writes `dist/evidence/release-source-tests-macos.json` with libtest's counts per test
+binary and the source identity at both ends. `macos-ready` is read-only: it resolves the
+promoted candidate, reads the `mac-gui` ledger and that receipt, prints every gate row and
+Phase 16 row with its verdict, and exits non-zero unless all hold. Rows with no evidence
+source yet (R03 on the release ZIP, the download path, release receipts and waivers, the
+resource rows) stay `NOT_TESTED` until their formats are decided
+([M5 report](../../docs/report/2026-11-24-m5-macos-readiness-check.md)).
+
 
 The release workflow uses `workspace-version` too. `verify-workflow` reads one
 GitHub Actions run API observation from a UTF-8 JSON file, or stdin when

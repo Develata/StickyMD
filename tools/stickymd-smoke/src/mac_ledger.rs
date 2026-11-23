@@ -12,11 +12,11 @@
 mod append;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-mod decide;
+pub(crate) mod decide;
 mod options;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-mod record;
+pub(crate) mod record;
 #[cfg(target_os = "macos")]
 mod run;
 #[cfg(test)]
