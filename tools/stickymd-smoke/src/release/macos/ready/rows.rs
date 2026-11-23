@@ -81,6 +81,15 @@ pub(super) const ROWS: &[(&str, Class)] = &[
     ("V05", Class::Windows),
 ];
 
+/// Whether the USER may waive the Phase 16 row `row` (stored without its prefix) for a release:
+/// rows that depend on the app running (plan 11 #macos-release-gate). R03, the package class
+/// and the source rows may not be waived; Windows rows are not macOS release rows.
+pub(crate) fn waivable(row: &str) -> bool {
+    ROWS.iter().any(|(id, class)| {
+        *id == row && matches!(class, Class::Gui | Class::Manual | Class::Resources)
+    })
+}
+
 /// Whether a row of `class` may carry the matrix Mode `mode`. A Mode change makes the table
 /// disagree, so the row must be classified again (plan 11 #macos-readiness-check).
 fn agrees(class: Class, mode: &str) -> bool {

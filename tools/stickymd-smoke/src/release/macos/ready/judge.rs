@@ -1,9 +1,12 @@
 //! The macOS release gate, row by row, as a pure function of what was read: the resolved
-//! candidate, the ledger, and the source-test receipt (plan 11 #macos-release-gate,
-//! #macos-readiness-check). It recomputes every verdict from recorded facts; no status field or
-//! exit code is taken on trust, and nothing forces a row through.
+//! candidate, the ledger (runs, and the USER's release receipts, waivers and download records),
+//! and the source-test receipt (plan 11 #macos-release-gate, #macos-readiness-check). It
+//! recomputes every verdict from recorded facts; no status field or exit code is taken on
+//! trust, a waiver stands only for a waivable row that is NOT TESTED (never for a FAIL), and
+//! nothing forces a row through.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
+use super::receipts::{self, Wanted};
 use super::rows::{Class, ROWS};
 use super::source_tests::{self, Outcome};
 use crate::mac_ledger::decide::NEVER_REUSED;
@@ -38,6 +41,8 @@ pub(super) enum Verdict {
     Pass,
     Fail,
     NotTested,
+    /// NOT TESTED, with the USER's waiver bound to this candidate (plan 11 #macos-release-gate).
+    Waived,
     /// Not a macOS release row (a Windows regression); it neither passes nor blocks.
     Excluded,
 }
@@ -48,6 +53,7 @@ impl Verdict {
             Self::Pass => "PASS",
             Self::Fail => "FAIL",
             Self::NotTested => "NOT_TESTED",
+            Self::Waived => "WAIVED",
             Self::Excluded => "EXCLUDED",
         }
     }
@@ -77,11 +83,14 @@ fn from_outcome(item: &str, outcome: Outcome, pass: &str) -> Line {
     }
 }
 
-/// Whether every row holds: each is PASS or excluded.
+/// Whether every row holds: each is PASS, waived or excluded.
 pub(super) fn ready(lines: &[Line]) -> bool {
-    lines
-        .iter()
-        .all(|line| matches!(line.verdict, Verdict::Pass | Verdict::Excluded))
+    lines.iter().all(|line| {
+        matches!(
+            line.verdict,
+            Verdict::Pass | Verdict::Waived | Verdict::Excluded
+        )
+    })
 }
 
 pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
@@ -118,11 +127,7 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
             line("same-key", Verdict::NotTested, reason.clone()),
         ),
     };
-    let download = line(
-        "download-path",
-        Verdict::NotTested,
-        "P18-D01-D05: no record binds the real download path to the candidate yet; the first public package needs one (M5 report)",
-    );
+    let download = download(inputs);
     let mut lines = vec![package.clone(), tests.clone(), same_key, download];
     for (row, class) in ROWS {
         let item = format!("P16-{row}");
@@ -135,17 +140,17 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
                 item,
                 ..package.clone()
             },
-            Class::Gui => gui(inputs, &item, row),
+            Class::Gui => waived(inputs, gui(inputs, &item, row), row),
             Class::Translocation => translocation(inputs, &item, row),
-            Class::Manual => line(
-                &item,
-                Verdict::NotTested,
-                "needs a USER release receipt or waiver bound to the candidate receipt; that format awaits decision (M5 report), and ledger receipts bind only the executable and product inputs",
-            ),
-            Class::Resources => line(
-                &item,
-                Verdict::NotTested,
-                "no evidence binds both byte identities: mac-resources records only the executable and is not in the ledger (M5 report)",
+            Class::Manual => waived(inputs, manual(inputs, &item, row), row),
+            Class::Resources => waived(
+                inputs,
+                line(
+                    &item,
+                    Verdict::NotTested,
+                    "no evidence binds both byte identities: mac-resources records only the executable and is not in the ledger",
+                ),
+                row,
             ),
             Class::Windows => line(
                 &item,
@@ -156,6 +161,87 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
         lines.push(judged);
     }
     lines
+}
+
+/// A NOT TESTED line of a waivable row becomes WAIVED when the USER's waiver for this candidate
+/// stands; any other line is left as it is.
+fn waived(inputs: &Inputs<'_>, judged: Line, row: &str) -> Line {
+    if judged.verdict != Verdict::NotTested || !super::rows::waivable(row) {
+        return judged;
+    }
+    let Ok((records, candidate)) = evidence(inputs, &judged.item) else {
+        return judged;
+    };
+    match receipts::standing(
+        records,
+        Wanted::Waiver,
+        row,
+        &candidate.receipt_sha256,
+        inputs.batch,
+    ) {
+        Some(waiver) => Line {
+            verdict: Verdict::Waived,
+            detail: format!(
+                "USER waiver for this candidate ({:?}); without it: {}",
+                waiver.quote, judged.detail
+            ),
+            ..judged
+        },
+        None => judged,
+    }
+}
+
+/// A Manual row holds with the USER's release receipt for this candidate.
+fn manual(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
+    let (records, candidate) = match evidence(inputs, item) {
+        Ok(found) => found,
+        Err(line) => return line,
+    };
+    match receipts::standing(
+        records,
+        Wanted::Receipt,
+        row,
+        &candidate.receipt_sha256,
+        inputs.batch,
+    ) {
+        Some(receipt) => line(
+            item,
+            Verdict::Pass,
+            format!("USER release receipt ({:?})", receipt.quote),
+        ),
+        None => line(
+            item,
+            Verdict::NotTested,
+            "no USER release receipt for this candidate (mac-ledger receipt --release-source)",
+        ),
+    }
+}
+
+/// The real download path holds when each of P18-D01-D05 has the USER's record for this
+/// candidate. It cannot be waived for the first public package; a record of another candidate
+/// does not count (plan 11 #macos-readiness-check).
+fn download(inputs: &Inputs<'_>) -> Line {
+    let (records, candidate) = match evidence(inputs, "download-path") {
+        Ok(found) => found,
+        Err(line) => return line,
+    };
+    let missing = receipts::missing_downloads(records, &candidate.receipt_sha256);
+    if missing.is_empty() {
+        line(
+            "download-path",
+            Verdict::Pass,
+            "P18-D01-D05 recorded by the USER for this candidate",
+        )
+    } else {
+        line(
+            "download-path",
+            Verdict::NotTested,
+            format!(
+                "no USER download-path record for this candidate: {}",
+                missing.join(", ")
+            ),
+        )
+    }
 }
 
 /// The ledger and candidate both present, or the line saying which is not.

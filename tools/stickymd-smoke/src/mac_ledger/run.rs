@@ -38,8 +38,9 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     let existing = record::read_all(&text)?;
     let new = match command {
         Command::Record => append::recorded(options)?,
-        Command::Receipt => append::receipts(options, &rows(root)?)?,
-        Command::Revoke => append::revocation(options, &existing)?,
+        Command::Receipt => append::receipts(options, &rows(root)?, root)?,
+        Command::Waive => append::waivers(options, root)?,
+        Command::Revoke => append::revocation(options, &existing, root)?,
         Command::Plan => unreachable!("handled above"),
     };
     let mut all: Vec<Record> = existing;

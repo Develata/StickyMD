@@ -1,9 +1,11 @@
 # M5 macOS 就绪核对：实现范围与待决事项
 
-日期：2026-11-24。分支 `feat/m5-macos-readiness`（从 `main` `d9bab10` 开出），未 push。依据：`11` Phase 18 节 M5 行与
+日期：2026-11-24。分支 `feat/m5-macos-readiness`（从 `main` `d9bab10` 开出），PR [#23](https://github.com/Develata/StickyMD/pull/23)。依据：`11` Phase 18 节 M5 行与
 #macos-release-gate；[Phase 18 验证记录](2026-11-20-phase-18-verification.md)、[构建输入收窄记录](2026-11-21-platform-build-input-narrowing.md)。
 
 ## 结论
+
+下文写于 USER 决定之前；决定与之后的实现见文末“Resolution（2026-11-24）”，届时只剩 R03 与资源行的生产者改动未落地。
 
 M5 不只是一个核对程序：发布门七类中有三类今天没有任何生产者能给出门要求的字节身份，另有两类收据的格式与记录方式合同没有交给 M5。
 本分支只实现合同已确定或明确交给 M5 的部分（“R 上的源码测试”收据与其运行器、逐行核对的程序本身）；其余各项列在“需要 Develata 决定”，
@@ -82,3 +84,24 @@ M5 不只是一个核对程序：发布门七类中有三类今天没有任何�
 - 本 worktree 的 `dist/evidence/release-source-tests-macos.json` 是 `285f0d4` 上的演练收据，不是正式收据（ignored，不提交）。
 
 未验证：带真实候选与账本的核对（需要一次 `release-macos` 运行与晋升）；正式收据只能在冻结的 R 上产生。
+
+## Resolution（2026-11-24）
+
+USER 对“需要 Develata 决定”四项与四项待确认提议的回复（原话）：
+
+> 均同意按你的建议来做
+
+据此：
+
+1. **发布用 USER 收据与 waiver**：扩展账本，不另开文件。新记录种类 `release-receipt`、`release-waiver` 与 `download` 都绑定 resolver 给出的
+   候选 receipt 摘要（`mac_ledger/release.rs`）；`mac-ledger receipt --release-source <R>`、新命令 `mac-ledger waive`、`mac-ledger revoke --release-source <R>`。
+   waiver 只接受依赖 app 运行的行（`mac-gui` 行、人工行、资源行），不覆盖 FAIL。旧版工具读到新种类会拒绝整本账本，这一代价已接受。
+2. **真实下载路径**：同一个记录器，行名 `P18-D01`…`D05`，须给 `--system`，记下候选的签名方式与走这条路径的系统；
+   核对只认本候选的记录（fail closed）。
+3. **生产侧缺口**（R03 探针接收候选 ZIP；`mac-resources` 记 bundle 清单摘要并能登记进账本）：另开分支做。在此之前 R03 使门不成立；资源行可逐行 waiver。
+4. **四项提议**全部确认：行分类、账本判定、同键互斥并入源码测试收据、`macos-ready` 只在 R 的干净检出中运行。`11` #macos-readiness-check 的状态行
+   改为已批准，并写明上述格式与判定。
+
+实现与验证：判定加入 `WAIVED`（与 PASS 一样使行成立）；P18-G03 记录新增的 11 个测试（账本侧 4 个、判定侧 7 个）。本机 `cargo test --locked -p stickymd-smoke
+-- release::macos mac_ledger` 65 个测试通过；`stickymd-smoke` 的 clippy 在 macOS 与 `x86_64-pc-windows-msvc` 上都无警告。带真实候选的记录器
+（`receipt --release-source`、`waive`）需要先有一次晋升，尚未运行。

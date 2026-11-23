@@ -5,6 +5,7 @@ use super::judge::{Candidate, Inputs, Line, Read, Verdict, judge, ready};
 use super::rows::{Class, ROWS};
 use super::source_tests::{self, Counts, Host, Receipt, Run, SameKey, Side, Target};
 use crate::mac_ledger::record::{Built, Identity, Record, Revoked};
+use crate::mac_ledger::release::{DOWNLOAD_ROWS, ReleaseKind, ReleaseRecord};
 
 const R: &str = "1111111111111111111111111111111111111111";
 
@@ -140,7 +141,8 @@ fn assert_line(lines: &[Line], item: &str, expected: Verdict, words: &str) {
     assert!(line.detail.contains(words), "{line:?}");
 }
 
-/// The rows that cannot hold until their formats and producers are decided (M5 report).
+/// The rows that hold only with a USER record (receipt, waiver, download path) or, for R03, a
+/// producer that runs on the candidate ZIP (M5 report).
 fn awaiting_decision(item: &str) -> bool {
     item == "download-path"
         || ROWS.iter().any(|(row, class)| {
@@ -382,4 +384,193 @@ fn an_unreadable_ledger_leaves_the_ledger_rows_open() {
     });
     assert_line(&lines, "P16-E01", Verdict::NotTested, "line 3");
     assert_line(&lines, "P16-S02", Verdict::Pass, "");
+}
+
+fn release(kind: ReleaseKind, row: &str, candidate: &str, batch: &str) -> Record {
+    Record::Release(ReleaseRecord {
+        kind,
+        row: row.to_owned(),
+        candidate: candidate.to_owned(),
+        environment: "USER desktop".into(),
+        quote: format!("{row} 看过了"),
+        batch: Some(batch.to_owned()),
+        recorded_unix: 3,
+    })
+}
+
+fn download(row: &str, candidate: &str) -> Record {
+    release(
+        ReleaseKind::Download {
+            signing: "AD_HOC".into(),
+            system: "ProductName: macOS ProductVersion: 27.2".into(),
+        },
+        row,
+        candidate,
+        "rc1",
+    )
+}
+
+fn withdraw(row: &str, candidate: &str) -> Record {
+    Record::Revocation {
+        row: row.to_owned(),
+        revoked: Revoked::Candidate(candidate.to_owned()),
+        quote: "撤回".into(),
+        recorded_unix: 4,
+    }
+}
+
+/// The ledger with every USER record a release needs: receipts for the Manual rows, waivers for
+/// the resource rows, and the five download paths, all for this candidate.
+fn released() -> Vec<Record> {
+    let digest = candidate().receipt_sha256;
+    let mut records = ledger();
+    for (row, class) in ROWS {
+        match class {
+            Class::Manual => records.push(release(ReleaseKind::Receipt, row, &digest, "rc1")),
+            Class::Resources => records.push(release(ReleaseKind::Waiver, row, &digest, "rc1")),
+            _ => {}
+        }
+    }
+    records.extend(DOWNLOAD_ROWS.map(|row| download(row, &digest)));
+    records
+}
+
+#[test]
+fn with_the_user_records_every_row_but_r03_holds() {
+    let candidate = candidate();
+    let lines = run(Read::Present(&candidate), &released(), &receipt());
+    for line in &lines {
+        let expected = match line.item.as_str() {
+            "P16-R03" => Verdict::NotTested,
+            "P16-W15" | "P16-W16" | "P16-V05" => Verdict::Excluded,
+            "P16-R01" | "P16-R02" | "P16-V03" => Verdict::Waived,
+            _ => Verdict::Pass,
+        };
+        assert_eq!(line.verdict, expected, "{line:?}");
+    }
+    assert_line(&lines, "P16-W01", Verdict::Pass, "W01 看过了");
+    assert!(!ready(&lines), "R03 still needs a run on the candidate ZIP");
+    let held: Vec<Line> = lines
+        .into_iter()
+        .filter(|line| line.item != "P16-R03")
+        .collect();
+    assert!(ready(&held));
+}
+
+#[test]
+fn a_record_for_another_candidate_does_not_count() {
+    let candidate = candidate();
+    let other = hex('9');
+    let mut records = ledger();
+    records.push(release(ReleaseKind::Receipt, "W01", &other, "rc1"));
+    records.push(release(ReleaseKind::Waiver, "R01", &other, "rc1"));
+    records.extend(DOWNLOAD_ROWS.map(|row| download(row, &other)));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "P16-W01",
+        Verdict::NotTested,
+        "no USER release receipt",
+    );
+    assert_line(&lines, "P16-R01", Verdict::NotTested, "mac-resources");
+    assert_line(&lines, "download-path", Verdict::NotTested, "P18-D01");
+}
+
+#[test]
+fn a_revocation_withdraws_the_release_records_before_it_only() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = released();
+    records.push(withdraw("W05", &digest));
+    records.push(withdraw("R02", &digest));
+    records.push(withdraw("P18-D04", &digest));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "P16-W05",
+        Verdict::NotTested,
+        "no USER release receipt",
+    );
+    assert_line(&lines, "P16-R02", Verdict::NotTested, "mac-resources");
+    assert_line(&lines, "download-path", Verdict::NotTested, "P18-D04");
+    // The USER confirms again after the withdrawal: the new record stands.
+    records.push(release(ReleaseKind::Receipt, "W05", &digest, "rc1"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W05", Verdict::Pass, "W05 看过了");
+}
+
+#[test]
+fn a_waiver_never_stands_for_a_fail_or_an_unwaivable_row() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = ledger();
+    records.push(record("W03", "FAIL", '1', &candidate.built, '8'));
+    records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "W02"));
+    for row in ["W02", "W03", "R03", "S01"] {
+        records.push(release(ReleaseKind::Waiver, row, &digest, "rc1"));
+    }
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W03", Verdict::Fail, "a FAIL of P16-W03");
+    assert_line(&lines, "P16-W02", Verdict::Waived, "no PASS of P16-W02");
+    assert_line(&lines, "P16-R03", Verdict::NotTested, "candidate ZIP");
+    let mut failing = receipt();
+    failing.exit_code = Some(101);
+    let lines = run(Read::Present(&candidate), &records, &failing);
+    assert_line(&lines, "P16-S01", Verdict::Fail, "exited");
+}
+
+#[test]
+fn the_download_path_needs_all_five_rows() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = ledger();
+    records.extend(
+        DOWNLOAD_ROWS
+            .iter()
+            .filter(|row| **row != "P18-D05")
+            .map(|row| download(row, &digest)),
+    );
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    let line = verdict(&lines, "download-path");
+    assert_eq!(line.verdict, Verdict::NotTested);
+    assert!(line.detail.ends_with("P18-D05"), "{line:?}");
+    records.push(download("P18-D05", &digest));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "download-path", Verdict::Pass, "P18-D01-D05");
+}
+
+#[test]
+fn ime_records_count_only_in_the_batch_being_judged() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = ledger();
+    records.push(release(ReleaseKind::Receipt, "I01", &digest, "rc0"));
+    records.push(release(ReleaseKind::Waiver, "I02", &digest, "rc0"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "P16-I01",
+        Verdict::NotTested,
+        "no USER release receipt",
+    );
+    assert_line(
+        &lines,
+        "P16-I02",
+        Verdict::NotTested,
+        "no USER release receipt",
+    );
+    records.push(release(ReleaseKind::Receipt, "I01", &digest, "rc1"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-I01", Verdict::Pass, "I01 看过了");
+}
+
+#[test]
+fn only_rows_that_depend_on_the_app_running_are_waivable() {
+    use super::rows::waivable;
+    for row in ["W02", "E01", "W01", "I03", "V04", "R01", "V03"] {
+        assert!(waivable(row), "{row}");
+    }
+    for row in ["R03", "S01", "B01", "P01", "W15", "V05", "P18-D01", "X99"] {
+        assert!(!waivable(row), "{row}");
+    }
 }

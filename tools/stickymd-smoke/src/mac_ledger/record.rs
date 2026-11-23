@@ -5,6 +5,7 @@
 //! record rejects the whole ledger. Records written before the input fingerprint (no
 //! `app_inputs`) are read as history and never reused.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
+use super::release::ReleaseRecord;
 use crate::release::json::{self, Value};
 
 /// What a reused PASS must match exactly (plan 11 #phase-16-macos-host).
@@ -35,11 +36,14 @@ pub(crate) struct Built {
 }
 
 /// What a revocation withdraws: an automated PASS, named by the digest of the evidence it was
-/// recorded from, or the receipts for a row, named by the product inputs they hold for.
+/// recorded from; the receipts for a row, named by the product inputs they hold for; or the
+/// release records for a row (receipts, waivers, download records), named by the candidate
+/// receipt they are bound to.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Revoked {
     Evidence(String),
     Inputs(String),
+    Candidate(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,6 +72,8 @@ pub(crate) enum Record {
         batch: Option<String>,
         recorded_unix: u64,
     },
+    /// A USER record bound to one promoted candidate (plan 11 #macos-readiness-check).
+    Release(ReleaseRecord),
     /// The USER withdrew a result after reviewing it (plan 11 #phase-16-macos-host).
     Revocation {
         row: String,
@@ -169,6 +175,9 @@ impl Record {
                 let target = match revoked {
                     Revoked::Evidence(digest) => format!("\"evidence_sha256\":{}", quote(digest)),
                     Revoked::Inputs(inputs) => format!("\"app_inputs\":{}", quote(inputs)),
+                    Revoked::Candidate(digest) => {
+                        format!("\"candidate_receipt_sha256\":{}", quote(digest))
+                    }
                 };
                 format!(
                     "{{\"kind\":\"revocation\",\"row\":{},{target},\"quote\":{},\"recorded_unix\":{recorded_unix}}}",
@@ -176,6 +185,7 @@ impl Record {
                     quote(words),
                 )
             }
+            Self::Release(release) => release.line(),
         }
     }
 
@@ -251,9 +261,11 @@ impl Record {
                 match revoked {
                     Revoked::Evidence(digest) => hash("evidence_sha256", digest)?,
                     Revoked::Inputs(inputs) => hash("app_inputs", inputs)?,
+                    Revoked::Candidate(digest) => hash("candidate_receipt_sha256", digest)?,
                 }
                 nonempty("quote", quote)
             }
+            Self::Release(release) => release.validate(),
         }
     }
 
@@ -293,12 +305,17 @@ impl Record {
                 recorded_unix,
             },
             "revocation" => {
-                let revoked = match (optional_text(&value, "evidence_sha256")?, inputs) {
-                    (Some(digest), None) => Revoked::Evidence(digest),
-                    (None, Some(inputs)) => Revoked::Inputs(inputs),
+                let revoked = match (
+                    optional_text(&value, "evidence_sha256")?,
+                    inputs,
+                    optional_text(&value, "candidate_receipt_sha256")?,
+                ) {
+                    (Some(digest), None, None) => Revoked::Evidence(digest),
+                    (None, Some(inputs), None) => Revoked::Inputs(inputs),
+                    (None, None, Some(digest)) => Revoked::Candidate(digest),
                     _ => {
                         return Err(
-                            "a revocation names exactly one of evidence_sha256 and app_inputs"
+                            "a revocation names exactly one of evidence_sha256, app_inputs and candidate_receipt_sha256"
                                 .into(),
                         );
                     }
@@ -310,7 +327,10 @@ impl Record {
                     recorded_unix,
                 }
             }
-            other => return Err(format!("unknown ledger record kind {other}")),
+            other => match ReleaseRecord::parse(other, &value, recorded_unix)? {
+                Some(release) => Self::Release(release),
+                None => return Err(format!("unknown ledger record kind {other}")),
+            },
         };
         record.validate()?;
         Ok(record.normalized())
@@ -341,8 +361,11 @@ impl Record {
                 lower(app_executable);
             }
             Self::Revocation { revoked, .. } => match revoked {
-                Revoked::Evidence(digest) | Revoked::Inputs(digest) => lower(digest),
+                Revoked::Evidence(digest)
+                | Revoked::Inputs(digest)
+                | Revoked::Candidate(digest) => lower(digest),
             },
+            Self::Release(release) => lower(&mut release.candidate),
         }
         self
     }
@@ -391,6 +414,15 @@ pub(crate) fn read_all(text: &str) -> Result<Vec<Record>, String> {
 /// Whether `record` may follow `earlier`: no second record of the same evidence for a row, and a
 /// revocation only of a result already in the ledger. Run order is not checked: wall-clock starts
 /// cannot prove it, so the reuse rule does not depend on it (`decide::plan`).
+/// A row as the matrices name it: Phase 16 rows are stored without their prefix.
+pub(crate) fn label(row: &str) -> String {
+    if row.starts_with("P18-") {
+        row.to_owned()
+    } else {
+        format!("P16-{row}")
+    }
+}
+
 pub(super) fn consistent_with(earlier: &[Record], record: &Record) -> Result<(), String> {
     match record {
         Record::Automated {
@@ -427,15 +459,19 @@ pub(super) fn consistent_with(earlier: &[Record], record: &Record) -> Result<(),
                     },
                     Revoked::Inputs(inputs),
                 ) => r_row == row && held == inputs,
+                (Record::Release(release), Revoked::Candidate(digest)) => {
+                    &release.row == row && &release.candidate == digest
+                }
                 _ => false,
             });
             if !held {
                 return Err(format!(
-                    "the revocation of P16-{row} names no result recorded before it"
+                    "the revocation of {} names no result recorded before it",
+                    label(row)
                 ));
             }
         }
-        Record::Manual { .. } => {}
+        Record::Manual { .. } | Record::Release(_) => {}
     }
     Ok(())
 }

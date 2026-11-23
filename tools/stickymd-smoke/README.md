@@ -605,9 +605,20 @@ and writes `dist/evidence/release-source-tests-macos.json` with libtest's counts
 binary and the source identity at both ends. `macos-ready` is read-only and also runs only
 on a clean checkout of R, so the gate is judged with R's own tools: it resolves the
 promoted candidate, reads the `mac-gui` ledger and that receipt, prints every gate row and
-Phase 16 row with its verdict, and exits non-zero unless all hold. Rows with no evidence
-source yet (R03 on the release ZIP, the download path, release receipts and waivers, the
-resource rows) stay `NOT_TESTED` until their formats are decided
+Phase 16 row with its verdict, and exits non-zero unless all hold.
+
+The USER's records for a release go into the same ledger, bound to the candidate the resolver
+returns for R:
+
+```sh
+cargo run --quiet -p stickymd-smoke --locked -- mac-ledger receipt --release-source <R> --rows <ids> --quote <words> [--batch <name>] [--system <sw_vers file>]
+cargo run --quiet -p stickymd-smoke --locked -- mac-ledger waive --release-source <R> --rows <ids> --quote <words> [--batch <name>]
+cargo run --quiet -p stickymd-smoke --locked -- mac-ledger revoke --rows <id> --release-source <R> --quote <words>
+```
+
+`receipt` takes Manual Phase 16 rows and the download paths P18-D01..P18-D05 (these need
+`--system`); `waive` takes only rows that depend on the app running and never stands for a
+FAIL. R03 stays `NOT_TESTED` until its probe runs on the candidate ZIP
 ([M5 report](../../docs/report/2026-11-24-m5-macos-readiness-check.md)).
 
 

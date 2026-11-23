@@ -556,6 +556,8 @@ pub(crate) struct Resolved {
     pub zip_sha256: String,
     pub executable_sha256: String,
     pub bundle_sha256: String,
+    /// The signing the receipt records and the resolver requires (`AD_HOC`).
+    pub signing: String,
 }
 
 /// Whether a candidate receipt is in place at all; the resolver alone says whether it holds.
@@ -676,6 +678,7 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<Resolved, String> {
         zip_sha256: field("zip_sha256")?.to_ascii_lowercase(),
         executable_sha256: field("app_executable_sha256")?.to_ascii_lowercase(),
         bundle_sha256: field("app_bundle_manifest_sha256")?.to_ascii_lowercase(),
+        signing: field("signing")?,
     })
 }
 

@@ -11,7 +11,7 @@ pub(crate) fn is_batch(s: &str) -> bool {
 }
 
 pub(super) const HELP: &str =
-    "usage: stickymd-smoke mac-ledger <plan|record|receipt|revoke> [options]
+    "usage: stickymd-smoke mac-ledger <plan|record|receipt|waive|revoke> [options]
   The product input fingerprint of a checkout is printed by `stickymd-package app-inputs`:
   build-app.sh writes it into the bundle, so it is computed by the packaging crate.
   plan    --app <StickyMD.app> --driver <stickymd-smoke> --image <digest> --system <file> [--batch <name>]
@@ -24,11 +24,19 @@ pub(super) const HELP: &str =
           of a row under an identity stops reuse of that row under it.
   receipt --app <StickyMD.app> --rows <ids> --quote <the USER's words> [--batch <name>]
           Appends a USER receipt per Manual row for the app's product inputs on this desktop.
-  revoke  --rows <id> (--evidence-sha256 <digest> | --app <StickyMD.app>) --quote <the USER's words>
+  receipt --release-source <R> --rows <ids> --quote <the USER's words> [--batch <name>] [--system <file>]
+          Appends a release receipt per row, bound to the promoted macOS candidate the resolver
+          returns for R: a Manual Phase 16 row, or a download path P18-D01..P18-D05 (these need
+          --system, the sw_vers output of the system the path was walked on).
+  waive   --release-source <R> --rows <ids> --quote <the USER's words> [--batch <name>]
+          Appends the USER's waiver per row for that candidate. Only rows the release gate lets
+          the USER waive are accepted; a waiver never stands for a FAIL.
+  revoke  --rows <id> (--evidence-sha256 <digest> | --app <StickyMD.app> | --release-source <R>) --quote <the USER's words>
           Appends the USER's withdrawal of an automated PASS (named by the digest of the evidence
-          it was recorded from) or of the row's receipts for the app's product inputs. A
-          withdrawn result stays in the ledger as history. After a withdrawn PASS no PASS of that
-          row under the same identity is reused (for I01-I03 and R03: in the same batch).
+          it was recorded from), of the row's receipts for the app's product inputs, or of the
+          row's release receipts, waivers and download records for R's candidate. A withdrawn
+          result stays in the ledger as history. After a withdrawn PASS no PASS of that row under
+          the same identity is reused (for I01-I03 and R03: in the same batch).
   --ledger <file> defaults to dist/evidence/mac-gui-ledger/records.jsonl under the repository.
   --image is the Tart image digest the VM was cloned from (the VM cannot see it).
   --system is a file holding the target VM's sw_vers output, taken just before the run.
@@ -43,6 +51,7 @@ pub(crate) enum Command {
     Plan,
     Record,
     Receipt,
+    Waive,
     Revoke,
 }
 
@@ -52,6 +61,7 @@ impl Command {
             Self::Plan => "plan",
             Self::Record => "record",
             Self::Receipt => "receipt",
+            Self::Waive => "waive",
             Self::Revoke => "revoke",
         }
     }
@@ -63,12 +73,28 @@ impl Command {
                 "--ledger", "--app", "--driver", "--image", "--system", "--batch",
             ],
             Self::Record => &["--ledger", "--evidence", "--image"],
-            Self::Receipt => &["--ledger", "--app", "--rows", "--quote", "--batch"],
+            Self::Receipt => &[
+                "--ledger",
+                "--app",
+                "--release-source",
+                "--system",
+                "--rows",
+                "--quote",
+                "--batch",
+            ],
+            Self::Waive => &[
+                "--ledger",
+                "--release-source",
+                "--rows",
+                "--quote",
+                "--batch",
+            ],
             Self::Revoke => &[
                 "--ledger",
                 "--rows",
                 "--evidence-sha256",
                 "--app",
+                "--release-source",
                 "--quote",
             ],
         };
@@ -88,6 +114,8 @@ pub(crate) struct Options {
     /// For `revoke`: the digest of the evidence an automated PASS was recorded from, lowercased.
     pub evidence_sha256: Option<String>,
     pub batch: Option<String>,
+    /// The release commit R whose promoted candidate a release record is bound to.
+    pub release: Option<String>,
     pub rows: Vec<String>,
     pub quote: Option<String>,
     pub help: bool,
@@ -106,6 +134,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
         Some("plan") => Command::Plan,
         Some("record") => Command::Record,
         Some("receipt") => Command::Receipt,
+        Some("waive") => Command::Waive,
         Some("revoke") => Command::Revoke,
         Some("--help" | "-h") | None => {
             result.help = true;
@@ -162,6 +191,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
                 result.batch = Some(value.clone());
             }
             "--quote" => result.quote = Some(value.clone()),
+            "--release-source" => result.release = Some(value.to_ascii_lowercase()),
             "--rows" => {
                 for id in value.split(',') {
                     let id = id.trim();
@@ -198,7 +228,22 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
             result.image.as_ref().ok_or_else(|| missing("--image"))?;
         }
         Command::Receipt => {
-            result.app.as_ref().ok_or_else(|| missing("--app"))?;
+            if result.app.is_some() == result.release.is_some() {
+                return Err(missing("exactly one of --app and --release-source"));
+            }
+            if result.system.is_some() && result.release.is_none() {
+                return Err(missing("--release-source with --system"));
+            }
+            if result.rows.is_empty() {
+                return Err(missing("--rows"));
+            }
+            quoted(&result)?;
+        }
+        Command::Waive => {
+            result
+                .release
+                .as_ref()
+                .ok_or_else(|| missing("--release-source"))?;
             if result.rows.is_empty() {
                 return Err(missing("--rows"));
             }
@@ -208,8 +253,15 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
             if result.rows.len() != 1 {
                 return Err(missing("--rows with exactly one row"));
             }
-            if result.app.is_some() == result.evidence_sha256.is_some() {
-                return Err(missing("exactly one of --evidence-sha256 and --app"));
+            let targets = [
+                result.app.is_some(),
+                result.evidence_sha256.is_some(),
+                result.release.is_some(),
+            ];
+            if targets.iter().filter(|given| **given).count() != 1 {
+                return Err(missing(
+                    "exactly one of --evidence-sha256, --app and --release-source",
+                ));
             }
             quoted(&result)?;
         }

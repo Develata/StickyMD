@@ -4,10 +4,12 @@
 
 - **Plan：** `11` `macos-readiness-check`（R 上的源码测试收据的运行、格式与判定，就绪核对程序，Phase 16 行的分类，账本判定，尚无来源的行）、
   `macos-release-gate`（源码测试一行指向该格式）。
-- **验收：** [Phase 18](acceptance-cases/phase-18.md) P18-G01（源码测试收据）、P18-G02（逐行核对与合同点名的两个坏样本）。
+- **验收：** [Phase 18](acceptance-cases/phase-18.md) P18-G01（源码测试收据）、P18-G02（逐行核对与合同点名的两个坏样本）、
+  P18-G03（发布用 USER 收据、waiver 与下载路径记录，USER 2026-11-24）。
 - **代码：** `tools/stickymd-smoke/src/release/macos/ready/`（`rows` 分类表、`source_tests` 收据与运行器、`judge` 纯判定）；
-  `release/macos/promote.rs` 的 resolver 返回 receipt 摘要与两项字节身份。发布用 USER 收据与 waiver、真实下载路径记录、R03 接收候选 ZIP、
-  资源行的字节绑定尚待决定，核对程序对这些行判 `NOT_TESTED`。
+  `release/macos/promote.rs` 的 resolver 返回 receipt 摘要、两项字节身份与签名方式；`mac_ledger/release.rs`（发布用记录）与
+  `mac-ledger receipt --release-source`、`waive`、`revoke --release-source`。R03 接收候选 ZIP 与资源行的字节绑定另开分支，
+  在此之前核对程序对 R03 判 `NOT_TESTED`。
 
 2026-11-21 平台构建输入收窄为打包 crate（USER 决定 2026-11-21，[验证报告](report/2026-11-20-phase-18-verification.md)末尾的 Resolution）：
 

@@ -5,7 +5,7 @@
 
 mod attachments;
 mod cli;
-mod macos;
+pub(crate) mod macos;
 mod package;
 mod package_rules;
 mod package_runtime;

@@ -5,7 +5,10 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 mod judge;
+mod receipts;
 mod rows;
+#[cfg(target_os = "macos")]
+pub(crate) use rows::waivable;
 mod source_tests;
 #[cfg(test)]
 mod tests;
@@ -146,7 +149,7 @@ pub(in super::super) fn ready_command(
             .filter(|line| {
                 !matches!(
                     line.verdict,
-                    judge::Verdict::Pass | judge::Verdict::Excluded
+                    judge::Verdict::Pass | judge::Verdict::Waived | judge::Verdict::Excluded
                 )
             })
             .count();
