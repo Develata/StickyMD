@@ -129,6 +129,13 @@ impl Run {
     }
 }
 
+/// How far past `10`'s 60 s window the second sample may land: scheduling only. Every VM run
+/// from 2026-11-10 to 2026-11-14 overshot by at most 20 ms; an idle tail longer than this would
+/// dilute the average a hard line is judged on.
+pub(super) const WINDOW_TOLERANCE_SECONDS: f64 = 0.5;
+
+/// The readings between two samples. The window must be `10`'s 60 s, overshooting by at most
+/// [`WINDOW_TOLERANCE_SECONDS`].
 pub(super) fn metrics(
     before: &Sample,
     after: &Sample,
@@ -136,8 +143,10 @@ pub(super) fn metrics(
     denom: u32,
 ) -> Result<Metrics, String> {
     let seconds = after.elapsed_seconds - before.elapsed_seconds;
+    let window = crate::resource_plan::CPU_SECONDS as f64;
     if !seconds.is_finite()
-        || seconds < crate::resource_plan::CPU_SECONDS as f64
+        || seconds < window
+        || seconds > window + WINDOW_TOLERANCE_SECONDS
         || before.footprint_bytes == 0
         || after.footprint_bytes == 0
         || numer == 0

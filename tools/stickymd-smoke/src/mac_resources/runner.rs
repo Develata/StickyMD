@@ -6,6 +6,7 @@ use super::{
     model::{self, Run, Scenario},
     native,
     report::{Evidence, quote},
+    rows::Conditions,
 };
 use crate::mac_common::{
     fixture::{app_inputs, bundle_hash, contained_executable, copy_fixture},
@@ -31,8 +32,14 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         return Err("Accessibility permission missing: Hidden chooses the menu-bar item through Accessibility; grant it to this binary, then measure".into());
     }
     let fixture = model::fixture();
+    let out = options.out.clone();
+    let [pixel_width, pixel_height, point_width, point_height] = native::display()?;
     let mut evidence = Evidence {
         environment: environment()?,
+        conditions: Conditions {
+            macos_version: native::system_text(c"kern.osproductversion")?,
+            scale: [pixel_width / point_width, pixel_height / point_height],
+        },
         app_hash: crate::integrity::sha256(&executable)?,
         bundle_hash: bundle_hash(&app)?,
         inputs: app_inputs(&app)?,
@@ -45,7 +52,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         timebase: native::timebase()?,
         scenarios: Vec::new(),
     };
-    let output = options.out.join("mac-resources.json");
+    let output = out.join("mac-resources.json");
     crate::atomic_evidence::write(&output, evidence.json().as_bytes())?;
     for scenario in model::SCENARIOS {
         let name = scenario.name;
@@ -55,14 +62,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
                 "{name} run {repetition}/{}: starting isolated measurement",
                 options.repetitions
             );
-            let run = one_run(
-                &app,
-                &fixture,
-                scenario,
-                repetition,
-                &evidence.app_hash,
-                evidence.timebase,
-            );
+            let run = one_run(&app, &fixture, scenario, repetition, &evidence);
             println!("{name} run {repetition}: {} {}", run.status, run.reason);
             let cleanup_error = run.cleanup_error.clone();
             evidence
@@ -96,9 +96,9 @@ fn one_run(
     fixture: &str,
     scenario: Scenario,
     repetition: usize,
-    hash: &str,
-    timebase: (u32, u32),
+    evidence: &Evidence,
 ) -> Run {
+    let timebase = evidence.timebase;
     let mut run = Run::new(repetition);
     let mut session = match Session::new() {
         Ok(session) => session,
@@ -107,7 +107,7 @@ fn one_run(
             return run;
         }
     };
-    let result = prepare(&mut session, app, fixture, scenario.mode, hash)
+    let result = prepare(&mut session, app, fixture, scenario.mode, evidence)
         .and_then(|()| measure(&mut session, &mut run, timebase, scenario.hidden));
     if let Err(error) = result {
         run.reason = error;
@@ -123,14 +123,29 @@ fn one_run(
     run
 }
 
+/// Copies the bundle and its fixture and starts it. The copy must be the bundle the evidence
+/// names: its executable (checked while copying), its manifest and its input fingerprint, so a
+/// bundle changed during the campaign is never measured under the first one's identity.
 fn prepare(
     session: &mut Session,
     app: &Path,
     fixture: &str,
     mode: &str,
-    hash: &str,
+    evidence: &Evidence,
 ) -> Result<(), String> {
-    let executable = copy_fixture(session, app, fixture, &model::config(mode), hash)?;
+    let executable = copy_fixture(
+        session,
+        app,
+        fixture,
+        &model::config(mode),
+        &evidence.app_hash,
+    )?;
+    let copied = session.path().join("StickyMD.app");
+    if bundle_hash(&copied)? != evidence.bundle_hash || app_inputs(&copied)? != evidence.inputs {
+        return Err(
+            "the copied bundle is not the one this campaign measures; refused before launch".into(),
+        );
+    }
     session.spawn(
         Command::new(executable)
             .current_dir(session.path())

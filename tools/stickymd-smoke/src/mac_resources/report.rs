@@ -5,7 +5,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
 use super::model::{self, Run, Summary};
-use super::rows::{self, Reading, RowVerdict};
+use super::rows::{self, Conditions, Reading, RowVerdict};
 
 pub(super) fn quote(value: &str) -> String {
     format!("\"{}\"", crate::evidence::escape_json(value))
@@ -16,6 +16,8 @@ fn optional(value: Option<impl std::fmt::Display>) -> String {
 
 pub(super) struct Evidence {
     pub environment: String,
+    /// The system version and display scale the rows are judged under (`10`).
+    pub conditions: Conditions,
     pub app_hash: String,
     /// The bundle manifest SHA-256: the release gate binds evidence to both byte identities.
     pub bundle_hash: String,
@@ -85,18 +87,13 @@ impl Evidence {
                     .map(|run| {
                         let metrics = run.metrics.as_ref()?;
                         (run.status == "VALID" && run.cleanup_error.is_none())
-                            .then_some(Reading {
-                                footprint: metrics.footprint_bytes,
-                                idle_cpu: metrics.idle_cpu_percent,
-                            })
-                            .filter(|r| {
-                                r.idle_cpu.is_finite() && r.idle_cpu >= 0.0 && r.footprint > 0
-                            })
+                            .then(|| Reading::of(metrics))
+                            .flatten()
                     })
                     .collect(),
             })
             .collect();
-        rows::judge(&scenarios, self.repetitions)
+        rows::judge(&scenarios, self.repetitions, &self.conditions)
     }
 
     /// Both rows PASS.
@@ -118,7 +115,7 @@ impl Evidence {
             } else {
                 "INCOMPLETE_OR_FAILED"
             };
-            scenarios.push(format!("{{\"scenario\":{},\"config\":{},\"hidden_through_menu_bar\":{},\"status\":{},\"valid_runs\":{},\"memory_limit_bytes\":{},\"footprint_bytes\":{},\"idle_cpu_percent\":{},\"interrupt_wakeups_per_second\":{},\"idle_wakeups_per_second\":{},\"runs\":[{}]}}",
+            scenarios.push(format!("{{\"scenario\":{},\"config\":{},\"hidden_through_menu_bar\":{},\"memory_status\":{},\"valid_runs\":{},\"memory_limit_bytes\":{},\"footprint_bytes\":{},\"idle_cpu_percent\":{},\"interrupt_wakeups_per_second\":{},\"idle_wakeups_per_second\":{},\"runs\":[{}]}}",
                 quote(scenario.name), quote(&model::config(scenario.mode)), scenario.hidden, quote(status), valid().count(), scenario.limit,
                 summary(model::summarize(valid().map(|m| m.footprint_bytes as f64))),
                 summary(model::summarize(valid().map(|m| m.idle_cpu_percent))),
@@ -187,9 +184,9 @@ impl Evidence {
                 readable(wakeups),
                 readable(idle_wakeups),
                 if model::passed(runs, self.repetitions, *limit) {
-                    "PASS"
+                    "memory PASS"
                 } else {
-                    "INCOMPLETE_OR_FAILED: missing/invalid run or memory gate exceeded"
+                    "memory INCOMPLETE_OR_FAILED: missing/invalid run or memory gate exceeded"
                 }
             );
         }
