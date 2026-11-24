@@ -251,7 +251,7 @@ pub(crate) fn evidence_json(busy: bool) -> String {
 #[test]
 fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
     let mut evidence = evidence();
-    assert!(evidence.passed());
+    assert!(evidence.measured());
     let text = evidence.json();
     assert!(!text.contains("\"wakeups_per_second\""));
     assert!(text.contains("\"interrupt_wakeups_per_second\":100"));
@@ -286,11 +286,11 @@ fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
     );
     // A hidden run over its own 48 MiB gate fails, though it is within Source's 72 MiB.
     evidence.scenarios[3][0] = valid_run(1, 48 * 1024 * 1024 + 1);
-    assert!(!evidence.passed());
+    assert!(!evidence.measured());
     evidence.scenarios[3][0] = valid_run(1, 48 * 1024 * 1024);
-    assert!(evidence.passed());
+    assert!(evidence.measured());
     evidence.scenarios[0][0].exited(0.1, "signal: 9\n\"test\"".into());
-    assert!(!evidence.passed());
+    assert!(!evidence.measured());
     let json = crate::release::json::parse(&evidence.json()).unwrap();
     let run = &json.field("scenarios").unwrap().array().unwrap()[0]
         .field("runs")

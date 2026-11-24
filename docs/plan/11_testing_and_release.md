@@ -322,11 +322,14 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
   60.5 s 之间（`10` 的 60 s 平均；2026-11-10 至 11-14 的虚拟机运行最多晚 20 ms），超出的运行无效。已标 `finished` 的证据含有清理错误时拒绝
   （工具在第一次清理失败时就停下，不会标 `finished`）。每次运行启动前，复制出的 bundle 的清单与产品输入指纹须等于证据记下的值。
   按 `10`，测量环境是 macOS 27，内存在显示缩放 2 下测；证据的 `macos_version` 不是 27.x 时两行都为 NOT_TESTED，缩放不是 2 时 R01 为 NOT_TESTED。
-  各场景是否真的以所配置的视图打开，程序尚不能确认（主窗口没有辅助功能元素），见[审查修复报告](../report/2026-11-24-m5-producers-review-fixes.md)。
-  - R01：每个场景恰有 `repetitions`（至少 5）次运行且全部有效、每次的 `phys_footprint` 都不超过 `10` #macos-gates 的临时硬门为 PASS；
+  各场景是否真的以所配置的视图打开，程序尚不能确认（主窗口没有辅助功能元素）。在 USER 定下确认办法之前（[审查修复报告](../report/2026-11-24-m5-producers-review-fixes.md)
+  “需要 Develata 决定”），R01、R02 都不判 PASS：运行完整且读数都在门内时为 NOT_TESTED，原因写明视图未确认；FAIL 照常。`record` 比较证据写下的每行结论时
+  同时比较原因，所以同为 NOT_TESTED 而原因不同的结论也会被拒。
+  - R01：每个场景恰有 `repetitions`（至少 5）次运行且全部有效、每次的 `phys_footprint` 都不超过 `10` #macos-gates 的临时硬门为 PASS（视图确认之前为
+    NOT_TESTED，见下）；
     任一有效运行超过硬门为 FAIL；其余为 NOT_TESTED。
   - R02（USER 2026-11-24 批准）：每个场景取有效运行 60 s 空闲 CPU 的中位数，对照 `10` 目标表的硬失败条件“> 0.1%”。四个场景都完整（同 R01）
-    且中位数都不超过 0.1% 为 PASS；任一场景有效运行的中位数超过 0.1% 为 FAIL；其余为 NOT_TESTED。取中位数沿用这一行以往的判定（按周期开关光标
+    且中位数都不超过 0.1% 为 PASS（视图确认之前为 NOT_TESTED，见下）；任一场景有效运行的中位数超过 0.1% 为 FAIL；其余为 NOT_TESTED。取中位数沿用这一行以往的判定（按周期开关光标
     图层时 Split 中位 0.103% 判为超过硬门）；替代是取最大值，更严，但单次读数即可使整行失败。唤醒次数仍只作观察。
   - V03 不由 `mac-resources` 判定：它要求同一批次中基线与新包交替运行 `mac-latency`，呈现器计数只在 `mac-latency` 的证据中，而
     `mac-latency` 是诊断，不进账本，也没有发布用的判定规则。

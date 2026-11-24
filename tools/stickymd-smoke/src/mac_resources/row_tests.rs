@@ -4,12 +4,22 @@
 
 use super::model::SCENARIOS;
 use super::report::Evidence;
-use super::rows::{CPU_HARD_FAILURE_PERCENT, RowVerdict, from_evidence};
+use super::rows::{CPU_HARD_FAILURE_PERCENT, RowVerdict, VIEW_UNCONFIRMED, from_evidence};
 use super::tests::{BUSY_TICKS, evidence, measured};
 use crate::release::json;
 
+/// Each row's verdict, with `MEASURED` for complete runs within the line: NOT_TESTED until the
+/// views are confirmed (review F7).
 fn verdicts(evidence: &Evidence) -> [(&'static str, &'static str); 2] {
-    evidence.rows().map(|row| (row.row, row.verdict))
+    evidence.rows().map(|row| {
+        if row.measured {
+            assert_eq!(row.verdict, "NOT_TESTED", "{row:?}");
+            assert!(row.detail.contains(VIEW_UNCONFIRMED), "{row:?}");
+            (row.row, "MEASURED")
+        } else {
+            (row.row, row.verdict)
+        }
+    })
 }
 
 fn read(text: &str) -> Result<[RowVerdict; 2], String> {
@@ -24,9 +34,19 @@ fn refused(text: &str, words: &str) {
 #[test]
 fn a_complete_campaign_within_both_lines_passes_both_rows() {
     let good = evidence();
-    assert_eq!(verdicts(&good), [("R01", "PASS"), ("R02", "PASS")]);
+    assert_eq!(verdicts(&good), [("R01", "MEASURED"), ("R02", "MEASURED")]);
+    // Fail closed (review F7): complete runs within both lines are not a PASS while no run
+    // confirms its view.
     let rows = read(&good.json()).unwrap();
-    assert_eq!(rows.clone().map(|row| row.verdict), ["PASS", "PASS"]);
+    assert_eq!(
+        rows.clone().map(|row| row.verdict),
+        ["NOT_TESTED", "NOT_TESTED"]
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row.measured && row.detail.contains(VIEW_UNCONFIRMED))
+    );
+    assert!(good.measured());
     assert!(rows[0].detail.contains("hidden max"), "{:?}", rows[0]);
 }
 
@@ -35,7 +55,7 @@ fn one_run_over_its_memory_gate_fails_r01_alone_and_names_the_bytes() {
     let mut over = evidence();
     let limit = SCENARIOS[2].limit;
     over.scenarios[2][4] = measured(5, limit + 1, super::tests::IDLE_TICKS);
-    assert_eq!(verdicts(&over), [("R01", "FAIL"), ("R02", "PASS")]);
+    assert_eq!(verdicts(&over), [("R01", "FAIL"), ("R02", "MEASURED")]);
     // One byte over is visible in the detail, not rounded away.
     assert!(
         over.rows()[0]
@@ -44,12 +64,12 @@ fn one_run_over_its_memory_gate_fails_r01_alone_and_names_the_bytes() {
         "{:?}",
         over.rows()[0]
     );
-    assert!(!over.passed());
+    assert!(!over.measured());
     // The evidence written for it reads back the same.
     assert_eq!(read(&over.json()).unwrap()[0].verdict, "FAIL");
     // At the gate is within it.
     over.scenarios[2][4] = measured(5, limit, super::tests::IDLE_TICKS);
-    assert_eq!(verdicts(&over), [("R01", "PASS"), ("R02", "PASS")]);
+    assert_eq!(verdicts(&over), [("R01", "MEASURED"), ("R02", "MEASURED")]);
 }
 
 /// The history of the row: periodic caret-layer toggling gave Split a median of 0.103%.
@@ -60,7 +80,7 @@ fn a_median_idle_cpu_above_the_hard_line_fails_r02_and_a_single_spike_does_not()
     for (index, run) in busy.scenarios[2].iter_mut().enumerate() {
         *run = measured(index + 1, limit, BUSY_TICKS);
     }
-    assert_eq!(verdicts(&busy), [("R01", "PASS"), ("R02", "FAIL")]);
+    assert_eq!(verdicts(&busy), [("R01", "MEASURED"), ("R02", "FAIL")]);
     assert!(busy.rows()[1].detail.contains("split median 0.103000%"));
     assert_eq!(read(&busy.json()).unwrap()[1].verdict, "FAIL");
     let mut spike = evidence();
@@ -69,13 +89,13 @@ fn a_median_idle_cpu_above_the_hard_line_fails_r02_and_a_single_spike_does_not()
         .as_mut()
         .unwrap()
         .idle_cpu_percent = 5.0;
-    assert_eq!(verdicts(&spike), [("R01", "PASS"), ("R02", "PASS")]);
+    assert_eq!(verdicts(&spike), [("R01", "MEASURED"), ("R02", "MEASURED")]);
     // At the line is within it.
     let mut edge = evidence();
     for run in &mut edge.scenarios[3] {
         run.metrics.as_mut().unwrap().idle_cpu_percent = CPU_HARD_FAILURE_PERCENT;
     }
-    assert_eq!(verdicts(&edge), [("R01", "PASS"), ("R02", "PASS")]);
+    assert_eq!(verdicts(&edge), [("R01", "MEASURED"), ("R02", "MEASURED")]);
 }
 
 #[test]
@@ -136,7 +156,10 @@ fn a_missing_invalid_or_uncleaned_run_leaves_both_rows_not_tested() {
 fn outside_plan_10s_environment_the_rows_are_not_tested() {
     let mut scale_1 = evidence();
     scale_1.conditions.scale = [1.0, 1.0];
-    assert_eq!(verdicts(&scale_1), [("R01", "NOT_TESTED"), ("R02", "PASS")]);
+    assert_eq!(
+        verdicts(&scale_1),
+        [("R01", "NOT_TESTED"), ("R02", "MEASURED")]
+    );
     assert!(scale_1.rows()[0].detail.contains("at scale 1x1"));
     let mut other_system = evidence();
     other_system.conditions.macos_version = "26.4".into();
@@ -203,13 +226,18 @@ fn the_reader_recomputes_readings_from_raw_samples() {
     // A run's status changed: the rows no longer hold.
     let errored = good.replacen("\"status\":\"VALID\"", "\"status\":\"ERROR\"", 1);
     refused(&errored, "its runs give");
-    // Rows claimed by a status field are not taken: a FAIL stated as PASS is refused.
+    // Rows claimed by a status field are not taken: a PASS stated where the runs give NOT_TESTED
+    // (views unconfirmed, review F7) is refused, and so is another reason for the same verdict.
     let claimed = good.replacen(
+        "\"id\":\"P16-R02\",\"verdict\":\"NOT_TESTED\"",
         "\"id\":\"P16-R02\",\"verdict\":\"PASS\"",
-        "\"id\":\"P16-R02\",\"verdict\":\"FAIL\"",
         1,
     );
+    assert_ne!(claimed, good);
     refused(&claimed, "its runs give");
+    let reason = good.replacen(VIEW_UNCONFIRMED, "views confirmed", 1);
+    assert_ne!(reason, good);
+    refused(&reason, "its runs give");
 }
 
 #[test]

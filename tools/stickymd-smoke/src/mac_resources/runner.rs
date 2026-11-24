@@ -85,10 +85,10 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     crate::atomic_evidence::write(&output, evidence.json().as_bytes())?;
     evidence.print_summary();
     println!("Evidence: {}", output.display());
-    if evidence.passed() {
+    if evidence.measured() {
         Ok(())
     } else {
-        Err("P16-R01 or P16-R02 is not PASS: every run must be valid and within its memory gate, and each scenario's median idle CPU at most 0.1%; see mac-resources.json".into())
+        Err("P16-R01 or P16-R02 does not hold: every run must be valid and within its memory gate, and each scenario's median idle CPU at most 0.1%; see mac-resources.json".into())
     }
 }
 

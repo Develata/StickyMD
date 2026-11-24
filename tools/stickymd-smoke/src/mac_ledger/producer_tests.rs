@@ -160,7 +160,8 @@ fn a_finished_resources_run_in_the_vm_records_r01_and_r02_with_both_digests() {
             other => panic!("{other:?}"),
         })
         .collect();
-    assert_eq!(rows, [("R01", "PASS"), ("R02", "PASS")]);
+    // Not PASS until the views are confirmed (review F7): the rows are recorded NOT_TESTED.
+    assert_eq!(rows, [("R01", "NOT_TESTED"), ("R02", "NOT_TESTED")]);
     for r in &records {
         let Record::Automated {
             identity,

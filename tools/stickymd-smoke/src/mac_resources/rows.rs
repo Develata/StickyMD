@@ -6,7 +6,10 @@
 //! runs of a scenario must be its repetitions 1..=n in order. The same rule writes the evidence's
 //! `rows` and, from the evidence's bytes, the ledger's records; evidence whose stated rows
 //! disagree with its runs is refused. `10` measures on macOS 27 and memory at scale 2; a
-//! campaign measured elsewhere leaves the row NOT_TESTED.
+//! campaign measured elsewhere leaves the row NOT_TESTED. No run yet confirms that its scenario
+//! opened in the view its configuration names (review F7), so until Develata decides how to
+//! confirm it, complete runs within the lines leave the row NOT_TESTED, never PASS; a FAIL stays
+//! a FAIL.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
 use super::model::{self, Metrics, SCENARIOS, Sample};
@@ -82,7 +85,13 @@ pub(crate) struct RowVerdict {
     /// `PASS`, `FAIL` or `NOT_TESTED`.
     pub verdict: &'static str,
     pub detail: String,
+    /// The runs are complete and within the line in `10`'s environment: the row would be PASS
+    /// once the views are confirmed.
+    pub measured: bool,
 }
+
+/// Why complete runs within the lines are not yet a PASS (review F7).
+pub(super) const VIEW_UNCONFIRMED: &str = "but no run confirmed that its scenario opened in the configured view (review F7; awaiting Develata's decision)";
 
 fn bytes(bytes: u64) -> String {
     format!("{bytes} B ({:.3} MiB)", bytes as f64 / 1048576.0)
@@ -100,8 +109,9 @@ fn valid(scenario: &Scenario) -> impl Iterator<Item = Reading> + '_ {
 }
 
 /// The two rows. Outside `10`'s environment a row is NOT_TESTED; otherwise a FAIL needs an
-/// observed violation, a PASS needs all four scenarios complete, and anything else is NOT_TESTED,
-/// naming what is missing.
+/// observed violation; all four scenarios complete within the line are `measured`, which is
+/// NOT_TESTED until the views are confirmed ([`VIEW_UNCONFIRMED`]); anything else is
+/// NOT_TESTED, naming what is missing.
 pub(super) fn judge(
     scenarios: &[Scenario],
     repetitions: usize,
@@ -159,7 +169,7 @@ pub(super) fn judge(
             })
             .collect();
         (
-            "PASS",
+            "MEASURED",
             format!("all runs within the memory gates: {}", maxima.join(", ")),
         )
     } else {
@@ -200,24 +210,30 @@ pub(super) fn judge(
         )
     } else if held {
         (
-            "PASS",
+            "MEASURED",
             format!("median idle CPU at most {CPU_HARD_FAILURE_PERCENT}%: {listed}"),
         )
     } else {
         ("NOT_TESTED", missing)
     };
-    [
-        RowVerdict {
-            row: "R01",
-            verdict: r01.0,
-            detail: r01.1,
-        },
-        RowVerdict {
-            row: "R02",
-            verdict: r02.0,
-            detail: r02.1,
-        },
-    ]
+    let row = |row: &'static str, (verdict, detail): (&'static str, String)| {
+        if verdict == "MEASURED" {
+            RowVerdict {
+                row,
+                verdict: "NOT_TESTED",
+                detail: format!("{detail}; {VIEW_UNCONFIRMED}"),
+                measured: true,
+            }
+        } else {
+            RowVerdict {
+                row,
+                verdict,
+                detail,
+                measured: false,
+            }
+        }
+    };
+    [row("R01", r01), row("R02", r02)]
 }
 
 fn number(value: &Value) -> Result<f64, String> {
@@ -357,19 +373,28 @@ pub(crate) fn from_evidence(value: &Value) -> Result<[RowVerdict; 2], String> {
         });
     }
     let judged = judge(&scenarios, repetitions, &conditions);
+    // Verdict and detail both: two NOT_TESTED rows for different reasons (views unconfirmed,
+    // another scale, a missing run) are different results.
     let stated = value.field("rows")?.array()?;
-    let stated: Vec<(String, String)> = stated
+    let stated: Vec<(String, String, String)> = stated
         .iter()
         .map(|row| {
             Ok((
                 row.field("id")?.string()?.to_owned(),
                 row.field("verdict")?.string()?.to_owned(),
+                row.field("detail")?.string()?.to_owned(),
             ))
         })
         .collect::<Result<_, String>>()?;
-    let expected: Vec<(String, String)> = judged
+    let expected: Vec<(String, String, String)> = judged
         .iter()
-        .map(|r| (format!("P16-{}", r.row), r.verdict.to_owned()))
+        .map(|r| {
+            (
+                format!("P16-{}", r.row),
+                r.verdict.to_owned(),
+                r.detail.clone(),
+            )
+        })
         .collect();
     if stated != expected {
         return Err(format!(

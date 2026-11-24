@@ -96,9 +96,9 @@ impl Evidence {
         rows::judge(&scenarios, self.repetitions, &self.conditions)
     }
 
-    /// Both rows PASS.
-    pub fn passed(&self) -> bool {
-        self.rows().iter().all(|row| row.verdict == "PASS")
+    /// Both rows' runs are complete and within the lines: PASS once the views are confirmed.
+    pub fn measured(&self) -> bool {
+        self.rows().iter().all(|row| row.measured)
     }
 
     pub fn json(&self) -> String {
@@ -141,7 +141,7 @@ impl Evidence {
         });
         format!(
             "{{\"schema_version\":5,\"tool\":\"mac-resources\",\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"finished\":{},\"environment\":{}{inputs},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":{{\"statistic\":\"median of the valid runs per scenario (USER 2026-11-24)\",\"hard_failure_above_percent\":{}}},\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"rows\":[{rows}],\"scenarios\":[{}]}}\n",
-            if self.passed() {
+            if self.measured() {
                 "SCENARIOS_PASS"
             } else {
                 "INCOMPLETE_OR_FAILED"

@@ -20,7 +20,9 @@ still be off screen at both samples.
 P16-R01: every run valid and within 72/96/128/48 MiB. P16-R02: each scenario's
 median idle CPU over its valid runs at most 0.1% (plan 10's hard failure line;
 USER 2026-11-24). Wake-ups are observations, with no gate.
-Exit 0 means both rows PASS; it is not release readiness.
+Exit 0 means both rows' runs are complete and within the lines. The rows stay
+NOT_TESTED, not PASS, until a way to confirm each scenario's view is decided
+(review F7). It is not release readiness.
 Off macOS, measurement exits non-zero with NOT_TESTED.
 Writes mac-resources.json (schema 5) atomically, with the bundle's manifest and
 executable SHA-256, its input fingerprint, this driver's SHA-256, sw_vers and
