@@ -87,7 +87,7 @@ impl Reading {
 
 /// Whether the median of CPU times scaled by `denom` exceeds the 60 s budget, exactly: the
 /// middle value, or the sum of the two middle ones against twice the budget.
-fn median_over(mut values: Vec<u128>, denom: u128) -> bool {
+pub(super) fn median_over(mut values: Vec<u128>, denom: u128) -> bool {
     values.sort_unstable();
     let budget = BUDGET_NANOSECONDS * denom;
     match values.len() {

@@ -51,9 +51,15 @@ fn r03_on_a_clean_candidate_zip_group_is_not_tested_and_a_fail_beside_it_counts(
     records.push(repacked("FAIL", '1', '8'));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-R03", Verdict::Fail, "a FAIL of P16-R03");
-    // A clean run on the candidate ZIP under another identity does not hide that FAIL (review
-    // round 3, S1).
-    records.push(record("R03", "PASS", '2', &candidate.built, '7'));
+    // A clean run on the candidate ZIP by R's driver in another VM image, a group of its own,
+    // does not hide that FAIL (review round 3, S1).
+    records.push(record_on_image(
+        "R03",
+        "PASS",
+        &format!("sha256:{}", hex('c')),
+        &candidate.built,
+        '7',
+    ));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-R03", Verdict::Fail, "a FAIL of P16-R03");
 }

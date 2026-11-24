@@ -118,6 +118,25 @@ fn a_median_idle_cpu_above_the_hard_line_fails_r02_and_a_single_spike_does_not()
     assert_eq!(with_ticks(1, &|_| AT_THE_LINE, 60.000012).0, "MEASURED");
 }
 
+/// The exact median against the 60 ms budget (in nanoseconds, timebase denominator 1): the
+/// middle value of an odd count, the two middle values' sum against twice the budget for an
+/// even one, as a campaign of six repetitions has.
+#[test]
+fn the_median_is_compared_with_the_budget_exactly() {
+    use super::rows::median_over;
+    let ms = |n: u128| n * 1_000_000;
+    assert!(!median_over(vec![ms(1), ms(60), ms(90)], 1));
+    assert!(median_over(vec![ms(1), ms(60) + 1, ms(90)], 1));
+    // Six runs: 59.9 and 60.1 ms in the middle average to the line, within it; 60 and 60.2 ms
+    // average above it.
+    let six = |a: u128, b: u128| vec![ms(1), ms(2), a, b, ms(90), ms(95)];
+    assert!(!median_over(six(59_900_000, 60_100_000), 1));
+    assert!(median_over(six(ms(60), 60_200_000), 1));
+    // The denominator scales the budget, not the values.
+    assert!(!median_over(vec![ms(60) * 3], 3));
+    assert!(median_over(vec![ms(60) * 3 + 1], 3));
+}
+
 #[test]
 fn a_missing_invalid_or_uncleaned_run_leaves_both_rows_not_tested() {
     let mut short = evidence();

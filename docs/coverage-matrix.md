@@ -10,6 +10,7 @@
   `mac_resources/rows.rs`（R01、R02 从各次运行判定，写证据与登记共用）、`release/macos/ready/judge.rs`（R03 只认候选 ZIP；资源行同 `mac-gui` 行；
   V03 一类 `Comparison`）。跨模型审查的修复（[审查修复报告](report/2026-11-24-m5-producers-review-fixes.md)）另加 `mac_gui/snapshot.rs`
   （R03 的递归快照）、`mac_common/output.rs`（`--out` 守卫）与 `mac_ledger/producers.rs`（各生产者可写的行、R03 的检查表）。
+  第三次复审另把三个工具的输出规则（已有的文件名、`--zip` 在其中、首次运行创建目录）收进 `mac_common/output.rs` 的 `prepare`。
 
 2026-11-24 M5 macOS 就绪核对（[M5 报告](report/2026-11-24-m5-macos-readiness-check.md)）：
 

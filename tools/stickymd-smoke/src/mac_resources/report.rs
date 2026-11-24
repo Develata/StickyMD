@@ -185,7 +185,11 @@ impl Evidence {
                 valid().count(),
                 readable(memory),
                 limit / 1048576,
-                readable(cpu),
+                cpu.map_or_else(
+                    || "unavailable".into(),
+                    // Six decimals, as the rows judge it (review round 3).
+                    |s| format!("{:.6}/{:.6}", s.median, s.max)
+                ),
                 readable(wakeups),
                 readable(idle_wakeups),
                 if model::passed(runs, self.repetitions, *limit) {
