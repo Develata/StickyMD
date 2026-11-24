@@ -86,6 +86,9 @@ pub(in super::super) fn ready_command(
             here.commit, here.worktree_dirty
         ));
     }
+    // R must be one the release authorization can name, before any row is judged, with or
+    // without a candidate (review round 2, SHOULD_FIX 5).
+    super::promote::check_release(root, &release)?;
     let matrix = std::fs::read_to_string(root.join("docs/acceptance-cases/phase-16.md"))
         .map_err(|error| format!("cannot read the Phase 16 matrix: {error}"))?;
     rows::check_against(&crate::governance::phase16_modes(&matrix)?)?;

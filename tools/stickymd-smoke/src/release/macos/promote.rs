@@ -111,7 +111,7 @@ impl Receipt {
 }
 
 /// `release` must be a full SHA contained in `origin/main`, as the release authorization names it.
-fn check_release(root: &Path, release: &str) -> Result<(), String> {
+pub(crate) fn check_release(root: &Path, release: &str) -> Result<(), String> {
     integrity::validate_hex(release, 40, "release commit")?;
     let contained = crate::release::platform_inputs::git(root)
         .args(["merge-base", "--is-ancestor", release, "origin/main"])
@@ -625,6 +625,54 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<Resolved, String> {
             return Err(format!("the staged {name} does not match the receipt"));
         }
     }
+    // The three staged files must also agree with each other, as Promote checked them (review
+    // round 2, finding 1): the checksum file lists exactly the ZIP and the SBOM with the receipt's
+    // digests, and the ZIP itself (not only the extracted copy beside it) holds the receipt's
+    // bundle and executable and passes the package check.
+    let checksums = Platform::MacOsArm64.checksum_file();
+    let sbom_name = Platform::MacOsArm64.sbom_file();
+    let manifest = fs::read_to_string(staging.join(checksums))
+        .map_err(|error| format!("cannot read the staged {checksums}: {error}"))?;
+    integrity::verify_manifest_text(
+        &manifest,
+        &[
+            (zip_name.as_str(), field("zip_sha256")?.as_str()),
+            (sbom_name, field("sbom_sha256")?.as_str()),
+        ],
+    )
+    .map_err(|error| {
+        format!("the staged {checksums} does not list the receipt's files: {error}")
+    })?;
+    crate::release::attachments::check_manifest_names(&manifest, &[&zip_name, sbom_name])?;
+    let packaged = super::package::verify(&staging.join(&zip_name), None, &version)?;
+    for (what, packaged, key) in [
+        (
+            "bundle",
+            packaged.bundle_sha256.as_str(),
+            "app_bundle_manifest_sha256",
+        ),
+        (
+            "executable",
+            packaged.executable_sha256.as_str(),
+            "app_executable_sha256",
+        ),
+        ("product inputs", packaged.app_inputs.as_str(), "app_inputs"),
+        ("signing", packaged.signing, "signing"),
+        (
+            "build source",
+            packaged.source_commit.as_str(),
+            "source_commit",
+        ),
+    ] {
+        if packaged != field(key)? {
+            return Err(format!(
+                "the staged ZIP's {what} is not the receipt's ({packaged})"
+            ));
+        }
+    }
+    let sbom = fs::read_to_string(staging.join(sbom_name))
+        .map_err(|error| format!("cannot read the staged {sbom_name}: {error}"))?;
+    content::validate_sbom(&sbom, &packaged.members)?;
     let app = staging.join(content::APP);
     if crate::mac_common::fixture::bundle_hash(&app)? != field("app_bundle_manifest_sha256")? {
         return Err("the staged bundle does not match the receipt".to_owned());
@@ -834,11 +882,10 @@ mod tests {
         assert!(retaken, "the lock is released when its holder is dropped");
     }
 
-    /// A staged ZIP rebuilt from the `.app` (other archive bytes, same bundle) does not resolve:
-    /// the gate's package class and everything bound to the candidate then fail (plan 11
-    /// #macos-release-gate, the contract's first bad sample).
+    /// A staged ZIP other than the one the receipt names does not resolve: the gate's package
+    /// class and everything bound to the candidate then fail (plan 11 #macos-release-gate).
     #[test]
-    fn a_staged_zip_repacked_from_the_app_does_not_resolve() {
+    fn a_staged_zip_other_than_the_receipt_s_does_not_resolve() {
         let scratch = TemporaryDirectory::new("macos-resolve-repacked").unwrap();
         let root = scratch.path();
         fs::write(
@@ -877,6 +924,48 @@ mod tests {
             "{error}"
         );
         assert_eq!(receipt_present(root), Ok(true));
+    }
+
+    /// Review round 2, finding 1: a ZIP rebuilt from the `.app` with the receipt rewritten to
+    /// name it still fails, because the staged checksum file names the workflow's ZIP.
+    #[test]
+    fn a_receipt_rewritten_for_a_rebuilt_zip_fails_the_checksum_file() {
+        let scratch = TemporaryDirectory::new("macos-resolve-rewritten").unwrap();
+        let root = scratch.path();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace.package]\nversion = \"9.8.7\"\n",
+        )
+        .unwrap();
+        let zip_name = Platform::MacOsArm64.archive_name("9.8.7");
+        let staging = root.join(STAGING);
+        fs::create_dir_all(&staging).unwrap();
+        let digest = |bytes: &[u8]| integrity::sha256_bytes(bytes).unwrap();
+        let rebuilt = b"ditto -c -k of the staged .app";
+        let sums = format!(
+            "{}  {zip_name}\n{}  {}\n",
+            digest(b"the workflow's archive"),
+            digest(b"sbom"),
+            Platform::MacOsArm64.sbom_file()
+        );
+        fs::write(staging.join(&zip_name), rebuilt).unwrap();
+        fs::write(staging.join(Platform::MacOsArm64.checksum_file()), &sums).unwrap();
+        fs::write(staging.join(Platform::MacOsArm64.sbom_file()), b"sbom").unwrap();
+        let hex = "a".repeat(64);
+        let receipt = format!(
+            "{{\"schema_version\":1,\"origin\":\"GITHUB_WORKFLOW_ARTIFACT\",\"platform\":\"macos-arm64\",\"source_commit\":\"{}\",\"version\":\"9.8.7\",\"cargo_lock_sha256\":\"{hex}\",\"build_inputs\":\"{hex}\",\"build_inputs_algorithm\":\"{ALGORITHM}\",\"app_inputs\":\"{hex}\",\"workflow_run_id\":1,\"workflow_attempt\":1,\"artifact_id\":2,\"artifact_name\":\"{ARTIFACT_PREFIX}1\",\"zip_name\":\"{zip_name}\",\"zip_sha256\":\"{}\",\"checksums_sha256\":\"{}\",\"sbom_sha256\":\"{}\",\"app_executable_sha256\":\"{hex}\",\"app_bundle_manifest_sha256\":\"{hex}\",\"target\":\"aarch64-apple-darwin\",\"signing\":\"AD_HOC\"}}\n",
+            "1".repeat(40),
+            digest(rebuilt),
+            digest(sums.as_bytes()),
+            digest(b"sbom"),
+        );
+        fs::create_dir_all(root.join("dist/evidence")).unwrap();
+        fs::write(root.join(RECEIPT), receipt).unwrap();
+        let error = resolve(root, &"1".repeat(40)).err().unwrap();
+        assert!(
+            error.contains("does not list the receipt's files"),
+            "{error}"
+        );
     }
 
     #[test]

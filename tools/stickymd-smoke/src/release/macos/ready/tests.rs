@@ -191,10 +191,10 @@ fn good_inputs_pass_every_row_that_has_an_evidence_source() {
     assert!(ready(&held));
 }
 
-/// Contract sample: the evidence of a ZIP rebuilt from the `.app` is not the release ZIP, even
-/// when the bundle inside is byte-identical.
+/// Contract sample (on this branch): an R03 PASS on the candidate's bundle names no ZIP, so it is
+/// not evidence of the release ZIP; the probe that opens the candidate ZIP is #24's.
 #[test]
-fn a_zip_repacked_from_the_app_is_not_r03_evidence() {
+fn an_r03_pass_without_the_candidate_zip_is_not_evidence() {
     let candidate = candidate();
     let lines = run(Read::Present(&candidate), &ledger(), &receipt());
     assert_line(
@@ -861,4 +861,20 @@ fn the_download_path_needs_its_outcomes_and_the_checked_major_version() {
         Verdict::NotTested,
         "checked on macOS 28",
     );
+}
+
+/// Review round 2, SHOULD_FIX 8: each byte identity alone decides; another executable in the
+/// candidate's bundle digest does not count either.
+#[test]
+fn another_executable_alone_does_not_count() {
+    let candidate = candidate();
+    let other = Built {
+        executable: hex('0'),
+        bundle: candidate.built.bundle.clone(),
+    };
+    let mut records = ledger();
+    records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "K02"));
+    records.push(record_on("K02", &other));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-K02", Verdict::NotTested, "no PASS of P16-K02");
 }
