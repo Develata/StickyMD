@@ -405,6 +405,180 @@ fn an_image_placed_at_the_end_of_a_long_paragraph_uses_actual_bytes_or_falls_bac
     }
 }
 
+/// Two files by name: `inspect` answers from the probe bytes, `load` from the actual bytes and
+/// counts reads per destination.
+struct PerFile {
+    probe: Vec<(&'static str, Vec<u8>)>,
+    actual: Vec<(&'static str, Vec<u8>)>,
+    loads: RefCell<Vec<(String, usize)>>,
+}
+
+impl PerFile {
+    fn new(files: &[(&'static str, Vec<u8>, Vec<u8>)]) -> Self {
+        Self {
+            probe: files.iter().map(|(n, p, _)| (*n, p.clone())).collect(),
+            actual: files.iter().map(|(n, _, a)| (*n, a.clone())).collect(),
+            loads: RefCell::default(),
+        }
+    }
+
+    fn loads_of(&self, name: &str) -> usize {
+        self.loads
+            .borrow()
+            .iter()
+            .find_map(|(n, count)| (n == name).then_some(*count))
+            .unwrap_or(0)
+    }
+}
+
+fn bytes_of<'a>(files: &'a [(&'static str, Vec<u8>)], name: &str) -> Option<&'a Vec<u8>> {
+    files
+        .iter()
+        .find_map(|(n, bytes)| (*n == name).then_some(bytes))
+}
+
+impl PreviewImageSource for PerFile {
+    fn inspect(&self, name: &str) -> Result<Option<crate::image::ImageMetadata>, String> {
+        bytes_of(&self.probe, name)
+            .map(|bytes| crate::image::inspect_encoded_image(bytes).map_err(|e| e.to_string()))
+            .transpose()
+    }
+
+    fn load(&self, name: &str) -> Result<Option<Vec<u8>>, String> {
+        let mut loads = self.loads.borrow_mut();
+        match loads.iter_mut().find(|(n, _)| n == name) {
+            Some((_, count)) => *count += 1,
+            None => loads.push((name.to_owned(), 1)),
+        }
+        Ok(bytes_of(&self.actual, name).cloned())
+    }
+}
+
+/// `(top y, width, height, raster held)` of every image of the first block, in layout order.
+fn images_of(pipeline: &PreviewPipeline) -> Vec<(f32, u32, u32, bool)> {
+    pipeline.layout.as_ref().unwrap().blocks[0]
+        .chunks
+        .iter()
+        .filter_map(|chunk| match &chunk.content {
+            super::super::layout::LayoutContent::Image(image) => {
+                Some((chunk.y, image.width, image.height, image.raster.is_some()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn build_at(
+    pipeline: &mut PreviewPipeline,
+    text: &str,
+    (width, height): (u32, u32),
+    scroll_y: f32,
+    images: &dyn PreviewImageSource,
+) {
+    pipeline
+        .build_with_image_source(
+            &DocumentSnapshot {
+                text: Arc::from(text),
+                generation: Generation::initial(),
+                line_ending: LineEnding::Lf,
+            },
+            width,
+            height,
+            1.0,
+            scroll_y,
+            PreviewSelection::default(),
+            PreviewTheme::Light,
+            Some(images),
+        )
+        .unwrap();
+}
+
+/// When an earlier image turns out taller than probed, a later one is not read at the position
+/// the stale lines gave it: the lines are placed again first, and it ends outside the band.
+#[test]
+fn a_later_image_is_not_read_at_a_position_an_earlier_resize_invalidated() {
+    let small = image_bytes(16, 16, 120);
+    let tall = image_bytes(16, 96, 120);
+    let text = |k: usize| format!("![a](a.png)\\\n{}![b](b.png)", "t\\\n".repeat(k));
+    // A line count that puts B's probed top just inside the band's lower edge (0..300 + 300).
+    let k = (0..60)
+        .find(|&k| {
+            let consistent = PerFile::new(&[
+                ("a.png", small.clone(), small.clone()),
+                ("b.png", small.clone(), small.clone()),
+            ]);
+            let mut pipeline = PreviewPipeline::new();
+            build_at(&mut pipeline, &text(k), (400, 300), 0.0, &consistent);
+            images_of(&pipeline)
+                .get(1)
+                .is_some_and(|b| (560.0..=600.0).contains(&b.0))
+        })
+        .expect("a line count that puts B at the band edge");
+    let files = PerFile::new(&[
+        ("a.png", small.clone(), tall),
+        ("b.png", small.clone(), small),
+    ]);
+    let mut pipeline = PreviewPipeline::new();
+    build_at(&mut pipeline, &text(k), (400, 300), 0.0, &files);
+    let images = images_of(&pipeline);
+    assert_eq!(
+        images[0].1..=images[0].2,
+        16..=96,
+        "A is laid out at its actual size"
+    );
+    assert!(images[1].0 > 600.0, "B ends below the band: {images:?}");
+    assert!(!images[1].3, "and holds no raster");
+    assert_eq!(files.loads_of("a.png"), 1, "A is read once");
+    assert_eq!(files.loads_of("b.png"), 0, "B is never read");
+}
+
+/// An image that ends outside the band after a re-placement does not keep a cache lease that
+/// would refuse the visible one: with room for one raster, the visible image is drawn.
+#[test]
+fn an_image_that_leaves_the_band_does_not_block_the_visible_one() {
+    let tall = image_bytes(16, 100, 120);
+    let small = image_bytes(16, 16, 120);
+    // A different file, so B cannot share A's cache entry.
+    let other = image_bytes(16, 16, 60);
+    let mut text = String::from("![a](a.png)\\\nt\\\nt\\\n![b](b.png)");
+    text.push_str(&"\\\nt".repeat(40));
+    let files = PerFile::new(&[
+        ("a.png", tall, small.clone()),
+        ("b.png", other.clone(), other),
+    ]);
+    let budget = 16 * 16 * 4 + crate::image::IMAGE_CACHE_ENTRY_OVERHEAD_BYTES;
+    let mut pipeline = PreviewPipeline::new();
+    pipeline.image_cache = DecodedImageCache::new(budget);
+    // The band starts at 380 - 300: A's probed bottom (124) is inside it, its real one (40) is not.
+    build_at(&mut pipeline, &text, (400, 300), 380.0, &files);
+    let images = images_of(&pipeline);
+    assert_eq!(
+        images.len(),
+        2,
+        "both are images, not text fallbacks: {images:?}"
+    );
+    assert!(!images[0].3, "A is off the band");
+    assert!(images[1].3, "B is in the band and drawn: {images:?}");
+}
+
+/// A file that is exactly what was probed lays out in one pass at the fitted size: fitting the
+/// original size once gives 101 x 50, not the 100 x 50 that fitting the fitted size gives.
+#[test]
+fn a_stable_image_is_fitted_once() {
+    let wide = image_bytes(200, 100, 120);
+    let files = PerFile::new(&[("a.png", wide.clone(), wide)]);
+    let mut pipeline = PreviewPipeline::new();
+    // 149 px wide leaves a 101 px column; the four-line cap is 105 px.
+    build_at(&mut pipeline, "![a](a.png)", (149, 300), 0.0, &files);
+    assert_eq!(
+        images_of(&pipeline)
+            .iter()
+            .map(|i| (i.1, i.2, i.3))
+            .collect::<Vec<_>>(),
+        [(101, 50, true)]
+    );
+}
+
 #[test]
 fn phase7_image_band_drops_old_raster_leases_before_cache_admission() {
     let images = Images::new();

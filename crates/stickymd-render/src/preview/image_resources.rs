@@ -27,8 +27,9 @@ pub(super) struct LaidOutImage {
 pub(super) enum Admission {
     /// Dimensions as probed; the raster is held if the image is in the band.
     Settled,
-    /// The bytes decode to other dimensions than probed.
-    Resized(Arc<DecodedImageRaster>),
+    /// The bytes decode to other dimensions than probed. The raster stays in the cache; only
+    /// its size is kept, so an image that ends off the band holds nothing.
+    Resized { width: u32, height: u32 },
     /// The bytes cannot be read or decoded: the image falls back to text.
     Failed,
 }
@@ -87,27 +88,17 @@ impl LaidOutImage {
         )))
     }
 
-    /// A slot whose bytes a previous placement already decoded: the actual dimensions, with the
-    /// raster held until the final position says whether it stays in the band.
-    pub fn decoded(
+    /// A slot of the actual decoded size, found by a previous placement: no raster is held; the
+    /// final position decides whether to load it again (a cache hit while it stays resident).
+    pub fn sized(
         image: &RenderImage,
         max_width: u32,
         max_height: u32,
-        raster: Arc<DecodedImageRaster>,
+        width: u32,
+        height: u32,
     ) -> Option<Box<Self>> {
-        if !is_local(image) {
-            return None;
-        }
-        let mut slot = Self::new(
-            image,
-            max_width,
-            max_height,
-            0.0,
-            raster.width,
-            raster.height,
-        );
-        slot.raster = Some(raster);
-        Some(Box::new(slot))
+        is_local(image)
+            .then(|| Box::new(Self::new(image, max_width, max_height, 0.0, width, height)))
     }
 
     fn new(
@@ -153,7 +144,10 @@ impl LaidOutImage {
             }
             // The file changed between the probe and the read: the layout must use the actual
             // dimensions, as a first load in the band does.
-            Some(raster) => Admission::Resized(raster),
+            Some(raster) => Admission::Resized {
+                width: raster.width,
+                height: raster.height,
+            },
             None => Admission::Failed,
         }
     }

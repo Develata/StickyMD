@@ -2,11 +2,12 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#ratex-native-math
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use cosmic_text::{Align, FontSystem, Metrics};
 
-use crate::image::{DecodedImageCache, DecodedImageRaster};
+use crate::image::DecodedImageCache;
 use crate::math::{MAX_DOCUMENT_FORMULAS, MathEngine, MathError, MathKind, MathMetrics};
 use crate::source::FontSelection;
 
@@ -40,7 +41,7 @@ pub(super) struct LaidOutMath {
 /// What final admission decided about an image span, fixed for the next layout pass.
 enum ImageFate {
     /// The bytes decode to these dimensions: lay the image out at them.
-    Loaded(Arc<DecodedImageRaster>),
+    Sized { width: u32, height: u32 },
     /// The bytes cannot be read or decoded: the span falls back to text.
     Failed,
 }
@@ -48,8 +49,9 @@ enum ImageFate {
 /// Lays the spans out. An inline image is probed for its size while the pieces are built and
 /// admitted (read, decoded) only at its final position, after its line is placed. When that
 /// shows other dimensions or a failure, the chunk is laid out again with the image's fate fixed,
-/// from the same starting selection state; each pass fixes at least one more image, so the loop
-/// ends.
+/// from the same starting selection state. The first image whose admission changes the geometry
+/// ends the pass, since every position after it is stale: later images are decided only on the
+/// re-placed lines. Each pass fixes one more image, so the loop ends.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_mixed_chunk(
     font_system: &mut FontSystem,
@@ -72,7 +74,7 @@ pub(super) fn make_mixed_chunk(
 ) -> ChunkBuild {
     let mark = selection_text.checkpoint();
     let formulas_before = *formula_count;
-    let mut fates: Vec<(usize, ImageFate)> = Vec::new();
+    let mut fates: HashMap<usize, ImageFate> = HashMap::new();
     loop {
         let (built, pending) = layout_mixed(
             font_system,
@@ -122,7 +124,7 @@ fn layout_mixed(
     image_band: (f32, f32),
     text_layout_cache: &mut TextLayoutCache,
     embedded_math: bool,
-    fates: &[(usize, ImageFate)],
+    fates: &HashMap<usize, ImageFate>,
 ) -> (ChunkBuild, Vec<(usize, ImageFate)>) {
     let mut image_spans = Vec::new();
     let mut pieces = Vec::new();
@@ -242,9 +244,7 @@ fn layout_mixed(
                 max_text_piece_chars,
                 text_layout_cache,
             );
-            let fate = fates
-                .iter()
-                .find_map(|(span_index, fate)| (*span_index == index).then_some(fate));
+            let fate = fates.get(&index);
             if let Some(piece) = image_piece(
                 span,
                 width,
@@ -302,10 +302,18 @@ fn layout_mixed(
             let Some(&span_index) = spans_of_images.next() else {
                 break;
             };
+            // The first change invalidates every position after it: stop admitting at these
+            // coordinates, lay the lines out again, and decide the later images there.
             match image.admit(chunk.y, image_band, requests, image_cache) {
                 Admission::Settled => {}
-                Admission::Resized(raster) => pending.push((span_index, ImageFate::Loaded(raster))),
-                Admission::Failed => pending.push((span_index, ImageFate::Failed)),
+                Admission::Resized { width, height } => {
+                    pending.push((span_index, ImageFate::Sized { width, height }));
+                    break;
+                }
+                Admission::Failed => {
+                    pending.push((span_index, ImageFate::Failed));
+                    break;
+                }
             }
         }
     }
@@ -331,8 +339,8 @@ fn image_piece(
     let max_height = (metrics.line_height * 4.0).floor().max(1.0) as u32;
     let slot = match fate {
         Some(ImageFate::Failed) => return None,
-        Some(ImageFate::Loaded(raster)) => {
-            LaidOutImage::decoded(image, max_width, max_height, Arc::clone(raster))?
+        Some(&ImageFate::Sized { width, height }) => {
+            LaidOutImage::sized(image, max_width, max_height, width, height)?
         }
         None => LaidOutImage::probe(image, max_width, max_height, image_source)?,
     };
