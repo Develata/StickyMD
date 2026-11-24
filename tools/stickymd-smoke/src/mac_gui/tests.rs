@@ -1363,72 +1363,124 @@ fn translocation_checks_refuse_bad_samples() {
             after: vec!["StickyMD.app".into(), "StickyMD.zip".into(), "note".into()],
             ..good()
         },
+        // Written beside the package and then stuck: the driver ended it (review round 3).
+        Observed {
+            exited: Some(false),
+            termination: None,
+            after: vec!["StickyMD.app".into(), "StickyMD.zip".into(), "note".into()],
+            ..good()
+        },
     ] {
         let (v, row) = verdict(bad);
         assert_eq!(v, Verdict::Fail, "{}", row.json());
     }
-    // Cannot tell: no preset attribute, no translocation, no prompt window while running.
-    for unknown in [
-        Observed {
-            quarantine: Some("0083;6afec4a5;Safari;".into()),
-            ..good()
-        },
-        Observed {
-            path: Some("/tmp/download/StickyMD.app/Contents/MacOS/StickyMD".into()),
-            ..good()
-        },
-        Observed {
-            mount: None,
-            ..good()
-        },
-        Observed {
-            window: None,
-            exited: None,
-            ..good()
-        },
+    // Cannot tell: no preset attribute, no translocation, no prompt window while running. Each
+    // sample leaves the check it targets untested, which a good run passes (review round 3: the
+    // whole row is untested anyway while "nothing written" is).
+    use super::translocation::{EXITS, PRESET, PROMPTED, STATUS, TRANSLOCATED};
+    let (_, good_row) = verdict(good());
+    for target in [PRESET, TRANSLOCATED, PROMPTED, EXITS, STATUS] {
+        assert!(
+            good_row
+                .checks
+                .iter()
+                .any(|c| c.name == target && c.verdict == Verdict::Pass),
+            "{target}"
+        );
+    }
+    for (unknown, target) in [
+        (
+            Observed {
+                quarantine: Some("0083;6afec4a5;Safari;".into()),
+                ..good()
+            },
+            PRESET,
+        ),
+        (
+            Observed {
+                path: Some("/tmp/download/StickyMD.app/Contents/MacOS/StickyMD".into()),
+                ..good()
+            },
+            TRANSLOCATED,
+        ),
+        (
+            Observed {
+                mount: None,
+                ..good()
+            },
+            TRANSLOCATED,
+        ),
+        (
+            Observed {
+                window: None,
+                exited: None,
+                ..good()
+            },
+            PROMPTED,
+        ),
         // The prompt in words this driver does not know.
-        Observed {
-            stderr: "当前目录不可写，请换个地方。\n\ncannot create a file: Read-only file system \
-                     (os error 30)\n"
-                .into(),
-            ..good()
-        },
+        (
+            Observed {
+                stderr: "当前目录不可写，请换个地方。\n\ncannot create a file: Read-only file system \
+                         (os error 30)\n"
+                    .into(),
+                ..good()
+            },
+            PROMPTED,
+        ),
         // Seen but not answered: the process went, or the window did, before Return.
-        Observed {
-            unanswered: Some("the process ended before Return was posted".into()),
-            exited: None,
-            termination: None,
-            ..good()
-        },
+        (
+            Observed {
+                unanswered: Some("the process ended before Return was posted".into()),
+                exited: None,
+                termination: None,
+                ..good()
+            },
+            EXITS,
+        ),
         // Still running after Return: with no receipt of which window took the key, not a
         // refusal to exit.
-        Observed {
-            exited: Some(false),
-            termination: None,
-            ..good()
-        },
+        (
+            Observed {
+                exited: Some(false),
+                termination: None,
+                ..good()
+            },
+            EXITS,
+        ),
         // A process outside this copy's translocation mount is not the one started.
-        Observed {
-            path: Some(
-                "/private/var/folders/x/T/AppTranslocation/OTHER/d/StickyMD.app/Contents/MacOS/StickyMD"
-                    .into(),
-            ),
-            ..good()
-        },
+        (
+            Observed {
+                path: Some(
+                    "/private/var/folders/x/T/AppTranslocation/OTHER/d/StickyMD.app/Contents/MacOS/StickyMD"
+                        .into(),
+                ),
+                ..good()
+            },
+            TRANSLOCATED,
+        ),
         // The prompt window seen but its stderr unreadable: its words are unknown.
-        Observed {
-            stderr: String::new(),
-            stderr_unreadable: Some("stderr.log: permission denied".into()),
-            ..good()
-        },
+        (
+            Observed {
+                stderr: String::new(),
+                stderr_unreadable: Some("stderr.log: permission denied".into()),
+                ..good()
+            },
+            PROMPTED,
+        ),
         // Answered and gone, but no termination record in the log.
-        Observed {
-            termination: None,
-            ..good()
-        },
+        (
+            Observed {
+                termination: None,
+                ..good()
+            },
+            STATUS,
+        ),
     ] {
         let (v, row) = verdict(unknown);
         assert_eq!(v, Verdict::NotTested, "{}", row.json());
+        let check = row.checks.iter().find(|c| c.name == target).unwrap();
+        assert_eq!(check.verdict, Verdict::NotTested, "{target}: {}", row.json());
     }
     // The advices are the product's own words (main.rs now, paths.rs after Phase 18), and the
     // generic one never reads as the move advice.

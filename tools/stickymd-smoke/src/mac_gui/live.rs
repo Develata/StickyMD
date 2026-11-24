@@ -79,6 +79,26 @@ pub(super) fn command_within(
     args: &[&str],
     limit: Duration,
 ) -> Result<String, String> {
+    match output_within(program, args, limit)? {
+        (Some(0), text, _) => Ok(text),
+        (code, _, error) => Err(format!("{program}: exit {code:?}: {error}")),
+    }
+}
+
+/// A helper's exit code (`None` when a signal ended it), stdout and stderr, for a caller that
+/// must tell an answer ("no such process") from a failure of the query itself (review round 3).
+pub(super) fn output(
+    program: &str,
+    args: &[&str],
+) -> Result<(Option<i32>, String, String), String> {
+    output_within(program, args, Duration::from_secs(10))
+}
+
+fn output_within(
+    program: &str,
+    args: &[&str],
+    limit: Duration,
+) -> Result<(Option<i32>, String, String), String> {
     // Reuse the same owned child/timeout/identity cleanup for helper processes too.
     let mut session = Session::new()?;
     let stdout = session.path().join("stdout");
@@ -106,11 +126,7 @@ pub(super) fn command_within(
     let text = fs::read_to_string(stdout).map_err(|e| e.to_string())?;
     let error = fs::read_to_string(stderr).map_err(|e| e.to_string())?;
     session.cleanup()?;
-    if status.success() {
-        Ok(text)
-    } else {
-        Err(format!("{program}: {status}: {error}"))
-    }
+    Ok((status.code(), text, error))
 }
 impl Live<'_> {
     /// I03's control: a scratch document in a TextEdit instance of its own (`open -n`), held as

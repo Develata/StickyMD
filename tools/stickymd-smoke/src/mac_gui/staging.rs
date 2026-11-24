@@ -328,7 +328,10 @@ mod live {
                 staged.zip_sha256.as_deref(),
                 Some(candidate.sha256.as_str())
             );
-            for file in [&staged.copy, &staged.watched.join("README.txt")] {
+            // The downloaded ZIP itself is marked first, as a browser leaves it, then what it
+            // held (review round 3: the archive's own attribute was not observed).
+            let archive = download.join("StickyMD-0.0.0-macos-arm64-portable.zip");
+            for file in [&archive, &staged.copy, &staged.watched.join("README.txt")] {
                 let read = run(
                     "/usr/bin/xattr",
                     &["-p", "com.apple.quarantine", &text(file)],
