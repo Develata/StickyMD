@@ -24,11 +24,14 @@ pub(super) const HELP: &str =
           of a row under an identity stops reuse of that row under it.
   receipt --app <StickyMD.app> --rows <ids> --quote <the USER's words> [--batch <name>]
           Appends a USER receipt per Manual row for the app's product inputs on this desktop.
-  receipt --release-source <R> --rows <ids> --quote <the USER's words> [--batch <name>] [--system <file>]
-          Appends a release receipt per row, bound to the promoted macOS candidate the resolver
-          returns for R: a Manual Phase 16 row, or a download path P18-D01..P18-D05 (these need
-          --system, the sw_vers output of the system the path was walked on).
-  waive   --release-source <R> --rows <ids> --quote <the USER's words> [--batch <name>]
+  receipt --release-source <R> --candidate-sha256 <digest> --rows <ids> --quote <the USER's words> [--batch <name>] [--system <file>] [--outcome <result>]
+          Appends a release receipt per row, bound to the promoted macOS candidate the USER
+          checked: <digest> is what `release macos-candidate` printed then, and must still be
+          the candidate the resolver returns for R. Rows: a Manual Phase 16 row, or a download
+          path P18-D01..P18-D05 (these need --system, the sw_vers output of the system the path
+          was walked on; P18-D04 and P18-D05 also need --outcome, one row at a time:
+          D04 gatekeeper-blocked|translocated-prompt-exit|portable-start, D05 blocked|not-blocked).
+  waive   --release-source <R> --candidate-sha256 <digest> --rows <ids> --quote <the USER's words> [--batch <name>]
           Appends the USER's waiver per row for that candidate. Only rows the release gate lets
           the USER waive are accepted; a waiver never stands for a FAIL.
   revoke  --rows <id> (--evidence-sha256 <digest> | --app <StickyMD.app> | --release-source <R>) --quote <the USER's words>
@@ -77,7 +80,9 @@ impl Command {
                 "--ledger",
                 "--app",
                 "--release-source",
+                "--candidate-sha256",
                 "--system",
+                "--outcome",
                 "--rows",
                 "--quote",
                 "--batch",
@@ -85,6 +90,7 @@ impl Command {
             Self::Waive => &[
                 "--ledger",
                 "--release-source",
+                "--candidate-sha256",
                 "--rows",
                 "--quote",
                 "--batch",
@@ -116,6 +122,10 @@ pub(crate) struct Options {
     pub batch: Option<String>,
     /// The release commit R whose promoted candidate a release record is bound to.
     pub release: Option<String>,
+    /// The candidate receipt digest the USER checked, lowercased (decision (c)).
+    pub candidate_sha256: Option<String>,
+    /// The observed result of P18-D04 or P18-D05 (decision (b)).
+    pub outcome: Option<String>,
     pub rows: Vec<String>,
     pub quote: Option<String>,
     pub help: bool,
@@ -192,6 +202,8 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
             }
             "--quote" => result.quote = Some(value.clone()),
             "--release-source" => result.release = Some(value.to_ascii_lowercase()),
+            "--candidate-sha256" => result.candidate_sha256 = Some(value.to_ascii_lowercase()),
+            "--outcome" => result.outcome = Some(value.clone()),
             "--rows" => {
                 for id in value.split(',') {
                     let id = id.trim();
@@ -231,8 +243,11 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
             if result.app.is_some() == result.release.is_some() {
                 return Err(missing("exactly one of --app and --release-source"));
             }
-            if result.system.is_some() && result.release.is_none() {
-                return Err(missing("--release-source with --system"));
+            if (result.system.is_some() || result.outcome.is_some()) && result.release.is_none() {
+                return Err(missing("--release-source with --system or --outcome"));
+            }
+            if result.release.is_some() && result.candidate_sha256.is_none() {
+                return Err(missing("--candidate-sha256 with --release-source"));
             }
             if result.rows.is_empty() {
                 return Err(missing("--rows"));
@@ -244,6 +259,10 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
                 .release
                 .as_ref()
                 .ok_or_else(|| missing("--release-source"))?;
+            result
+                .candidate_sha256
+                .as_ref()
+                .ok_or_else(|| missing("--candidate-sha256"))?;
             if result.rows.is_empty() {
                 return Err(missing("--rows"));
             }

@@ -54,7 +54,9 @@ pub(super) fn recorded(options: &Options) -> Result<Vec<Record>, String> {
 }
 
 /// The promoted candidate for `--release-source`, resolved and checked against R as the gate
-/// resolves it (plan 11 #macos-readiness-check); a record names its receipt's digest.
+/// resolves it (plan 11 #macos-readiness-check); a record names its receipt's digest. With
+/// `--candidate-sha256` (required for receipts and waivers, decision (c)) the candidate must
+/// still be the one the USER checked, or nothing is recorded.
 fn candidate(
     options: &Options,
     root: &Path,
@@ -63,8 +65,17 @@ fn candidate(
         .release
         .as_deref()
         .ok_or("--release-source missing")?;
-    crate::release::macos::promote::resolve(root, release)
-        .map_err(|e| format!("the macOS candidate for {release} does not resolve: {e}"))
+    let resolved = crate::release::macos::promote::resolve(root, release)
+        .map_err(|e| format!("the macOS candidate for {release} does not resolve: {e}"))?;
+    if let Some(checked) = &options.candidate_sha256
+        && *checked != resolved.receipt_sha256
+    {
+        return Err(format!(
+            "the candidate for {release} is now {}, not {checked}, the one named as checked; record against the candidate actually checked",
+            resolved.receipt_sha256
+        ));
+    }
+    Ok(resolved)
 }
 
 fn release_record(
@@ -108,6 +119,18 @@ fn release_receipts(options: &Options, rows: &Rows, root: &Path) -> Result<Vec<R
         .cloned()
         .collect();
     manual_rows(&p16, rows)?;
+    // An outcome belongs to exactly one row that records one (decision (b)).
+    let with_outcome: Vec<&String> = options
+        .rows
+        .iter()
+        .filter(|row| super::release::outcomes(row).is_some())
+        .collect();
+    match (with_outcome.as_slice(), &options.outcome) {
+        ([], None) | ([_], Some(_)) => {}
+        ([], Some(_)) => return Err("--outcome is only for P18-D04 or P18-D05".into()),
+        (_, None) => return Err("P18-D04 and P18-D05 need --outcome".into()),
+        (_, Some(_)) => return Err("record P18-D04 and P18-D05 one at a time".into()),
+    }
     let resolved = candidate(options, root)?;
     let environment = desktop()?;
     let recorded_unix = now()?;
@@ -119,6 +142,7 @@ fn release_receipts(options: &Options, rows: &Rows, root: &Path) -> Result<Vec<R
                 Some(system) if is_download(row) => ReleaseKind::Download {
                     signing: resolved.signing.clone(),
                     system: system.clone(),
+                    outcome: super::release::outcomes(row).and(options.outcome.clone()),
                 },
                 _ => ReleaseKind::Receipt,
             };

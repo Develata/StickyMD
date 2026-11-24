@@ -69,6 +69,7 @@ pub(in super::super) fn ready_command(
     root: &Path,
     release: &str,
     batch: Option<&str>,
+    macos_major: u32,
 ) -> Result<(), String> {
     use judge::Read;
     crate::integrity::validate_hex(release, 40, "release commit")?;
@@ -148,6 +149,7 @@ pub(in super::super) fn ready_command(
     let inputs = judge::Inputs {
         release: &release,
         batch,
+        macos_major,
         candidate: borrow(&candidate),
         ledger: match &ledger {
             Read::Present(records) => Read::Present(records.as_slice()),

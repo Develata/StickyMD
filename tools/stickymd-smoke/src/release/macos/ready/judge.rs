@@ -32,6 +32,8 @@ pub(super) enum Read<T> {
 pub(super) struct Inputs<'a> {
     pub release: &'a str,
     pub batch: Option<&'a str>,
+    /// The macOS major version this release's download paths must have run on (decision (b)).
+    pub macos_major: u32,
     pub candidate: Read<&'a Candidate>,
     pub ledger: Read<&'a [Record]>,
     pub source_tests: Read<&'a source_tests::Receipt>,
@@ -248,9 +250,11 @@ fn manual(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
 }
 
 /// The real download path holds when each of P18-D01-D05 has the USER's record for this
-/// candidate, every record names the candidate's signing, and all five ran on one macOS major
-/// version. It cannot be waived for the first public package; a record of another candidate does
-/// not count (plan 11 #macos-readiness-check).
+/// candidate, every record names the candidate's signing and ran on the macOS major version the
+/// gate is told to check (`--macos-major`), and P18-D04 and P18-D05 record their observed outcome
+/// (USER 2026-11-24, decision (b)). A record without that outcome has no path to PASS; a record of
+/// another candidate does not count, and it cannot be waived for the first public package
+/// (plan 11 #macos-readiness-check).
 fn download(inputs: &Inputs<'_>) -> Line {
     let item = "download-path";
     let (records, candidate) = match evidence(inputs, item) {
@@ -270,8 +274,7 @@ fn download(inputs: &Inputs<'_>) -> Line {
             );
         }
     };
-    let mut majors = Vec::new();
-    for (row, signing, system) in &found {
+    for (row, signing, system, outcome) in &found {
         if *signing != candidate.signing {
             return line(
                 item,
@@ -283,7 +286,17 @@ fn download(inputs: &Inputs<'_>) -> Line {
             );
         }
         match receipts::major_version(system) {
-            Some(major) => majors.push(major),
+            Some(major) if major == inputs.macos_major => {}
+            Some(major) => {
+                return line(
+                    item,
+                    Verdict::NotTested,
+                    format!(
+                        "{row} ran on macOS {major}, the release is checked on macOS {}",
+                        inputs.macos_major
+                    ),
+                );
+            }
             None => {
                 return line(
                     item,
@@ -292,21 +305,28 @@ fn download(inputs: &Inputs<'_>) -> Line {
                 );
             }
         }
+        let wanted = crate::mac_ledger::release::outcomes(row);
+        let recorded = match (wanted, outcome) {
+            (None, None) => true,
+            (Some(allowed), Some(found)) => allowed.contains(found),
+            _ => false,
+        };
+        if !recorded {
+            return line(
+                item,
+                Verdict::NotTested,
+                format!("{row} records no valid outcome ({outcome:?})"),
+            );
+        }
     }
-    majors.sort_unstable();
-    majors.dedup();
-    match majors.as_slice() {
-        [major] => line(
-            item,
-            Verdict::Pass,
-            format!("P18-D01-D05 recorded by the USER for this candidate on macOS {major}"),
+    line(
+        item,
+        Verdict::Pass,
+        format!(
+            "P18-D01-D05 recorded by the USER for this candidate on macOS {}",
+            inputs.macos_major
         ),
-        _ => line(
-            item,
-            Verdict::NotTested,
-            format!("the five paths ran on different macOS major versions {majors:?}"),
-        ),
-    }
+    )
 }
 
 /// The ledger and candidate both present, or the line saying which is not.

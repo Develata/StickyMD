@@ -131,6 +131,7 @@ fn run(candidate: Read<&Candidate>, records: &[Record], tests: &Receipt) -> Vec<
     judge(&Inputs {
         release: R,
         batch: Some("rc1"),
+        macos_major: 27,
         candidate,
         ledger: Read::Present(records),
         source_tests: Read::Present(tests),
@@ -320,6 +321,7 @@ fn r03_counts_only_this_batch_and_a_fail_on_these_bytes_blocks() {
     let lines = judge(&Inputs {
         release: R,
         batch: None,
+        macos_major: 27,
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&records),
         source_tests: Read::Present(&receipt()),
@@ -370,6 +372,7 @@ fn the_source_rows_follow_the_receipt_on_r() {
     let lines = judge(&Inputs {
         release: R,
         batch: Some("rc1"),
+        macos_major: 27,
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Missing("no source-test receipt".into()),
@@ -390,6 +393,7 @@ fn an_unreadable_ledger_leaves_the_ledger_rows_open() {
     let lines = judge(&Inputs {
         release: R,
         batch: Some("rc1"),
+        macos_major: 27,
         candidate: Read::Present(&candidate),
         ledger: Read::Invalid("the ledger is unreadable: line 3".into()),
         source_tests: Read::Present(&receipt),
@@ -416,6 +420,7 @@ fn download(row: &str, candidate: &str) -> Record {
         ReleaseKind::Download {
             signing: "AD_HOC".into(),
             system: "ProductName: macOS ProductVersion: 27.2".into(),
+            outcome: crate::mac_ledger::release::outcomes(row).map(|o| o[0].to_owned()),
         },
         row,
         candidate,
@@ -647,6 +652,7 @@ fn download_records_must_match_the_signing_and_one_major_version() {
             ReleaseKind::Download {
                 signing: signing.into(),
                 system: format!("ProductName: macOS ProductVersion: {version}"),
+                outcome: crate::mac_ledger::release::outcomes(row).map(|o| o[0].to_owned()),
             },
             row,
             &digest,
@@ -666,7 +672,7 @@ fn download_records_must_match_the_signing_and_one_major_version() {
         &lines,
         "download-path",
         Verdict::NotTested,
-        "different macOS major",
+        "ran on macOS 28",
     );
     records.push(with("P18-D02", "AD_HOC", "unknown"));
     let lines = run(Read::Present(&candidate), &records, &receipt());
@@ -695,6 +701,7 @@ fn without_r_s_target_list_the_source_rows_stay_open() {
     let lines = judge(&Inputs {
         release: R,
         batch: Some("rc1"),
+        macos_major: 27,
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Present(&receipt),
@@ -809,4 +816,49 @@ fn a_resource_row_fail_alone_is_a_fail() {
     records.push(record("R01", "FAIL", '1', &candidate.built, '8'));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-R01", Verdict::Fail, "a FAIL of P16-R01");
+}
+
+/// Review round 2, finding 4, and decision (b): a download path whose D04 or D05 result is not
+/// recorded has no path to PASS, and all five rows must have run on the major version checked.
+#[test]
+fn the_download_path_needs_its_outcomes_and_the_checked_major_version() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = ledger();
+    records.extend(DOWNLOAD_ROWS.map(|row| download(row, &digest)));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "download-path", Verdict::Pass, "macOS 27");
+    // The same five rows without the D05 outcome (a line written before decision (b)).
+    let mut silent = records.clone();
+    if let Some(Record::Release(release)) = silent
+        .iter_mut()
+        .rev()
+        .find(|r| matches!(r, Record::Release(x) if x.row == "P18-D05"))
+        && let ReleaseKind::Download { outcome, .. } = &mut release.kind
+    {
+        *outcome = None;
+    }
+    let lines = run(Read::Present(&candidate), &silent, &receipt());
+    assert_line(
+        &lines,
+        "download-path",
+        Verdict::NotTested,
+        "P18-D05 records no valid outcome",
+    );
+    // Another major version than the one the gate is told to check.
+    let lines = judge(&Inputs {
+        release: R,
+        batch: Some("rc1"),
+        macos_major: 28,
+        candidate: Read::Present(&candidate),
+        ledger: Read::Present(&records),
+        source_tests: Read::Present(&receipt()),
+        targets: Read::Present(&receipt().expected),
+    });
+    assert_line(
+        &lines,
+        "download-path",
+        Verdict::NotTested,
+        "checked on macOS 28",
+    );
 }
