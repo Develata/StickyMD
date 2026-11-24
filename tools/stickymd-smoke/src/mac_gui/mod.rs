@@ -66,7 +66,10 @@ mod translocation;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod visual;
-pub(crate) use options::{Options, parse};
+pub(crate) use options::{IDS, Options, parse};
+/// R03's checks, which mac-ledger requires of an R03 PASS.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) use translocation::{CHECKS as R03_CHECKS, ZIP_CHECK as R03_ZIP_CHECK};
 /// Chooses `label` in the product's menu-bar menu through Accessibility, as the GUI scenarios
 /// do. `mac-resources` uses it to reach the hidden state. Returns how long the status item took
 /// to appear in the AX tree.

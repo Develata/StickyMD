@@ -639,23 +639,23 @@ fn the_real_matrix_has_manual_rows_and_mac_gui_has_executable_ones() {
 #[test]
 fn each_command_requires_its_options_and_refuses_others() {
     let args = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
-    assert!(parse(&args("plan --app a.app --driver d --image i")).is_err());
+    assert!(parse(&args("plan --app a.app --driver d --image sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).is_err());
     let plan = parse(&args(
-        "plan --app a.app --driver d --image i --system s --batch b-1",
+        "plan --app a.app --driver d --image sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --system s --batch b-1",
     ))
     .unwrap();
     assert_eq!(plan.command, Some(Command::Plan));
     assert_eq!(plan.batch.as_deref(), Some("b-1"));
     assert!(
         parse(&args(
-            "plan --app a.app --driver d --image i --system s --batch b/1"
+            "plan --app a.app --driver d --image sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --system s --batch b/1"
         ))
         .is_err()
     );
     assert!(parse(&args("record --evidence e.json")).is_err());
-    assert!(parse(&args("record --evidence e.json --image i")).is_ok());
+    assert!(parse(&args("record --evidence e.json --image sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).is_ok());
     assert!(
-        parse(&args("record --evidence e.json --image i --app a.app")).is_err(),
+        parse(&args("record --evidence e.json --image sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --app a.app")).is_err(),
         "not a record option"
     );
     assert!(parse(&args("receipt --app a.app --rows W06")).is_err());

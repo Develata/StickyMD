@@ -1,7 +1,8 @@
 //! Standalone parsing without filesystem access.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use std::path::PathBuf;
-pub(super) const IDS: &[&str] = &[
+/// The rows `mac-gui` runs; mac-ledger records no other row from its evidence.
+pub(crate) const IDS: &[&str] = &[
     "W01", "W02", "W03", "W04", "W05", "W06", "W07", "W08", "W09", "W10", "W11", "W12", "W15",
     "K02", "I01", "I02", "I03", "E01", "F01", "R03",
 ];

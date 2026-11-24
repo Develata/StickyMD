@@ -46,9 +46,24 @@ pub(super) const CAUSE: &str = "Read-only file system";
 /// `NSModalPanelWindowLevel`: an alert run modally sits at this level or above.
 pub(super) const MODAL_LEVEL: i32 = 8;
 
+/// The checks R03 records, in this order; with `--zip`, [`ZIP_CHECK`] comes first. mac-ledger
+/// records an R03 PASS only with exactly these (plan 11 #phase-16-macos-host).
+pub(crate) const PRESET: &str = "approved quarantine preset (USER 2026-11-19)";
+pub(crate) const TRANSLOCATED: &str = "started under App Translocation";
+pub(crate) const PROMPTED: &str = "prompt asks to move the translocated app";
+pub(crate) const EXITS: &str = "exits after the prompt is answered";
+pub(crate) const STATUS: &str = "exit status 1";
+pub(crate) const UNWRITTEN: &str = "nothing written beside the package";
+pub(crate) const CHECKS: [&str; 6] = [PRESET, TRANSLOCATED, PROMPTED, EXITS, STATUS, UNWRITTEN];
+/// The release ZIP R03 opened as given (`mac-gui --zip`); its observation is `sha256=<digest>`.
+pub(crate) const ZIP_CHECK: &str = "opened the candidate ZIP as given";
+
 /// What the live run observed.
 #[derive(Debug, Default)]
 pub(super) struct Observed {
+    /// The SHA-256 of the candidate ZIP the download directory was laid out from, when `--zip`
+    /// gave one and staging matched it.
+    pub zip: Option<String>,
     /// The quarantine attribute read back from the extracted bundle.
     pub quarantine: Option<String>,
     /// The executable path of the one StickyMD process LaunchServices started.
@@ -98,13 +113,16 @@ pub(super) fn prompted(o: &Observed) -> bool {
 /// The R03 checks from what was observed. Each depends on the one before it: without the
 /// preset attribute nothing is a download; without translocation the prompt is not owed.
 pub(super) fn judge(o: &Observed, row: &mut Row) {
+    if let Some(digest) = &o.zip {
+        row.check(ZIP_CHECK, true, format!("sha256={digest}"));
+    }
     let preset = o
         .quarantine
         .as_deref()
         .is_some_and(|q| q.starts_with(&format!("{QUARANTINE_FLAGS};")));
     record(
         row,
-        "approved quarantine preset (USER 2026-11-19)",
+        PRESET,
         if preset {
             Verdict::Pass
         } else {
@@ -126,7 +144,7 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
     // Whether macOS translocates is the system's decision; without it the row cannot be judged.
     record(
         row,
-        "started under App Translocation",
+        TRANSLOCATED,
         if preset && translocated {
             Verdict::Pass
         } else {
@@ -135,12 +153,7 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
         format!("path={:?}; mount={:?}", o.path, o.mount),
     );
     if !(preset && translocated) {
-        for name in [
-            "prompt asks to move the translocated app",
-            "exits after the prompt is answered",
-            "exit status 1",
-            "nothing written beside the package",
-        ] {
+        for name in [PROMPTED, EXITS, STATUS, UNWRITTEN] {
             row.skip(name, "not started under App Translocation");
         }
         return;
@@ -168,7 +181,7 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
     };
     record(
         row,
-        "prompt asks to move the translocated app",
+        PROMPTED,
         prompt,
         format!(
             "window={:?}; exited before a prompt {}; stderr={:?}",
@@ -178,7 +191,7 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
     let answered = prompt == Verdict::Pass && o.unanswered.is_none();
     record(
         row,
-        "exits after the prompt is answered",
+        EXITS,
         if !answered {
             Verdict::NotTested
         } else {
@@ -196,7 +209,7 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
     );
     record(
         row,
-        "exit status 1",
+        STATUS,
         if !(answered && o.exited == Some(true)) {
             Verdict::NotTested
         } else {
@@ -211,7 +224,7 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
     let ended = o.exited_early || o.exited == Some(true);
     record(
         row,
-        "nothing written beside the package",
+        UNWRITTEN,
         if !ended {
             Verdict::NotTested
         } else if o.before == o.after {
@@ -482,6 +495,7 @@ mod live {
         let watched = staged.watched;
         let text = |p: &Path| p.to_string_lossy().into_owned();
         let mut o = Observed {
+            zip: staged.zip_sha256.clone(),
             quarantine: command(
                 "/usr/bin/xattr",
                 &["-p", "com.apple.quarantine", &text(&copy)],

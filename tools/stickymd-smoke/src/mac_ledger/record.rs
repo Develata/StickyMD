@@ -366,6 +366,8 @@ impl Record {
                 ..
             } => {
                 identity.inputs.as_mut().map(lower);
+                // One image, one spelling: older records may name it in another case.
+                lower(&mut identity.image);
                 zip.as_mut().map(lower);
                 lower(&mut identity.driver);
                 lower(&mut built.executable);
@@ -507,8 +509,14 @@ pub(super) fn from_evidence(
 ) -> Result<Vec<Record>, String> {
     let text = std::str::from_utf8(bytes).map_err(|e| format!("evidence is not UTF-8: {e}"))?;
     let value = json::parse(text)?;
-    if optional_text(&value, "tool")?.as_deref() == Some(super::resources::TOOL) {
-        return super::resources::from_evidence(&value, bytes, evidence, image, recorded_unix);
+    // Each producer has its own schema and rows: mac-resources writes R01 and R02, mac-gui and
+    // mac-logout (no `tool` member) only the rows they run.
+    match optional_text(&value, "tool")?.as_deref() {
+        Some(super::resources::TOOL) => {
+            return super::resources::from_evidence(&value, bytes, evidence, image, recorded_unix);
+        }
+        Some(other) => return Err(format!("evidence of tool {other:?} cannot be recorded")),
+        None => {}
     }
     // Schema 2 is the first whose `finished` only the current rules set and that names the batch
     // the run was started for; an older file cannot say either, so it is rerun, not recorded.
@@ -570,8 +578,16 @@ pub(super) fn from_evidence(
         {
             return Err(format!("P16-{row} appears twice in the evidence"));
         }
+        if !super::producers::gui_row(&row) {
+            return Err(format!(
+                "P16-{row} is not a row mac-gui or mac-logout runs; it cannot be recorded from this evidence"
+            ));
+        }
         let verdict = field(scenario, "verdict")?;
         let checks = scenario.field("checks")?.array()?;
+        if row == "R03" && verdict == "PASS" {
+            super::producers::r03_pass(checks, zip.as_deref())?;
+        }
         // A row stopped by the run's shared stop, or never started, means the run was cut short;
         // an older driver could still mark such a run finished, so the rows themselves decide.
         for check in checks {

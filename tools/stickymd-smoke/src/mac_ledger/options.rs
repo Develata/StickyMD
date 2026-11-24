@@ -10,6 +10,30 @@ pub(crate) fn is_batch(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
+/// A VM image digest as `--image` takes it: `sha256:<64 hex>`, optionally after `<name>@`
+/// (an OCI reference), in lower case so one image is always spelled one way in the ledger.
+pub(crate) fn image_digest(value: &str) -> Result<String, String> {
+    let lower = value.to_ascii_lowercase();
+    let digest =
+        lower.rsplit_once('@').map_or(
+            lower.as_str(),
+            |(name, digest)| {
+                if name.is_empty() { "" } else { digest }
+            },
+        );
+    let valid = digest
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+        && !lower.bytes().any(|b| b.is_ascii_whitespace());
+    if valid {
+        Ok(lower)
+    } else {
+        Err(format!(
+            "--image {value:?} is not an image digest (sha256:<64 hex>, optionally after <name>@)"
+        ))
+    }
+}
+
 pub(super) const HELP: &str =
     "usage: stickymd-smoke mac-ledger <plan|record|receipt|waive|revoke> [options]
   The product input fingerprint of a checkout is printed by `stickymd-package app-inputs`:
@@ -182,7 +206,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
             "--ledger" => result.ledger = Some(value.into()),
             "--app" => result.app = Some(value.into()),
             "--driver" => result.driver = Some(value.into()),
-            "--image" => result.image = Some(value.clone()),
+            "--image" => result.image = Some(image_digest(value)?),
             "--system" => result.system = Some(value.into()),
             "--evidence" => result.evidence = Some(value.into()),
             "--evidence-sha256" => result.evidence_sha256 = Some(value.to_ascii_lowercase()),

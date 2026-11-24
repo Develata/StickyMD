@@ -1287,6 +1287,7 @@ fn a_success_first_seen_after_the_deadline_is_late() {
 fn translocation_checks_refuse_bad_samples() {
     use super::translocation::{EXIT_ONE, GENERIC_ADVICE, Observed, TRANSLOCATED_ADVICE, judge};
     let good = || Observed {
+        zip: None,
         quarantine: Some("00c3;6afec4a5;Safari;".into()),
         path: Some(
             "/private/var/folders/x/T/AppTranslocation/U/d/StickyMD.app/Contents/MacOS/StickyMD"
