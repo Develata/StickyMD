@@ -1,5 +1,17 @@
 # coverage-matrix.md - 契约覆盖矩阵
 
+2026-11-24 M5 macOS 就绪核对（[M5 报告](report/2026-11-24-m5-macos-readiness-check.md)）：
+
+- **Plan：** `11` `macos-readiness-check`（R 上的源码测试收据的运行、格式与判定，就绪核对程序，Phase 16 行的分类，账本判定，尚无来源的行）、
+  `macos-release-gate`（源码测试一行指向该格式）。
+- **验收：** [Phase 18](acceptance-cases/phase-18.md) P18-G01（源码测试收据）、P18-G02（逐行核对与合同点名的两个坏样本）、
+  P18-G03（发布用 USER 收据、waiver 与下载路径记录，USER 2026-11-24）；第二次复审后（同日，USER 决定 (a)–(d)）：源码测试收据 schema 2（逐个测试、
+  显式运行）、`--candidate-sha256`、D04/D05 的结果与 `--macos-major`。
+- **代码：** `tools/stickymd-smoke/src/release/macos/ready/`（`rows` 分类表、`source_tests` 收据与运行器、`judge` 纯判定）；
+  `release/macos/promote.rs` 的 resolver 返回 receipt 摘要、两项字节身份与签名方式；`mac_ledger/release.rs`（发布用记录）与
+  `mac-ledger receipt --release-source`、`waive`、`revoke --release-source`。R03 接收候选 ZIP 与资源行的字节绑定另开分支，
+  在此之前 R03 不能 PASS：本批中候选字节上记下的 `FAIL` 为 `FAIL`，其余为 `NOT_TESTED`。
+
 2026-11-21 平台构建输入收窄为打包 crate（USER 决定 2026-11-21，[验证报告](report/2026-11-20-phase-18-verification.md)末尾的 Resolution）：
 
 - **Plan：** `11` `platform-artifact-reuse`（排除表、打包 crate、边界的证明、只改验证工具时、构建 workflow 中的验证只是自检，算法 v2）、

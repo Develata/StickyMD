@@ -77,12 +77,39 @@ impl Drop for World {
     }
 }
 
+/// Whether the volume holding `directory` ignores case; an error asking is a test failure, never
+/// an answer (review round 4, BLOCKER 6).
+fn ignores_case(directory: &Path) -> bool {
+    fs::write(directory.join("case-probe"), b"").unwrap();
+    let insensitive = directory.join("CASE-PROBE").try_exists().unwrap();
+    fs::remove_file(directory.join("case-probe")).unwrap();
+    insensitive
+}
+
 /// Whether the temporary volume the world lives on ignores case.
 fn case_insensitive(world: &World) -> bool {
-    fs::write(world.path("case-probe"), b"").unwrap();
-    let insensitive = world.path("CASE-PROBE").exists();
-    fs::remove_file(world.path("case-probe")).unwrap();
-    insensitive
+    ignores_case(&world.base)
+}
+
+/// The release proof of P18-L08 (plan 11 #macos-readiness-check) runs these tests with
+/// `STICKYMD_VOLUME_REPORT` naming a file: each test appends the case behaviour it measured on
+/// the very directory its assertions use, so the receipt records both volumes as measured, not
+/// as assumed. Without the variable nothing is written.
+fn report_volume(volume: &str, insensitive: bool) {
+    let Some(path) = std::env::var_os("STICKYMD_VOLUME_REPORT") else {
+        return;
+    };
+    let kind = if insensitive {
+        "case-insensitive"
+    } else {
+        "case-sensitive"
+    };
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    std::io::Write::write_all(&mut file, format!("{volume} {kind}\n").as_bytes()).unwrap();
 }
 
 fn installed_key(note_root: &NoteRoot) -> &str {
@@ -286,10 +313,16 @@ fn one_key_is_exclusive_and_another_key_runs_beside_it() {
         ("root-keys-case", "stickymd"),
     ] {
         let world = World::new(label);
-        if home_name == "stickymd" && !case_insensitive(&world) {
-            // The temporary volume decides; the case-sensitive side has its own image test.
-            eprintln!("skipped on a case-sensitive temporary volume");
-            continue;
+        // One probe, only where the case matters: what is reported is what decides (review
+        // round 4, BLOCKER 6; fix round, SHOULD_FIX 13).
+        if home_name == "stickymd" {
+            let insensitive = case_insensitive(&world);
+            report_volume("temporary", insensitive);
+            if !insensitive {
+                // The temporary volume decides; the case-sensitive side has its own image test.
+                eprintln!("skipped on a case-sensitive temporary volume");
+                continue;
+            }
         }
         let system = world.resolve(&world.app("system", "StickyMD")).unwrap();
         let _guard = primary(&system);
@@ -354,6 +387,7 @@ fn on_a_case_sensitive_volume_case_makes_another_key() {
         "-mountpoint".as_ref(),
         mount.as_os_str(),
     ]);
+    report_volume("image", ignores_case(&mount));
     let home = mount.join("home");
     fs::create_dir_all(home.join("Applications")).unwrap();
     fs::create_dir_all(home.join("Library/Application Support")).unwrap();

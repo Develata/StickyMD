@@ -1,5 +1,6 @@
-//! The macOS release checks: the package check on a candidate ZIP, the local promotion and the
-//! candidate resolver. The packager and the check itself are in `stickymd-package`.
+//! The macOS release checks: the package check on a candidate ZIP, the local promotion, the
+//! candidate resolver and the readiness check (M5). The packager and the package check itself
+//! are in `stickymd-package`.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
 
 // The package inventory, listing and package check live in the packaging crate beside the
@@ -9,6 +10,13 @@ pub(crate) use stickymd_package::macos::package;
 pub(crate) use stickymd_package::macos::{content, listing};
 #[cfg(target_os = "macos")]
 pub(crate) mod promote;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod ready;
+#[cfg(target_os = "macos")]
+pub(super) use ready::{ready_command, source_tests_command};
+#[cfg(any(target_os = "macos", test))]
+pub(crate) use ready::{receipt_row, waivable};
 
 use std::path::Path;
 
@@ -64,10 +72,12 @@ pub(super) fn promote_command(
 
 #[cfg(target_os = "macos")]
 pub(super) fn candidate_command(root: &Path, release: &str) -> Result<(), String> {
-    let app = promote::resolve(root, release)?;
+    let resolved = promote::resolve(root, release)?;
+    // The digest a USER release receipt or waiver names as checked (decision (c)).
     println!(
-        "{{\"app\":\"{}\"}}",
-        crate::evidence::escape_json(&app.display().to_string())
+        "{{\"app\":\"{}\",\"candidate_receipt_sha256\":\"{}\"}}",
+        crate::evidence::escape_json(&resolved.app.display().to_string()),
+        resolved.receipt_sha256
     );
     Ok(())
 }
@@ -80,4 +90,20 @@ pub(super) fn promote_command(_: &Path, _: u64, _: u64, _: &str, _: &Path) -> Re
 #[cfg(not(target_os = "macos"))]
 pub(super) fn candidate_command(_: &Path, _: &str) -> Result<(), String> {
     Err("the macOS candidate is resolved on macOS".to_owned())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn source_tests_command(_: &Path, _: &str) -> Result<(), String> {
+    Err("the source tests on R for the macOS release run on macOS".to_owned())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn ready_command(
+    _: &Path,
+    _: &str,
+    _: Option<&str>,
+    _: u32,
+    _: &Path,
+) -> Result<(), String> {
+    Err("macOS readiness is checked on macOS".to_owned())
 }

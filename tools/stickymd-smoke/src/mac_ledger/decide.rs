@@ -6,7 +6,7 @@ use super::record::{Built, Identity, Record, Revoked};
 /// Rows never carried over, as on Windows: a receipt or a run stands for one acceptance batch,
 /// because the result depends on system state (the IME checks, the press-and-hold setting, App
 /// Translocation of a downloaded package). Only a result of the batch being planned counts.
-pub(super) const NEVER_REUSED: [&str; 4] = ["I01", "I02", "I03", "R03"];
+pub(crate) const NEVER_REUSED: [&str; 4] = ["I01", "I02", "I03", "R03"];
 
 /// Rows of the Phase 16 matrix judged on Windows (`docs/acceptance-cases/phase-16.md`, V05: the
 /// Windows desktop regression of the shared render code); no macOS receipt stands for them.
@@ -74,7 +74,7 @@ pub(super) fn commands(gui: &[&str], logout: &[&str], batch: Option<&str>) -> Ve
 
 /// A row that counts only together with parts run apart from it: W12 with its three real
 /// logout cases (`mac-logout`, one fresh VM boot each; plan 11).
-pub(super) fn composite() -> (&'static str, Vec<String>) {
+pub(crate) fn composite() -> (&'static str, Vec<String>) {
     ("W12", crate::mac_gui::logout::rows())
 }
 
@@ -227,7 +227,7 @@ fn revoked(records: &[Record], row: &str, digest: &str) -> bool {
 
 /// An image digest stands for one VM system: across all the given records, each digest must
 /// carry a single `sw_vers` text, or the digest no longer identifies the environment.
-pub(super) fn check_system(records: &[Record]) -> Result<(), String> {
+pub(crate) fn check_system(records: &[Record]) -> Result<(), String> {
     let mut known: Vec<(&str, &str)> = Vec::new();
     for record in records {
         let Record::Automated { identity, .. } = record else {

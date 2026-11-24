@@ -592,6 +592,49 @@ Syft cache and the macOS package and product inputs) are in
 cannot depend on it (plan 11 #platform-artifact-reuse). The scripts above that build bytes
 call it; the verification commands stay here.
 
+macOS readiness (M5, plan 11 #macos-readiness-check), on a Mac:
+
+```sh
+cargo run --quiet -p stickymd-smoke --locked -- release macos-source-tests --release-source <R>
+cargo run --quiet -p stickymd-smoke --locked -- release macos-ready --release-source <R> --macos-major <N> --driver target/macos-driver/release/stickymd-smoke [--batch <name>]
+```
+
+`macos-source-tests` starts only on a clean checkout of R. It records its own run identity,
+removes any earlier receipt, runs the row's exact `cargo test --locked` over the eight packages,
+then the explicit runs (P18-L08's two volumes and P16-S06's exFAT test, by exact name), and
+builds the `mac-gui` driver on R into `target/macos-driver`, which it empties first so no cache
+of another commit can stand in for R's build. It writes
+`dist/evidence/release-source-tests-macos.json` (schema 3) with every test of every target, how
+each process ended, the source identity at both ends and the driver's SHA-256. `macos-ready` is
+read-only and also runs only on a clean checkout of R, so the gate is judged with R's own tools:
+it resolves the promoted candidate, reads the `mac-gui` ledger and that receipt, prints every
+gate row and Phase 16 row with its verdict, and exits non-zero unless all hold. `--driver` must
+be the driver that run built, `target/macos-driver/release/stickymd-smoke`; otherwise no
+`mac-gui` row can PASS. The bytes depend on that build directory's path, so a rerun on the same
+checkout builds the same driver: copy that file into the VM for the release's `mac-gui` runs. `--macos-major` is the macOS major version the five download paths must
+have run on. P16-S06 holds only by its explicit run.
+
+The USER's records for a release go into the same ledger, bound to the candidate the resolver
+returns for R:
+
+```sh
+cargo run --quiet -p stickymd-smoke --locked -- release macos-candidate --release-source <R>
+cargo run --quiet -p stickymd-smoke --locked -- mac-ledger receipt --release-source <R> --candidate-sha256 <digest> --rows <ids> --quote <words> [--batch <name>] [--system <sw_vers file>] [--outcome <result>]
+cargo run --quiet -p stickymd-smoke --locked -- mac-ledger waive --release-source <R> --candidate-sha256 <digest> --rows <ids> --quote <words> [--batch <name>]
+cargo run --quiet -p stickymd-smoke --locked -- mac-ledger revoke --rows <id> --release-source <R> --quote <words>
+```
+
+`--candidate-sha256` is the digest `macos-candidate` prints for the candidate the USER checked;
+if the resolver gives another candidate when the record is made, nothing is recorded.
+`receipt` takes Manual Phase 16 rows and the download paths P18-D01..P18-D05 (these need
+`--system`; P18-D04 also needs `--outcome gatekeeper-blocked|translocated-prompt-exit|portable-start`
+and P18-D05 `--outcome blocked|not-blocked`); `waive` takes only rows that depend on the app
+running and never stands for a FAIL. R03 cannot PASS until its probe runs on the candidate ZIP:
+a FAIL of R03 in the batch is a FAIL, otherwise it is `NOT_TESTED`
+([M5 report](../../docs/report/2026-11-24-m5-macos-readiness-check.md)). A plain `mac-gui` row
+holds when one identity has a clean run even if another failed (the approved grouping rule);
+Manual and resource rows keep a recorded FAIL.
+
 
 The release workflow uses `workspace-version` too. `verify-workflow` reads one
 GitHub Actions run API observation from a UTF-8 JSON file, or stdin when
@@ -911,6 +954,10 @@ Build the tool without starting any GUI:
 ```sh
 CARGO_PROFILE_RELEASE_PANIC=unwind cargo build --locked --release -p stickymd-smoke
 ```
+
+For evidence a release gate counts, use instead the driver `release macos-source-tests` built on
+R, `target/macos-driver/release/stickymd-smoke` (macOS readiness below): only runs of that file
+can hold a `mac-gui` row there.
 
 Copy that binary and `StickyMD.app` into the VM, then run there from the logged-in
 user's session (SSH is suitable only when that user's GUI session is available):

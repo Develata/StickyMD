@@ -18,8 +18,9 @@
 
 use std::fmt;
 
-// The parsers serve the Windows executor; their tests run everywhere.
-#[cfg(any(windows, test))]
+// The parsers serve the Windows executor and the macOS source-test receipt (plan 11
+// #macos-readiness-check); their tests run everywhere.
+#[cfg(any(windows, target_os = "macos", test))]
 mod artifacts;
 #[cfg(any(windows, test))]
 mod listing;
@@ -27,7 +28,9 @@ mod listing;
 mod verify;
 
 #[cfg(windows)]
-use artifacts::{TestArtifact, parse_artifacts};
+use artifacts::TestArtifact;
+#[cfg(any(windows, target_os = "macos", test))]
+pub(crate) use artifacts::parse_artifacts;
 #[cfg(windows)]
 use listing::parse_list;
 #[cfg(windows)]
