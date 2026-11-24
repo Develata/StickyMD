@@ -227,7 +227,7 @@ fn revoked(records: &[Record], row: &str, digest: &str) -> bool {
 
 /// An image digest stands for one VM system: across all the given records, each digest must
 /// carry a single `sw_vers` text, or the digest no longer identifies the environment.
-pub(super) fn check_system(records: &[Record]) -> Result<(), String> {
+pub(crate) fn check_system(records: &[Record]) -> Result<(), String> {
     let mut known: Vec<(&str, &str)> = Vec::new();
     for record in records {
         let Record::Automated { identity, .. } = record else {

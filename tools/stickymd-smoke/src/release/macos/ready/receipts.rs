@@ -61,10 +61,32 @@ pub(super) fn standing<'a>(
         })
 }
 
-/// The download-path rows without a standing record for `candidate`.
-pub(super) fn missing_downloads(records: &[Record], candidate: &str) -> Vec<&'static str> {
-    DOWNLOAD_ROWS
-        .into_iter()
-        .filter(|row| standing(records, Wanted::Download, row, candidate, None).is_none())
-        .collect()
+/// The standing download-path records for `candidate` as `(row, signing, system)`, or the rows
+/// that have none.
+pub(super) fn downloads<'a>(
+    records: &'a [Record],
+    candidate: &str,
+) -> Result<Vec<(&'static str, &'a str, &'a str)>, Vec<&'static str>> {
+    let mut found = Vec::new();
+    let mut missing = Vec::new();
+    for row in DOWNLOAD_ROWS {
+        match standing(records, Wanted::Download, row, candidate, None).map(|r| &r.kind) {
+            Some(ReleaseKind::Download { signing, system }) => {
+                found.push((row, signing.as_str(), system.as_str()));
+            }
+            _ => missing.push(row),
+        }
+    }
+    if missing.is_empty() {
+        Ok(found)
+    } else {
+        Err(missing)
+    }
+}
+
+/// The macOS major version in a `sw_vers` text (`ProductVersion: 27.2` gives 27).
+pub(super) fn major_version(system: &str) -> Option<u32> {
+    let mut words = system.split_whitespace();
+    words.find(|word| *word == "ProductVersion:")?;
+    words.next()?.split('.').next()?.parse().ok()
 }

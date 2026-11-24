@@ -10,14 +10,15 @@ use super::receipts::{self, Wanted};
 use super::rows::{Class, ROWS};
 use super::source_tests::{self, Outcome};
 use crate::mac_ledger::decide::NEVER_REUSED;
-use crate::mac_ledger::record::{Built, Identity, Record, Revoked};
+use crate::mac_ledger::record::{Built, Record, Revoked};
 
-/// The resolved candidate: the digest of its receipt and its two byte identities.
+/// The resolved candidate: the digest of its receipt, its two byte identities and its signing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Candidate {
     pub receipt_sha256: String,
     pub zip_sha256: String,
     pub built: Built,
+    pub signing: String,
 }
 
 /// One input as read: present, absent (nothing recorded yet), or unusable.
@@ -34,6 +35,9 @@ pub(super) struct Inputs<'a> {
     pub candidate: Read<&'a Candidate>,
     pub ledger: Read<&'a [Record]>,
     pub source_tests: Read<&'a source_tests::Receipt>,
+    /// R's test binaries and doc-tested libraries, listed on R by `cargo metadata` apart from the
+    /// receipt (plan 11 #macos-readiness-check).
+    pub targets: Read<&'a [source_tests::Target]>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -106,9 +110,9 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
         Read::Missing(reason) => line("package", Verdict::NotTested, reason.clone()),
         Read::Invalid(reason) => line("package", Verdict::Fail, reason.clone()),
     };
-    let (tests, same_key) = match &inputs.source_tests {
-        Read::Present(receipt) => {
-            let (tests, same_key) = source_tests::judge(receipt, inputs.release);
+    let (tests, same_key) = match (&inputs.source_tests, &inputs.targets) {
+        (Read::Present(receipt), Read::Present(targets)) => {
+            let (tests, same_key) = source_tests::judge(receipt, inputs.release, targets);
             (
                 from_outcome(
                     "source-tests",
@@ -122,20 +126,26 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
                 ),
             )
         }
-        Read::Missing(reason) | Read::Invalid(reason) => (
+        (Read::Missing(reason) | Read::Invalid(reason), _)
+        | (_, Read::Missing(reason) | Read::Invalid(reason)) => (
             line("source-tests", Verdict::NotTested, reason.clone()),
             line("same-key", Verdict::NotTested, reason.clone()),
         ),
     };
     let download = download(inputs);
     let mut lines = vec![package.clone(), tests.clone(), same_key, download];
-    for (row, class) in ROWS {
+    for (row, class, _) in ROWS {
         let item = format!("P16-{row}");
         let judged = match class {
             Class::Source => Line {
                 item,
                 ..tests.clone()
             },
+            Class::IgnoredSource => line(
+                &item,
+                Verdict::NotTested,
+                "its test is #[ignore] (it mounts a disk image), so the source-test receipt does not run it; how it gets evidence on R awaits a decision (M5 report)",
+            ),
             Class::Package => Line {
                 item,
                 ..package.clone()
@@ -191,12 +201,17 @@ fn waived(inputs: &Inputs<'_>, judged: Line, row: &str) -> Line {
     }
 }
 
-/// A Manual row holds with the USER's release receipt for this candidate.
+/// A Manual row holds with the USER's release receipt for this candidate, unless a program
+/// observed it fail on the candidate's bytes: a failed sub-item fails the row, and neither a
+/// receipt nor a waiver stands for it (plan 11 #macos-release-gate).
 fn manual(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     let (records, candidate) = match evidence(inputs, item) {
         Ok(found) => found,
         Err(line) => return line,
     };
+    if let Ledger::Fail(reason) = ledger(records, row, &candidate.built, inputs.batch) {
+        return line(item, Verdict::Fail, reason);
+    }
     match receipts::standing(
         records,
         Wanted::Receipt,
@@ -218,29 +233,64 @@ fn manual(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
 }
 
 /// The real download path holds when each of P18-D01-D05 has the USER's record for this
-/// candidate. It cannot be waived for the first public package; a record of another candidate
-/// does not count (plan 11 #macos-readiness-check).
+/// candidate, every record names the candidate's signing, and all five ran on one macOS major
+/// version. It cannot be waived for the first public package; a record of another candidate does
+/// not count (plan 11 #macos-readiness-check).
 fn download(inputs: &Inputs<'_>) -> Line {
-    let (records, candidate) = match evidence(inputs, "download-path") {
+    let item = "download-path";
+    let (records, candidate) = match evidence(inputs, item) {
         Ok(found) => found,
         Err(line) => return line,
     };
-    let missing = receipts::missing_downloads(records, &candidate.receipt_sha256);
-    if missing.is_empty() {
-        line(
-            "download-path",
+    let found = match receipts::downloads(records, &candidate.receipt_sha256) {
+        Ok(found) => found,
+        Err(missing) => {
+            return line(
+                item,
+                Verdict::NotTested,
+                format!(
+                    "no USER download-path record for this candidate: {}",
+                    missing.join(", ")
+                ),
+            );
+        }
+    };
+    let mut majors = Vec::new();
+    for (row, signing, system) in &found {
+        if *signing != candidate.signing {
+            return line(
+                item,
+                Verdict::NotTested,
+                format!(
+                    "{row} names signing {signing}, the candidate is {}",
+                    candidate.signing
+                ),
+            );
+        }
+        match receipts::major_version(system) {
+            Some(major) => majors.push(major),
+            None => {
+                return line(
+                    item,
+                    Verdict::NotTested,
+                    format!("{row} names no macOS version: {system:?}"),
+                );
+            }
+        }
+    }
+    majors.sort_unstable();
+    majors.dedup();
+    match majors.as_slice() {
+        [major] => line(
+            item,
             Verdict::Pass,
-            "P18-D01-D05 recorded by the USER for this candidate",
-        )
-    } else {
-        line(
-            "download-path",
+            format!("P18-D01-D05 recorded by the USER for this candidate on macOS {major}"),
+        ),
+        _ => line(
+            item,
             Verdict::NotTested,
-            format!(
-                "no USER download-path record for this candidate: {}",
-                missing.join(", ")
-            ),
-        )
+            format!("the five paths ran on different macOS major versions {majors:?}"),
+        ),
     }
 }
 
@@ -266,16 +316,32 @@ fn evidence<'a>(inputs: &'a Inputs<'_>, item: &str) -> Result<(&'a [Record], &'a
 
 /// The ledger's verdict on `row` for the candidate's bytes.
 enum Ledger {
-    /// A clean group: its identities, and the latest PASS's evidence.
-    Clean(Vec<Identity>, String),
+    /// The clean groups, and the latest PASS's evidence.
+    Clean(Vec<Group>, String),
     Fail(String),
     None(String),
 }
 
+/// What a group shares once the bytes are the candidate's: driver, VM image and VM system
+/// (plan 11 #macos-readiness-check). The product inputs are left out: equal bytes carry equal
+/// inputs, and a record may lack them.
+type Group = (String, String, String);
+
+fn group_of(record: &Record) -> Option<Group> {
+    match record {
+        Record::Automated { identity, .. } => Some((
+            identity.driver.clone(),
+            identity.image.clone(),
+            identity.system.clone(),
+        )),
+        _ => None,
+    }
+}
+
 /// Records of `row` on exactly the candidate's bytes (both digests) and, for the never-reused
-/// rows, of `batch`, grouped by identity. A group is clean when it holds a PASS of the row and
-/// no FAIL, NOT_TESTED or revoked PASS of it: neither run start nor import order proves which
-/// came first (plan 11 #phase-16-macos-host), so any such record spoils the group.
+/// rows, of `batch`, grouped by driver, image and system. A group is clean when it holds a PASS
+/// of the row and no FAIL, NOT_TESTED or revoked PASS of it: neither run start nor import order
+/// proves which came first (plan 11 #phase-16-macos-host), so any such record spoils the group.
 fn ledger(records: &[Record], row: &str, built: &Built, batch: Option<&str>) -> Ledger {
     let in_scope = |record: &&Record| match record {
         Record::Automated {
@@ -297,18 +363,18 @@ fn ledger(records: &[Record], row: &str, built: &Built, batch: Option<&str>) -> 
                 if rr == row && d == digest)
         })
     };
-    let mut clean = Vec::new();
+    let mut clean: Vec<Group> = Vec::new();
     let mut latest = String::new();
     for record in &scoped {
-        let Record::Automated { identity, .. } = record else {
+        let Some(key) = group_of(record) else {
             continue;
         };
-        if clean.contains(identity) {
+        if clean.contains(&key) {
             continue;
         }
         let group: Vec<&&Record> = scoped
             .iter()
-            .filter(|r| matches!(r, Record::Automated { identity: i, .. } if i == identity))
+            .filter(|r| group_of(r).as_ref() == Some(&key))
             .collect();
         let spoiled = group.iter().any(|r| {
             matches!(r, Record::Automated { verdict, evidence_sha256, .. }
@@ -318,7 +384,7 @@ fn ledger(records: &[Record], row: &str, built: &Built, batch: Option<&str>) -> 
             if let Some(Record::Automated { evidence, .. }) = group.last().map(|r| **r) {
                 latest = evidence.clone();
             }
-            clean.push(identity.clone());
+            clean.push(key);
         }
     }
     if !clean.is_empty() {
@@ -363,24 +429,38 @@ fn gui(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     } else {
         vec![row.to_owned()]
     };
-    let mut common: Option<Vec<Identity>> = None;
+    // Every member is judged before any verdict, so a recorded FAIL of a later member is never
+    // hidden behind an earlier member's missing evidence (which a waiver could then cover).
+    let judged: Vec<(&String, Ledger)> = group
+        .iter()
+        .map(|member| {
+            (
+                member,
+                ledger(records, member, &candidate.built, inputs.batch),
+            )
+        })
+        .collect();
+    if let Some((_, Ledger::Fail(reason))) =
+        judged.iter().find(|(_, l)| matches!(l, Ledger::Fail(_)))
+    {
+        return line(item, Verdict::Fail, reason.clone());
+    }
+    if let Some((_, Ledger::None(reason))) =
+        judged.iter().find(|(_, l)| matches!(l, Ledger::None(_)))
+    {
+        return line(item, Verdict::NotTested, reason.clone());
+    }
+    let mut common: Option<Vec<Group>> = None;
     let mut evidence_of_row = String::new();
-    for member in &group {
-        match ledger(records, member, &candidate.built, inputs.batch) {
-            Ledger::Clean(identities, evidence) => {
-                if member == row {
-                    evidence_of_row = evidence;
-                }
-                common = Some(match common {
-                    None => identities,
-                    Some(kept) => kept
-                        .into_iter()
-                        .filter(|i| identities.contains(i))
-                        .collect(),
-                });
+    for (member, judgement) in judged {
+        if let Ledger::Clean(groups, evidence) = judgement {
+            if member == row {
+                evidence_of_row = evidence;
             }
-            Ledger::Fail(reason) => return line(item, Verdict::Fail, reason),
-            Ledger::None(reason) => return line(item, Verdict::NotTested, reason),
+            common = Some(match common {
+                None => groups,
+                Some(kept) => kept.into_iter().filter(|g| groups.contains(g)).collect(),
+            });
         }
     }
     if common.is_some_and(|identities| !identities.is_empty()) {

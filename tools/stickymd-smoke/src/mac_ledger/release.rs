@@ -96,6 +96,8 @@ impl ReleaseRecord {
         if let Some(batch) = self.batch.as_deref().filter(|b| !super::is_batch(b)) {
             return Err(format!("batch {batch:?} is not 1-64 of [A-Za-z0-9._-]"));
         }
+        // The same rows on read as on record, so a hand-written line cannot add what the
+        // recorder refuses.
         let download_row = DOWNLOAD_ROWS.contains(&self.row.as_str());
         match &self.kind {
             ReleaseKind::Download { signing, system } => {
@@ -110,6 +112,13 @@ impl ReleaseRecord {
                 self.row,
                 self.kind.name()
             )),
+            ReleaseKind::Receipt if !crate::release::macos::receipt_row(&self.row) => Err(format!(
+                "P16-{} is not a row a USER release receipt stands for",
+                self.row
+            )),
+            ReleaseKind::Waiver if !crate::release::macos::waivable(&self.row) => {
+                Err(format!("P16-{} cannot be waived for a release", self.row))
+            }
             _ => Ok(()),
         }
     }
@@ -118,6 +127,25 @@ impl ReleaseRecord {
     pub fn parse(kind: &str, value: &Value, recorded_unix: u64) -> Result<Option<Self>, String> {
         let text =
             |key: &str| -> Result<String, String> { Ok(value.field(key)?.string()?.to_owned()) };
+        let mut allowed = vec![
+            "kind",
+            "row",
+            "candidate_receipt_sha256",
+            "environment",
+            "quote",
+            "batch",
+            "recorded_unix",
+        ];
+        if kind == "download" {
+            allowed.extend(["signing", "system"]);
+        }
+        if let (true, Value::Object(fields)) = (
+            matches!(kind, "release-receipt" | "release-waiver" | "download"),
+            value,
+        ) && let Some(extra) = fields.keys().find(|key| !allowed.contains(&key.as_str()))
+        {
+            return Err(format!("a {kind} record has no field {extra}"));
+        }
         let kind = match kind {
             "release-receipt" => ReleaseKind::Receipt,
             "release-waiver" => ReleaseKind::Waiver,
@@ -220,6 +248,22 @@ mod tests {
         let mut silent = record(ReleaseKind::Waiver, "R01");
         silent.quote = String::new();
         assert!(silent.validate().is_err());
+    }
+
+    /// Review S6: a line is read as strictly as it is recorded: no field beyond its kind's, and
+    /// only the rows the recorder accepts.
+    #[test]
+    fn a_hand_written_release_line_cannot_add_what_the_recorder_refuses() {
+        let receipt = Record::Release(record(ReleaseKind::Receipt, "W05")).line();
+        assert!(read_all(&receipt).is_ok());
+        let failed = receipt.replacen("\"row\"", "\"verdict\":\"FAIL\",\"row\"", 1);
+        assert!(read_all(&failed).unwrap_err().contains("no field verdict"));
+        let r03 = Record::Release(record(ReleaseKind::Waiver, "R03")).line();
+        assert!(read_all(&r03).unwrap_err().contains("cannot be waived"));
+        let gui = Record::Release(record(ReleaseKind::Receipt, "W02")).line();
+        assert!(read_all(&gui).unwrap_err().contains("not a row"));
+        let source = Record::Release(record(ReleaseKind::Waiver, "S01")).line();
+        assert!(read_all(&source).is_err());
     }
 
     #[test]

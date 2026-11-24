@@ -561,8 +561,15 @@ pub(crate) struct Resolved {
 }
 
 /// Whether a candidate receipt is in place at all; the resolver alone says whether it holds.
-pub(crate) fn receipt_present(root: &Path) -> bool {
-    fs::symlink_metadata(root.join(RECEIPT)).is_ok()
+/// Only a missing receipt is absent; any other error is reported as it is.
+pub(crate) fn receipt_present(root: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(root.join(RECEIPT)) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "cannot inspect the macOS candidate receipt: {error}"
+        )),
+    }
 }
 
 /// The staged candidate the artifact-bound macOS runners use. The receipt must be complete; the
@@ -624,6 +631,23 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<Resolved, String> {
     }
     if integrity::sha256(&app.join("Contents/MacOS/StickyMD"))? != field("app_executable_sha256")? {
         return Err("the staged executable does not match the receipt".to_owned());
+    }
+    if crate::mac_common::fixture::app_inputs(&app)?.as_deref()
+        != Some(field("app_inputs")?.as_str())
+    {
+        return Err("the staged bundle's product inputs differ from the receipt".to_owned());
+    }
+    let source_commit = field("source_commit")?;
+    integrity::validate_hex(&source_commit, 40, "the receipt's source commit")?;
+    // Both are facts Promote computed; recompute them, so a receipt that misstates either fails.
+    let lock = crate::release::platform_inputs::git(root)
+        .args(["cat-file", "blob", &format!("{source_commit}:Cargo.lock")])
+        .output()
+        .map_err(|error| format!("cannot read Cargo.lock at {source_commit}: {error}"))?;
+    if !lock.status.success()
+        || integrity::sha256_bytes(&lock.stdout)? != field("cargo_lock_sha256")?
+    {
+        return Err("the receipt's Cargo.lock digest is not the build source's".to_owned());
     }
     let source = field("source_commit")?;
     if super::listing::verify_archive(&staging.join(&zip_name))? != source {
@@ -852,7 +876,7 @@ mod tests {
             error.contains(&format!("the staged {zip_name} does not match the receipt")),
             "{error}"
         );
-        assert!(receipt_present(root));
+        assert_eq!(receipt_present(root), Ok(true));
     }
 
     #[test]

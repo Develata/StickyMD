@@ -17,6 +17,43 @@ pub(super) use format::{parse, render};
 /// Where the receipt lives; the runner replaces it, the gate reads it.
 pub(super) const RECEIPT: &str = "dist/evidence/release-source-tests-macos.json";
 
+/// Held exclusively by a run from before it retires the old receipt until it has published the
+/// new one, and shared by the gate while it reads the receipt: two runs never overlap, and the
+/// gate never reads a receipt a run is replacing. The operating system releases it when the
+/// holder exits, killed or not.
+#[cfg(target_os = "macos")]
+const LOCK: &str = "dist/evidence/.release-source-tests-macos.lock";
+
+/// The lock, or `None` when another holder keeps it.
+#[cfg(target_os = "macos")]
+pub(super) fn lock(
+    root: &std::path::Path,
+    exclusive: bool,
+) -> Result<Option<std::fs::File>, String> {
+    let path = root.join(LOCK);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let taken = if exclusive {
+        file.try_lock()
+    } else {
+        file.try_lock_shared()
+    };
+    match taken {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => {
+            Err(format!("cannot lock {}: {error}", path.display()))
+        }
+    }
+}
+
 /// The eight packages the row names, in the order of `release-macos`'s self-check.
 pub(super) const PACKAGES: [&str; 8] = [
     "stickymd-core",
@@ -87,9 +124,13 @@ pub(super) struct Counts {
 }
 
 impl Counts {
-    /// libtest's own arithmetic: every test it ran ended in exactly one of these.
+    /// libtest's own arithmetic: every test it ran ended in exactly one of these. Summed without
+    /// wrapping, so no recorded count can overflow into agreement.
     fn adds_up(&self) -> bool {
-        self.passed + self.failed + self.ignored + self.measured == self.ran
+        [self.failed, self.ignored, self.measured]
+            .into_iter()
+            .try_fold(self.passed, u64::checked_add)
+            == Some(self.ran)
     }
 }
 
@@ -151,15 +192,17 @@ pub(super) enum Outcome {
 }
 
 /// The verdicts of the source-test row and of the same-key row (plan 11
-/// #macos-readiness-check): identity first, then recorded failures, then completeness.
-pub(super) fn judge(receipt: &Receipt, release: &str) -> (Outcome, Outcome) {
+/// #macos-readiness-check): identity first, then recorded failures, then completeness, the
+/// latter against `targets`, R's test binaries and doc-tested libraries as `cargo metadata`
+/// lists them on R apart from the receipt.
+pub(super) fn judge(receipt: &Receipt, release: &str, targets: &[Target]) -> (Outcome, Outcome) {
     if let Err(reason) = identity(receipt, release) {
         return (
             Outcome::NotTested(reason.clone()),
             Outcome::NotTested(reason),
         );
     }
-    (main(receipt), same_key(&receipt.same_key))
+    (main(receipt, targets), same_key(&receipt.same_key))
 }
 
 /// R, both ends clean at R, the two commands exactly, a macOS arm64 host.
@@ -197,7 +240,7 @@ fn identity(receipt: &Receipt, release: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn main(receipt: &Receipt) -> Outcome {
+fn main(receipt: &Receipt, targets: &[Target]) -> Outcome {
     if receipt.exit_code != Some(0) {
         return Outcome::Fail(format!("cargo test exited with {:?}", receipt.exit_code));
     }
@@ -222,6 +265,22 @@ fn main(receipt: &Receipt) -> Outcome {
         || ran.windows(2).any(|pair| pair[0] == pair[1])
     {
         return Outcome::NotTested("a test binary is listed twice".to_owned());
+    }
+    let mut listed = targets.to_vec();
+    listed.sort();
+    if expected != listed {
+        let missing: Vec<String> = listed
+            .iter()
+            .filter(|target| !expected.contains(target))
+            .map(|t| format!("{} {} {}", t.package, t.kind, t.name))
+            .collect();
+        return Outcome::NotTested(format!(
+            "the receipt's test list is not R's (cargo metadata): missing {missing:?}, {} listed beside them",
+            expected
+                .iter()
+                .filter(|target| !listed.contains(target))
+                .count()
+        ));
     }
     if ran != expected {
         return Outcome::NotTested(format!(
@@ -265,7 +324,13 @@ fn same_key(run: &SameKey) -> Outcome {
             run.exit_code, counts.failed
         ));
     }
-    if counts.passed == SAME_KEY_TESTS.len() as u64 && counts.ignored == 0 && counts.adds_up() {
+    let both = SAME_KEY_TESTS.len() as u64;
+    if counts.ran == both
+        && counts.passed == both
+        && counts.ignored == 0
+        && counts.measured == 0
+        && counts.adds_up()
+    {
         Outcome::Pass
     } else {
         Outcome::NotTested(format!(

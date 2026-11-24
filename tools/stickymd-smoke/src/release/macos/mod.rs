@@ -14,9 +14,9 @@ pub(crate) mod promote;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod ready;
 #[cfg(target_os = "macos")]
-pub(crate) use ready::waivable;
-#[cfg(target_os = "macos")]
 pub(super) use ready::{ready_command, source_tests_command};
+#[cfg(any(target_os = "macos", test))]
+pub(crate) use ready::{receipt_row, waivable};
 
 use std::path::Path;
 
