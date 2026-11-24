@@ -1,8 +1,8 @@
 //! The receipt of the source tests on the release commit R (plan 11 #macos-release-gate, the
 //! "R 上的源码测试" row; format #macos-readiness-check): what the run recorded, and how the gate
-//! judges it. The judgement reads only recorded facts: the exact command, the source identity
-//! at start and end, and libtest's own counts per test binary, against the set Cargo said it
-//! would run.
+//! judges it (`verdict`). Each test binary carries every test its own `--list` names, with the
+//! outcome the run printed for it; the explicit runs of ignored tests (P18-L08's two volumes,
+//! P16-S06's exFAT volume) carry the same, by test name (USER 2026-11-24, decision (a)).
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 mod format;
@@ -11,26 +11,27 @@ pub(super) mod output;
 pub(super) mod run;
 #[cfg(test)]
 mod tests;
+mod verdict;
 
 pub(super) use format::{parse, render};
+#[cfg(target_os = "macos")]
+pub(super) use verdict::Verdicts;
+pub(super) use verdict::{Outcome, judge};
 
 /// Where the receipt lives; the runner replaces it, the gate reads it.
-pub(super) const RECEIPT: &str = "dist/evidence/release-source-tests-macos.json";
+pub(crate) const RECEIPT: &str = "dist/evidence/release-source-tests-macos.json";
 
 /// Held exclusively by a run from before it retires the old receipt until it has published the
 /// new one, and shared by the gate while it reads the receipt: two runs never overlap, and the
 /// gate never reads a receipt a run is replacing. The operating system releases it when the
 /// holder exits, killed or not.
-#[cfg(target_os = "macos")]
-const LOCK: &str = "dist/evidence/.release-source-tests-macos.lock";
+pub(crate) const LOCK: &str = "dist/evidence/.release-source-tests-macos.lock";
 
-/// The lock, or `None` when another holder keeps it.
+/// The run's lock, created if need be, or `None` while another holder keeps it.
 #[cfg(target_os = "macos")]
-pub(super) fn lock(
-    root: &std::path::Path,
-    exclusive: bool,
-) -> Result<Option<std::fs::File>, String> {
+pub(super) fn lock_for_run(root: &std::path::Path) -> Result<Option<std::fs::File>, String> {
     let path = root.join(LOCK);
+    refuse_link(&path)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -40,18 +41,56 @@ pub(super) fn lock(
         .truncate(false)
         .open(&path)
         .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
-    let taken = if exclusive {
-        file.try_lock()
-    } else {
-        file.try_lock_shared()
-    };
-    match taken {
+    match file.try_lock() {
         Ok(()) => Ok(Some(file)),
         Err(std::fs::TryLockError::WouldBlock) => Ok(None),
         Err(std::fs::TryLockError::Error(error)) => {
             Err(format!("cannot lock {}: {error}", path.display()))
         }
     }
+}
+
+/// What a reader finds at the run's lock.
+#[cfg(target_os = "macos")]
+pub(super) enum Reading {
+    /// No run holds it; the shared lock (if the file exists) keeps one from starting meanwhile.
+    Free {
+        /// Held to keep a run from starting meanwhile; never read.
+        _held: Option<std::fs::File>,
+    },
+    /// A run is in progress: it has retired the old receipt and not published its own.
+    Busy,
+}
+
+/// The run's lock for a reader: opened read-only, never created (the gate writes nothing), and
+/// absent only when no run ever started.
+#[cfg(target_os = "macos")]
+pub(super) fn lock_for_reading(root: &std::path::Path) -> Result<Reading, String> {
+    let path = root.join(LOCK);
+    refuse_link(&path)?;
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Reading::Free { _held: None });
+        }
+        Err(error) => return Err(format!("cannot open {}: {error}", path.display())),
+    };
+    match file.try_lock_shared() {
+        Ok(()) => Ok(Reading::Free { _held: Some(file) }),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(Reading::Busy),
+        Err(std::fs::TryLockError::Error(error)) => {
+            Err(format!("cannot lock {}: {error}", path.display()))
+        }
+    }
+}
+
+/// A lock or receipt reached through a link would be locked or replaced as the link.
+#[cfg(target_os = "macos")]
+pub(super) fn refuse_link(path: &std::path::Path) -> Result<(), String> {
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(format!("{} is a symbolic link", path.display()));
+    }
+    Ok(())
 }
 
 /// The eight packages the row names, in the order of `release-macos`'s self-check.
@@ -73,6 +112,23 @@ pub(super) const SAME_KEY_TESTS: [&str; 2] = [
     "note_root::tests::on_a_case_sensitive_volume_case_makes_another_key",
 ];
 
+/// P16-S06's test (`#[ignore]`, it mounts an exFAT disk image).
+pub(super) const S06_TESTS: [&str; 1] =
+    ["paths::tests::an_exfat_volume_is_refused_and_keeps_no_probe_file"];
+
+/// The explicit runs the receipt carries, by gate item, in this order (decision (a)).
+pub(super) const EXPLICIT: [(&str, &[&str]); 2] =
+    [("same-key", &SAME_KEY_TESTS), ("P16-S06", &S06_TESTS)];
+
+/// The binary the explicit runs select.
+pub(super) fn explicit_target() -> Target {
+    Target {
+        package: "stickymd-mac".to_owned(),
+        kind: "bin".to_owned(),
+        name: "stickymd-mac".to_owned(),
+    }
+}
+
 /// The one command the row allows: `cargo test --locked`, the eight packages, no filter.
 pub(super) fn command() -> Vec<String> {
     let mut argv = vec!["cargo".to_owned(), "test".to_owned(), "--locked".to_owned()];
@@ -83,8 +139,8 @@ pub(super) fn command() -> Vec<String> {
     argv
 }
 
-/// The explicit run of both same-key tests, the ignored one included.
-pub(super) fn same_key_command() -> Vec<String> {
+/// The explicit run of `tests`, ignored ones included, by exact name.
+pub(super) fn explicit_command(tests: &[&str]) -> Vec<String> {
     let mut argv: Vec<String> = [
         "cargo",
         "test",
@@ -99,7 +155,7 @@ pub(super) fn same_key_command() -> Vec<String> {
     ]
     .map(str::to_owned)
     .to_vec();
-    argv.extend(SAME_KEY_TESTS.map(str::to_owned));
+    argv.extend(tests.iter().map(|test| (*test).to_owned()));
     argv
 }
 
@@ -134,10 +190,50 @@ impl Counts {
     }
 }
 
+/// What the run printed for one test.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CaseOutcome {
+    Ok,
+    Failed,
+    Ignored,
+    /// Listed by the binary but not printed by the run.
+    NotRun,
+}
+
+impl CaseOutcome {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Failed => "failed",
+            Self::Ignored => "ignored",
+            Self::NotRun => "not-run",
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        Some(match label {
+            "ok" => Self::Ok,
+            "failed" => Self::Failed,
+            "ignored" => Self::Ignored,
+            "not-run" => Self::NotRun,
+            _ => return None,
+        })
+    }
+}
+
+/// One test: its full libtest name, whether its binary lists it as ignored, and its outcome.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Case {
+    pub name: String,
+    pub ignored: bool,
+    pub outcome: CaseOutcome,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Run {
     pub target: Target,
     pub counts: Counts,
+    pub cases: Vec<Case>,
 }
 
 /// The source identity at one end of the run.
@@ -159,12 +255,20 @@ pub(super) struct Host {
     pub rustc: String,
 }
 
+/// One explicit run of ignored tests for a gate item.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct SameKey {
+pub(super) struct Explicit {
+    pub item: String,
     pub command: Vec<String>,
     pub tests: Vec<String>,
+    /// The binary the run's one section belongs to, when it could be named.
+    pub target: Option<Target>,
     pub counts: Option<Counts>,
+    pub cases: Vec<Case>,
     pub exit_code: Option<i32>,
+    /// The temporary volume's case behaviour the runner probed (`case-insensitive`); P18-L08's
+    /// other volume is the case-sensitive image its own test mounts and asserts.
+    pub temporary_volume: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -178,166 +282,98 @@ pub(super) struct Receipt {
     pub exit_code: Option<i32>,
     pub expected: Vec<Target>,
     pub binaries: Vec<Run>,
-    pub same_key: SameKey,
+    pub explicit: Vec<Explicit>,
     /// What the runner could not establish (discovery or output it could not read).
     pub problems: Vec<String>,
 }
 
-/// A gate verdict from a receipt: not established (`NotTested`), a recorded failure, or PASS.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Outcome {
-    Pass,
-    Fail(String),
-    NotTested(String),
-}
-
-/// The verdicts of the source-test row and of the same-key row (plan 11
-/// #macos-readiness-check): identity first, then recorded failures, then completeness, the
-/// latter against `targets`, R's test binaries and doc-tested libraries as `cargo metadata`
-/// lists them on R apart from the receipt.
-pub(super) fn judge(receipt: &Receipt, release: &str, targets: &[Target]) -> (Outcome, Outcome) {
-    if let Err(reason) = identity(receipt, release) {
-        return (
-            Outcome::NotTested(reason.clone()),
-            Outcome::NotTested(reason),
-        );
-    }
-    (main(receipt, targets), same_key(&receipt.same_key))
-}
-
-/// R, both ends clean at R, the two commands exactly, a macOS arm64 host.
-fn identity(receipt: &Receipt, release: &str) -> Result<(), String> {
-    let release = release.to_ascii_lowercase();
-    if receipt.release_source != release {
-        return Err(format!(
-            "the receipt is for {}, not {release}",
-            receipt.release_source
-        ));
-    }
-    for (end, side) in [("start", &receipt.start), ("end", &receipt.end)] {
-        if side.head != release || !side.clean {
-            return Err(format!(
-                "at the {end} the checkout was {} (clean {}), not a clean {release}",
-                side.head, side.clean
-            ));
-        }
-    }
-    if receipt.command != command() {
-        return Err(format!(
-            "the command {:?} is not the row's command",
-            receipt.command
-        ));
-    }
-    if receipt.same_key.command != same_key_command() || receipt.same_key.tests != SAME_KEY_TESTS {
-        return Err("the same-key run is not the required command".to_owned());
-    }
-    if receipt.host.product_name != "macOS" || receipt.host.arch != "arm64" {
-        return Err(format!(
-            "the host is {} {}, not macOS arm64",
-            receipt.host.product_name, receipt.host.arch
-        ));
-    }
-    Ok(())
-}
-
-fn main(receipt: &Receipt, targets: &[Target]) -> Outcome {
-    if receipt.exit_code != Some(0) {
-        return Outcome::Fail(format!("cargo test exited with {:?}", receipt.exit_code));
-    }
-    if let Some(run) = receipt.binaries.iter().find(|run| run.counts.failed > 0) {
-        return Outcome::Fail(format!(
-            "{} {} {}: {} failed",
-            run.target.package, run.target.kind, run.target.name, run.counts.failed
-        ));
-    }
-    if let Some(problem) = receipt.problems.first() {
-        return Outcome::NotTested(format!("the runner recorded: {problem}"));
-    }
-    let mut expected = receipt.expected.clone();
-    expected.sort();
-    let mut ran: Vec<Target> = receipt
-        .binaries
-        .iter()
-        .map(|run| run.target.clone())
-        .collect();
-    ran.sort();
-    if expected.windows(2).any(|pair| pair[0] == pair[1])
-        || ran.windows(2).any(|pair| pair[0] == pair[1])
-    {
-        return Outcome::NotTested("a test binary is listed twice".to_owned());
-    }
-    let mut listed = targets.to_vec();
-    listed.sort();
-    if expected != listed {
-        let missing: Vec<String> = listed
-            .iter()
-            .filter(|target| !expected.contains(target))
-            .map(|t| format!("{} {} {}", t.package, t.kind, t.name))
-            .collect();
-        return Outcome::NotTested(format!(
-            "the receipt's test list is not R's (cargo metadata): missing {missing:?}, {} listed beside them",
-            expected
-                .iter()
-                .filter(|target| !listed.contains(target))
-                .count()
-        ));
-    }
-    if ran != expected {
-        return Outcome::NotTested(format!(
-            "the run covered {} of the {} test binaries and doc-test libraries Cargo listed",
-            ran.iter()
-                .filter(|target| expected.contains(target))
-                .count(),
-            expected.len()
-        ));
-    }
-    if let Some(package) = PACKAGES
-        .iter()
-        .find(|package| !expected.iter().any(|target| target.package == **package))
-    {
-        return Outcome::NotTested(format!("no test binary of {package} ran"));
-    }
-    if let Some(run) = receipt
-        .binaries
-        .iter()
-        .find(|run| run.counts.filtered_out > 0 || !run.counts.adds_up())
-    {
-        return Outcome::NotTested(format!(
-            "{} {} {} filtered tests out or does not add up",
-            run.target.package, run.target.kind, run.target.name
-        ));
-    }
-    Outcome::Pass
-}
-
-fn same_key(run: &SameKey) -> Outcome {
-    let Some(counts) = run.counts else {
-        return if run.exit_code == Some(0) {
-            Outcome::NotTested("the same-key run printed no test result".to_owned())
+/// A receipt that judges PASS on every verdict, for `expected` (tests only): each binary holds
+/// three passing tests; stickymd-mac's binary also lists the explicit runs' tests, the ignored
+/// ones as ignored, and the explicit runs ran exactly them.
+#[cfg(test)]
+pub(super) fn fixture(release: &str, expected: Vec<Target>) -> Receipt {
+    let case = |name: &str, ignored: bool| Case {
+        name: name.to_owned(),
+        ignored,
+        outcome: if ignored {
+            CaseOutcome::Ignored
         } else {
-            Outcome::Fail(format!("the same-key run exited with {:?}", run.exit_code))
-        };
+            CaseOutcome::Ok
+        },
     };
-    if run.exit_code != Some(0) || counts.failed > 0 {
-        return Outcome::Fail(format!(
-            "the same-key run exited with {:?}, {} failed",
-            run.exit_code, counts.failed
-        ));
-    }
-    let both = SAME_KEY_TESTS.len() as u64;
-    if counts.ran == both
-        && counts.passed == both
-        && counts.ignored == 0
-        && counts.measured == 0
-        && counts.adds_up()
-    {
-        Outcome::Pass
-    } else {
-        Outcome::NotTested(format!(
-            "the same-key run passed {} of its {} tests ({} ignored)",
-            counts.passed,
-            SAME_KEY_TESTS.len(),
-            counts.ignored
-        ))
+    let binaries = expected
+        .iter()
+        .map(|target| {
+            let mut cases: Vec<Case> = (0..3)
+                .map(|i| case(&format!("{}::tests::t{i}", target.name), false))
+                .collect();
+            if *target == explicit_target() {
+                cases.push(case(SAME_KEY_TESTS[0], false));
+                cases.push(case(SAME_KEY_TESTS[1], true));
+                cases.push(case(S06_TESTS[0], true));
+            }
+            let ignored = cases.iter().filter(|c| c.ignored).count() as u64;
+            Run {
+                target: target.clone(),
+                counts: Counts {
+                    ran: cases.len() as u64,
+                    passed: cases.len() as u64 - ignored,
+                    ignored,
+                    ..Counts::default()
+                },
+                cases,
+            }
+        })
+        .collect();
+    let explicit = EXPLICIT
+        .iter()
+        .map(|(item, tests)| Explicit {
+            item: (*item).to_owned(),
+            command: explicit_command(tests),
+            tests: tests.iter().map(|t| (*t).to_owned()).collect(),
+            target: Some(explicit_target()),
+            counts: Some(Counts {
+                ran: tests.len() as u64,
+                passed: tests.len() as u64,
+                filtered_out: 10,
+                ..Counts::default()
+            }),
+            cases: tests
+                .iter()
+                .map(|t| Case {
+                    name: (*t).to_owned(),
+                    ignored: *t != SAME_KEY_TESTS[0],
+                    outcome: CaseOutcome::Ok,
+                })
+                .collect(),
+            exit_code: Some(0),
+            temporary_volume: (*item == "same-key").then(|| "case-insensitive".to_owned()),
+        })
+        .collect();
+    Receipt {
+        release_source: release.to_owned(),
+        host: Host {
+            product_name: "macOS".into(),
+            product_version: "27.2".into(),
+            build_version: "27C55".into(),
+            arch: "arm64".into(),
+            virtual_machine: "0".into(),
+            cargo: "cargo 1.97.1".into(),
+            rustc: "rustc 1.97.1".into(),
+        },
+        start: Side {
+            head: release.into(),
+            clean: true,
+        },
+        end: Side {
+            head: release.into(),
+            clean: true,
+        },
+        command: command(),
+        exit_code: Some(0),
+        expected,
+        binaries,
+        explicit,
+        problems: Vec::new(),
     }
 }

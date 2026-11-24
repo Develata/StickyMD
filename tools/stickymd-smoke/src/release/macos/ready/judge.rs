@@ -112,19 +112,24 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
         Read::Missing(reason) => line("package", Verdict::NotTested, reason.clone()),
         Read::Invalid(reason) => line("package", Verdict::Fail, reason.clone()),
     };
-    let (tests, same_key) = match (&inputs.source_tests, &inputs.targets) {
+    let (tests, same_key, s06) = match (&inputs.source_tests, &inputs.targets) {
         (Read::Present(receipt), Read::Present(targets)) => {
-            let (tests, same_key) = source_tests::judge(receipt, inputs.release, targets);
+            let verdicts = source_tests::judge(receipt, inputs.release, targets);
             (
                 from_outcome(
                     "source-tests",
-                    tests,
-                    "the eight packages' default tests passed on R",
+                    verdicts.tests,
+                    "the eight packages' default tests passed on R, test by test",
                 ),
                 from_outcome(
                     "same-key",
-                    same_key,
-                    "both same-key tests (two volume kinds) passed on R",
+                    verdicts.same_key,
+                    "both same-key tests passed on R: the case-insensitive temporary volume and the case-sensitive image",
+                ),
+                from_outcome(
+                    "P16-S06",
+                    verdicts.s06,
+                    "the exFAT test passed on R in its explicit run",
                 ),
             )
         }
@@ -132,6 +137,7 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
         | (_, Read::Missing(reason) | Read::Invalid(reason)) => (
             line("source-tests", Verdict::NotTested, reason.clone()),
             line("same-key", Verdict::NotTested, reason.clone()),
+            line("P16-S06", Verdict::NotTested, reason.clone()),
         ),
     };
     let download = download(inputs);
@@ -143,11 +149,11 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
                 item,
                 ..tests.clone()
             },
-            Class::IgnoredSource => line(
-                &item,
-                Verdict::NotTested,
-                "its test is #[ignore] (it mounts a disk image), so the source-test receipt does not run it; how it gets evidence on R awaits a decision (M5 report)",
-            ),
+            // Its test is #[ignore]; the receipt's explicit run stands for it (decision (a)).
+            Class::IgnoredSource => Line {
+                item,
+                ..s06.clone()
+            },
             Class::Package => Line {
                 item,
                 ..package.clone()

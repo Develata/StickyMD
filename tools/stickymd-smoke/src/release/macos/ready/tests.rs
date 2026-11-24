@@ -3,7 +3,7 @@
 
 use super::judge::{Candidate, Inputs, Line, Read, Verdict, judge, ready};
 use super::rows::{Class, ROWS};
-use super::source_tests::{self, Counts, Host, Receipt, Run, SameKey, Side, Target};
+use super::source_tests::{self, Receipt, Target};
 use crate::mac_ledger::record::{Built, Identity, Record, Revoked};
 use crate::mac_ledger::release::{DOWNLOAD_ROWS, ReleaseKind, ReleaseRecord};
 
@@ -79,52 +79,7 @@ fn receipt() -> Receipt {
             },
         })
         .collect();
-    Receipt {
-        release_source: R.into(),
-        host: Host {
-            product_name: "macOS".into(),
-            product_version: "27.2".into(),
-            build_version: "27C55".into(),
-            arch: "arm64".into(),
-            virtual_machine: "0".into(),
-            cargo: "cargo 1.97.1".into(),
-            rustc: "rustc 1.97.1".into(),
-        },
-        start: Side {
-            head: R.into(),
-            clean: true,
-        },
-        end: Side {
-            head: R.into(),
-            clean: true,
-        },
-        command: source_tests::command(),
-        exit_code: Some(0),
-        binaries: expected
-            .iter()
-            .map(|target| Run {
-                target: target.clone(),
-                counts: Counts {
-                    ran: 3,
-                    passed: 3,
-                    ..Counts::default()
-                },
-            })
-            .collect(),
-        expected,
-        same_key: SameKey {
-            command: source_tests::same_key_command(),
-            tests: source_tests::SAME_KEY_TESTS.map(str::to_owned).to_vec(),
-            counts: Some(Counts {
-                ran: 2,
-                passed: 2,
-                filtered_out: 9,
-                ..Counts::default()
-            }),
-            exit_code: Some(0),
-        },
-        problems: Vec::new(),
-    }
+    source_tests::fixture(R, expected)
 }
 
 fn run(candidate: Read<&Candidate>, records: &[Record], tests: &Receipt) -> Vec<Line> {
@@ -160,7 +115,7 @@ fn awaiting_decision(item: &str) -> bool {
             format!("P16-{row}") == item
                 && matches!(
                     class,
-                    Class::Manual | Class::Resources | Class::Translocation | Class::IgnoredSource
+                    Class::Manual | Class::Resources | Class::Translocation
                 )
         })
 }
@@ -459,7 +414,7 @@ fn with_the_user_records_every_row_but_r03_holds() {
     let lines = run(Read::Present(&candidate), &released(), &receipt());
     for line in &lines {
         let expected = match line.item.as_str() {
-            "P16-R03" | "P16-S06" => Verdict::NotTested,
+            "P16-R03" => Verdict::NotTested,
             "P16-W15" | "P16-W16" | "P16-V05" => Verdict::Excluded,
             "P16-R01" | "P16-R02" | "P16-V03" => Verdict::Waived,
             _ => Verdict::Pass,
@@ -467,13 +422,10 @@ fn with_the_user_records_every_row_but_r03_holds() {
         assert_eq!(line.verdict, expected, "{line:?}");
     }
     assert_line(&lines, "P16-W01", Verdict::Pass, "W01 看过了");
-    assert!(
-        !ready(&lines),
-        "R03 still needs a run on the candidate ZIP, S06 a decision"
-    );
+    assert!(!ready(&lines), "R03 still needs a run on the candidate ZIP");
     let held: Vec<Line> = lines
         .into_iter()
-        .filter(|line| line.item != "P16-R03" && line.item != "P16-S06")
+        .filter(|line| line.item != "P16-R03")
         .collect();
     assert!(ready(&held));
 }
@@ -684,13 +636,23 @@ fn download_records_must_match_the_signing_and_one_major_version() {
     );
 }
 
-/// Review A1: S06's test is `#[ignore]`, so a green default run does not prove it.
+/// Review A1 and decision (a): S06's test is `#[ignore]`, so the default run does not prove it;
+/// the receipt's explicit run does, and without it S06 is not tested.
 #[test]
-fn s06_is_not_proven_by_the_default_run() {
+fn s06_holds_on_its_explicit_run_and_not_on_the_default_run() {
     let candidate = candidate();
     let lines = run(Read::Present(&candidate), &released(), &receipt());
-    assert_line(&lines, "source-tests", Verdict::Pass, "");
-    assert_line(&lines, "P16-S06", Verdict::NotTested, "#[ignore]");
+    assert_line(&lines, "P16-S06", Verdict::Pass, "explicit run");
+    let mut without = receipt();
+    without.explicit.pop();
+    let lines = run(Read::Present(&candidate), &released(), &without);
+    assert_line(
+        &lines,
+        "source-tests",
+        Verdict::NotTested,
+        "explicit runs are",
+    );
+    assert_line(&lines, "P16-S06", Verdict::NotTested, "explicit runs are");
 }
 
 /// Review A7: without R's own target list the receipt proves nothing.
