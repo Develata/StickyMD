@@ -299,6 +299,27 @@ fn phase11b_equals_lines_locate_closers_after_escaped_backslashes() {
     }
 }
 
+/// The located formulas themselves: each multiline closer is the first unescaped one on the
+/// end line, `$$` included (`\$$` does not close, `\\$$` does).
+#[test]
+fn phase11b_equals_lines_locate_each_closer_kind() {
+    for (source, formula) in [
+        ("$a\n\\\\$ b$", "$a\n\\\\$"),
+        ("\\(a\n\\\\)b\\)", "\\(a\n\\\\)b\\)"),
+        ("\\(a\n\\\\\\)", "\\(a\n\\\\\\)"),
+        ("$$a\nb\\$$c$$", "$$a\nb\\$$c$$"),
+        ("$$a\nb\\\\$$ c$$", "$$a\nb\\\\$$"),
+    ] {
+        let formulas = super::scan_formulas(source).expect(source);
+        let outer: Vec<&str> = formulas
+            .iter()
+            .map(|found| &source[found.outer.clone()])
+            .collect();
+        assert_eq!(outer, [formula], "{source:?}");
+    }
+    assert_conversion("$$a\n=\nb\\$$c$$", "$$a=b\\$$c$$");
+}
+
 /// A paragraph that starts with link reference definitions: Comrak 1.0 and later report its
 /// inline positions in place (0.59 shifted them up by the removed lines), so its real formulas
 /// join, while a title that repeats one stays as written.
@@ -408,4 +429,27 @@ fn phase11b_equals_lines_name_each_joined_equals_in_the_result() {
     assert_eq!(equals.len(), conversion.joined_lines());
     assert!(equals.iter().all(|&at| text.as_bytes()[at] == b'='));
     assert!(equals.windows(2).all(|pair| pair[0] < pair[1]));
+}
+/// `forward_position_map` gives `map_position`'s answer for every position, mapped in order,
+/// and still after a step back.
+#[test]
+fn phase11b_equals_lines_forward_position_map_matches_map_position() {
+    let source = "$$\na \n =\n b\n=\nc$$ x \\[d\n=\ne\\] 甲\n\\(f\n  =\ng\\)";
+    let conversion = join_math_equals_lines(source, None).unwrap();
+    assert_eq!(conversion.joined_lines(), 4);
+    let mut map = conversion.forward_position_map();
+    for position in 0..=source.len() {
+        assert_eq!(
+            map(position),
+            conversion.map_position(position),
+            "{position}"
+        );
+    }
+    for position in [3, source.len(), 0, 9, 9, 40] {
+        assert_eq!(
+            map(position),
+            conversion.map_position(position),
+            "{position}"
+        );
+    }
 }

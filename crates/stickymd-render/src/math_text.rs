@@ -21,6 +21,9 @@ use comrak::{Arena, parse_document};
 pub struct EqualsLineConversion {
     text: String,
     removed: Vec<Range<usize>>,
+    /// The source of each formula that had a line joined, delimiters included, in the input
+    /// and in document order. Comrak's formulas do not overlap.
+    formulas: Vec<Range<usize>>,
 }
 
 impl EqualsLineConversion {
@@ -54,12 +57,45 @@ impl EqualsLineConversion {
             .map(|join| [join[0].start - 1, join[0].end, join[1].end])
     }
 
+    /// The formulas that had a line joined, in the input (see `formulas`).
+    pub fn joined_formulas(&self) -> &[Range<usize>] {
+        &self.formulas
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }
 
     pub fn into_text(self) -> String {
         self.text
+    }
+
+    /// `map_position` for a caller that maps positions in non-decreasing order, as a walk over
+    /// a document does: the removed ranges are passed once, so each call is amortized O(1)
+    /// instead of O(joins). A position below the previous one falls back to `map_position`,
+    /// so the result is always the same.
+    pub fn forward_position_map(&self) -> impl FnMut(usize) -> usize + '_ {
+        let mut next = 0;
+        let mut shift = 0;
+        let mut last = 0;
+        move |position| {
+            if position < last {
+                return self.map_position(position);
+            }
+            last = position;
+            // Invariant: `shift` is the length of `removed[..next]`, every range of which ends at
+            // or before `position`.
+            while let Some(range) = self.removed.get(next)
+                && range.end <= position
+            {
+                shift += range.len();
+                next += 1;
+            }
+            match self.removed.get(next) {
+                Some(range) if range.start < position => range.start - shift,
+                _ => position - shift,
+            }
+        }
     }
 
     /// Retained bytes keep their position relative to each other; positions
@@ -99,15 +135,20 @@ pub fn join_math_equals_lines(
         return None;
     }
     let mut removed = Vec::new();
-    for formula in &scan_formulas(source)? {
+    let mut formulas = Vec::new();
+    for formula in scan_formulas(source)? {
         if scope.as_ref().is_none_or(|range| {
             formula.outer.start >= range.start && formula.outer.end <= range.end
         }) {
+            let before = removed.len();
             collect_joins(
                 &source[formula.body.clone()],
                 formula.body.start,
                 &mut removed,
             );
+            if removed.len() > before {
+                formulas.push(formula.outer);
+            }
         }
     }
     // Comrak's formulas do not nest, so joins never overlap; if they did, the
@@ -124,7 +165,11 @@ pub fn join_math_equals_lines(
         cursor = range.end;
     }
     text.push_str(source.get(cursor..)?);
-    Some(EqualsLineConversion { text, removed })
+    Some(EqualsLineConversion {
+        text,
+        removed,
+        formulas,
+    })
 }
 
 /// A `$$...$$`, `\[...\]`, `\(...\)` or `$...$` formula: `outer` includes the

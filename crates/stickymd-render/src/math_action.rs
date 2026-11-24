@@ -87,13 +87,15 @@ pub fn run_math_action(
         return Ok(None);
     }
     // Step 1 scans with Setext off, so it can read a definition, indented code,
-    // an HTML block or an ATX heading that the Preview's dialect sees as its own
-    // block for formula text, and its `$$` pairs ignore block boundaries. When
-    // it joins anything, the Preview's parse of the original text must see each
-    // join as one formula a Setext underline split (`joins_keep_blocks`), and
-    // the Preview's parse of the result, which step 2 converts, must hold each
-    // joined `=` as text (`joins_lie_in_text`). Otherwise step 1 is dropped
-    // whole and step 2 converts the original text with the tree it already has.
+    // an HTML block or inline code that a Setext heading starts in the Preview's
+    // dialect for formula text, and a join can change the blocks after its
+    // formula. When it joins anything, the Preview's parse of the original must
+    // see each join as one formula a Setext underline split
+    // (`joins_keep_blocks`); the Preview's parse of the result, which step 2
+    // converts, must hold each joined `=` as text (`joins_lie_in_text`); and
+    // every block outside the joined formulas must stay as it was
+    // (`joins_keep_surroundings`). Otherwise step 1 is dropped whole and step 2
+    // converts the original text with the tree it already has.
     validate_scope(&snapshot.text, scope.as_ref())?;
     let mut joined = join_math_equals_lines(&snapshot.text, scope.clone());
     let tree = match &joined {
@@ -106,7 +108,9 @@ pub fn run_math_action(
                     generation: snapshot.generation,
                     line_ending: snapshot.line_ending,
                 })?;
-                joins_lie_in_text(&result, joins).then_some(result)
+                (joins_lie_in_text(&result, joins)
+                    && joins_keep_surroundings(&original, &result, joins))
+                .then_some(result)
             } else {
                 None
             };
@@ -155,6 +159,110 @@ fn joins_keep_blocks(tree: &OwnedDocumentTree, joins: &EqualsLineConversion) -> 
         };
         above == equal && (below == equal || below == equal + 1)
     })
+}
+
+/// Whether every leaf block outside the joined formulas keeps its kind, its
+/// source range (through the join's position map) and its containers between
+/// the Preview's parse of the original and of the result. A join can keep a
+/// list item open past its formula, for one: indented code after a blank line
+/// then becomes the item's paragraph, which step 2 would convert. Leaves that
+/// meet a joined formula may change; that is the join's purpose. O(leaves +
+/// joins), since the forward position map passes each removed range once.
+fn joins_keep_surroundings(
+    original: &OwnedDocumentTree,
+    result: &OwnedDocumentTree,
+    joins: &EqualsLineConversion,
+) -> bool {
+    let spans = joins.joined_formulas();
+    // Spans, then leaves, are visited in document order, so positions map forward.
+    let mut map = joins.forward_position_map();
+    let mapped: Vec<Range<usize>> = spans
+        .iter()
+        .map(|span| map(span.start)..map(span.end))
+        .collect();
+    let mut map = joins.forward_position_map();
+    let mut before = Vec::new();
+    outside_leaves(
+        &original.blocks,
+        spans,
+        &mut map,
+        &mut Vec::new(),
+        &mut before,
+    );
+    let mut after = Vec::new();
+    outside_leaves(
+        &result.blocks,
+        &mapped,
+        &mut |at| at,
+        &mut Vec::new(),
+        &mut after,
+    );
+    before == after
+}
+
+/// A leaf block as `joins_keep_surroundings` compares it: its kind (and heading
+/// level), its mapped source range, and the kind and mapped start of each
+/// container around it, outermost first.
+#[derive(Debug, PartialEq, Eq)]
+struct Surrounding {
+    kind: (&'static str, u8),
+    range: Option<Range<usize>>,
+    containers: Vec<(&'static str, Option<usize>)>,
+}
+
+/// Adds the leaves under `blocks` that do not meet a span in `spans` (sorted,
+/// disjoint) to `output`, ranges mapped by `map`. A leaf without a source range
+/// cannot be placed, so it is always compared.
+fn outside_leaves(
+    blocks: &[BlockNode],
+    spans: &[Range<usize>],
+    map: &mut dyn FnMut(usize) -> usize,
+    containers: &mut Vec<(&'static str, Option<usize>)>,
+    output: &mut Vec<Surrounding>,
+) {
+    for block in blocks {
+        let (kind, range) = match block {
+            BlockNode::Paragraph { source_range, .. } => (("paragraph", 0), *source_range),
+            BlockNode::Heading {
+                level,
+                source_range,
+                ..
+            } => (("heading", *level), *source_range),
+            BlockNode::DisplayMath(math) => (("display math", 0), math.source_range),
+            BlockNode::CodeBlock(code) => (("code", 0), code.source_range),
+            BlockNode::Table(table) => (("table", 0), table.source_range),
+            BlockNode::ThematicBreak { source_range } => (("rule", 0), *source_range),
+            BlockNode::HtmlLiteral { source_range, .. } => (("html", 0), *source_range),
+            BlockNode::BlockQuote {
+                blocks,
+                source_range,
+            } => {
+                containers.push(("quote", source_range.map(|range| map(range.start))));
+                outside_leaves(blocks, spans, map, containers, output);
+                containers.pop();
+                continue;
+            }
+            BlockNode::List(list) => {
+                for item in &list.items {
+                    containers.push(("item", item.source_range.map(|range| map(range.start))));
+                    outside_leaves(&item.blocks, spans, map, containers, output);
+                    containers.pop();
+                }
+                continue;
+            }
+        };
+        let meets_span = range.is_some_and(|range| {
+            let at = spans.partition_point(|span| span.end <= range.start);
+            spans.get(at).is_some_and(|span| span.start < range.end)
+        });
+        if !meets_span {
+            output.push(Surrounding {
+                kind,
+                range: range.map(|range| map(range.start)..map(range.end)),
+                containers: containers.clone(),
+            });
+        }
+    }
 }
 
 /// The leaf blocks of one Preview parse that have a source range, in document
@@ -371,6 +479,11 @@ mod tests {
             "$$a\n=\n# b$$",
             "[p]: /p\n$$open\n# H\nprose\n=\nnext$$",
             "> $$a\n=\n> b$$",
+            // Fifth review: joining keeps the list item open past its formula, so the indented
+            // code after the blank line would become the item's paragraph and step 2 would
+            // convert it. The blocks around the formula must stay as they were.
+            "- $$a\n  =\nb$$\n\n    \\(z\\)",
+            "- $$a\n  =\nb$$$\n\n    \\(z\\)",
         ] {
             assert_eq!(pass(text), None, "{text:?}");
             // Step 2 still converts the original text.
@@ -719,9 +832,20 @@ mod tests {
         out
     }
 
-    /// Formula shapes × the block starts a Setext heading lets begin × containers × an optional
-    /// definition in front, through the whole action: whenever step 1's joins are kept, the
-    /// joined text leaves `untouchable` as it was. An oracle independent of the checks.
+    /// Formula shapes × the block starts a Setext heading lets begin × containers (with every
+    /// line prefixed, or the lines after the first lazy) × an optional definition in front ×
+    /// what follows the formula (a reference probe, or indented code after a blank line),
+    /// through the whole action. Whenever step 1's joins are kept, `untouchable` is as it was
+    /// after step 1 and again after step 2 (code stays code, a definition stays a definition),
+    /// and the prefix is kept byte for byte. An oracle independent of the checks, with a
+    /// kept-join count per container.
+    #[derive(Clone, Copy)]
+    enum Lazy {
+        None,
+        All,
+        Last,
+    }
+
     #[test]
     fn phase11b_math_action_joins_touch_nothing_but_formula_text() {
         let lines = [
@@ -740,56 +864,86 @@ mod tests {
             "[x]",
             "b `c",
         ];
-        let mut joined = 0;
+        // (prefix, which lines after the first go without it): none, all, or only the last.
+        let containers = [
+            ("", Lazy::None),
+            ("> ", Lazy::None),
+            ("> ", Lazy::All),
+            ("> ", Lazy::Last),
+            ("- ", Lazy::None),
+            ("- ", Lazy::All),
+            ("- ", Lazy::Last),
+        ];
+        let mut kept = [0_usize; 7];
         for prefix in ["", "[p]: /p\n", "[x]: /v \"t\"\n\n"] {
-            for container in ["", "> ", "- "] {
-                for above in lines {
-                    for below in lines {
-                        for shape in [
-                            "$$a\n=\n{below}$$",
-                            "$${above}\n=\n{below}$$",
-                            "\\[a\n=\n{below}\\]",
-                            "$$a\n{above}\n=\n{below}$$",
-                            "x \\(a\n=\n{below}\\) y",
-                        ] {
-                            let formula = shape.replace("{above}", above).replace("{below}", below);
-                            let body = formula
-                                .lines()
-                                .enumerate()
-                                .map(|(index, line)| {
-                                    if index == 0 || container == "> " {
-                                        format!("{container}{line}")
-                                    } else {
-                                        format!("{}{line}", " ".repeat(container.len()))
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            let text = format!("{prefix}{body}\n\n[x]\n");
-                            let Some(pass) = run_math_action(&snapshot(&text), None).unwrap()
-                            else {
-                                continue;
-                            };
-                            let joins = match &pass {
-                                super::MathActionPass::Joined(joins)
-                                | super::MathActionPass::Converted(Some(joins), _) => joins,
-                                super::MathActionPass::Converted(None, _) => continue,
-                            };
-                            joined += 1;
-                            // The formula's span in each text: it starts after the prefix and
-                            // ends before the closing blank line and probe.
-                            let span = |text: &str| prefix.len()..text.len() - "\n\n[x]\n".len();
-                            assert_eq!(
-                                untouchable(joins.text(), &span(joins.text())),
-                                untouchable(&text, &span(&text)),
-                                "{text:?} -> {:?}",
-                                joins.text()
-                            );
+            for suffix in ["\n\n[x]\n", "\n\n    \\(z\\)\n\n[x]\n"] {
+                for (slot, &(container, lazy)) in containers.iter().enumerate() {
+                    for above in lines {
+                        for below in lines {
+                            for shape in [
+                                "$$a\n=\n{below}$$",
+                                "$${above}\n=\n{below}$$",
+                                "\\[a\n=\n{below}\\]",
+                                "$$a\n{above}\n=\n{below}$$",
+                                "x \\(a\n=\n{below}\\) y",
+                            ] {
+                                let formula =
+                                    shape.replace("{above}", above).replace("{below}", below);
+                                let last = formula.lines().count() - 1;
+                                let body = formula
+                                    .lines()
+                                    .enumerate()
+                                    .map(|(index, line)| match (index, lazy) {
+                                        (0, _) => format!("{container}{line}"),
+                                        (_, Lazy::All) => line.to_owned(),
+                                        (index, Lazy::Last) if index == last => line.to_owned(),
+                                        _ if container == "> " => format!("> {line}"),
+                                        _ => format!("{}{line}", " ".repeat(container.len())),
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                let text = format!("{prefix}{body}{suffix}");
+                                let Some(pass) = run_math_action(&snapshot(&text), None).unwrap()
+                                else {
+                                    continue;
+                                };
+                                let joins = match &pass {
+                                    super::MathActionPass::Joined(joins)
+                                    | super::MathActionPass::Converted(Some(joins), _) => joins,
+                                    super::MathActionPass::Converted(None, _) => continue,
+                                };
+                                kept[slot] += 1;
+                                let span = |text: &str| prefix.len()..text.len() - suffix.len();
+                                assert_eq!(
+                                    untouchable(joins.text(), &span(joins.text())),
+                                    untouchable(&text, &span(&text)),
+                                    "{text:?} -> {:?}",
+                                    joins.text()
+                                );
+                                // Step 2 may then convert formulas outside the span (they were
+                                // formulas before too); the final reading must still match.
+                                let original = span(&text);
+                                let shown = pass.map_position(original.start)
+                                    ..pass.map_position(original.end);
+                                assert_eq!(
+                                    untouchable(pass.text(), &shown),
+                                    untouchable(&text, &original),
+                                    "{text:?} -> {:?}",
+                                    pass.text()
+                                );
+                                assert!(pass.text().starts_with(prefix), "{text:?}");
+                            }
                         }
                     }
                 }
             }
         }
-        assert!(joined > 100, "{joined}");
+        // Every container shape keeps joins, so none is checked only vacuously, except quotes
+        // whose `=` line keeps its `>`: `> =` is not a bare `=`, so step 1 never joins there.
+        assert_eq!((kept[1], kept[3]), (0, 0), "{kept:?}");
+        assert!(
+            [0, 2, 4, 5, 6].iter().all(|&slot| kept[slot] > 1_000),
+            "{kept:?}"
+        );
     }
 }
