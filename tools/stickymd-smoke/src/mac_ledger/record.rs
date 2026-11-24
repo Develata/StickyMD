@@ -90,6 +90,19 @@ pub(crate) enum Record {
 
 const VERDICTS: [&str; 3] = ["PASS", "FAIL", "NOT_TESTED"];
 
+/// The key an image is grouped by: its content digest `sha256:<hex>` (an OCI digest names the
+/// content, whatever repository name precedes it), lowercased; a value without one is kept
+/// lowercased as written.
+pub(crate) fn image_key(image: &str) -> String {
+    let lower = image.to_ascii_lowercase();
+    match lower.rsplit_once("sha256:") {
+        Some((_, hex)) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            format!("sha256:{hex}")
+        }
+        _ => lower,
+    }
+}
+
 /// `sw_vers` text with every run of whitespace made one space, so the VM's own report and the
 /// copy an operator passes compare equal.
 pub(super) fn system(text: &str) -> String {
@@ -146,7 +159,8 @@ impl Record {
                 zip,
                 recorded_unix,
             } => format!(
-                "{{\"kind\":\"automated\",\"row\":{},\"verdict\":{}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"image\":{},\"system\":{},\"evidence\":{},\"evidence_sha256\":{}{},\"recorded_unix\":{recorded_unix}}}",
+                "{{\"kind\":{},\"row\":{},\"verdict\":{}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"image\":{},\"system\":{},\"evidence\":{},\"evidence_sha256\":{}{},\"recorded_unix\":{recorded_unix}}}",
+                quote(super::producers::kind_of(row)),
                 quote(row),
                 quote(verdict),
                 inputs_member(identity.inputs.as_ref()),
@@ -292,8 +306,9 @@ impl Record {
             |key: &str| -> Result<String, String> { Ok(value.field(key)?.string()?.to_owned()) };
         let recorded_unix = value.field("recorded_unix")?.unsigned()?;
         let inputs = optional_text(&value, "app_inputs")?;
-        let record = match text("kind")?.as_str() {
-            "automated" => Self::Automated {
+        let kind = text("kind")?;
+        let record = match kind.as_str() {
+            "automated" | "resources" => Self::Automated {
                 row: text("row")?,
                 verdict: text("verdict")?,
                 identity: Identity {
@@ -350,6 +365,16 @@ impl Record {
                 None => return Err(format!("unknown ledger record kind {other}")),
             },
         };
+        // Review B5: a resource row is kept only by `mac-resources`'s importer, under its own kind;
+        // a line of the other kind naming one (an older GUI-shaped import) has no such producer.
+        if let Self::Automated { row, .. } = &record
+            && super::producers::kind_of(row) != kind
+        {
+            return Err(format!(
+                "a {kind:?} record of {} is not one any producer writes",
+                label(row)
+            ));
+        }
         record.validate()?;
         Ok(record.normalized())
     }
@@ -366,8 +391,9 @@ impl Record {
                 ..
             } => {
                 identity.inputs.as_mut().map(lower);
-                // One image, one spelling: older records may name it in another case.
-                lower(&mut identity.image);
+                // One image, one key (review B4): its content digest, whatever name or case a
+                // record spelled it with; the ledger's bytes keep the spelling.
+                identity.image = image_key(&identity.image);
                 zip.as_mut().map(lower);
                 lower(&mut identity.driver);
                 lower(&mut built.executable);
@@ -557,6 +583,8 @@ pub(super) fn from_evidence(
                 .into(),
         );
     }
+    // mac-logout's evidence names its case (and boot); mac-gui's names none (review S4).
+    let logout_case = optional_text(environment, "case")?;
     let identity = Identity {
         inputs: optional_text(&value, "app_inputs")?,
         driver,
@@ -578,7 +606,7 @@ pub(super) fn from_evidence(
         {
             return Err(format!("P16-{row} appears twice in the evidence"));
         }
-        if !super::producers::gui_row(&row) {
+        if !super::producers::gui_row(&row, logout_case.as_deref()) {
             return Err(format!(
                 "P16-{row} is not a row mac-gui or mac-logout runs; it cannot be recorded from this evidence"
             ));

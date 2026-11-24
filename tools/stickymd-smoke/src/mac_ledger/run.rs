@@ -125,7 +125,8 @@ fn plan(options: &Options, existing: &[Record], rows: &Rows) -> Result<(), Strin
     let identity = Identity {
         inputs: app_inputs(&app.canonicalize().map_err(|e| format!("app path: {e}"))?)?,
         driver: crate::integrity::sha256(driver)?,
-        image: options.image.clone().ok_or("--image missing")?,
+        // Grouped as the ledger's records are: by the image's content digest (review B4).
+        image: record::image_key(options.image.as_deref().ok_or("--image missing")?),
         system: record::system(
             &fs::read_to_string(system_file)
                 .map_err(|e| format!("{}: {e}", system_file.display()))?,

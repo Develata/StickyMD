@@ -28,6 +28,10 @@ pub(super) fn from_evidence(
                 .into(),
         );
     }
+    // Only R03 opens a ZIP; resource evidence naming one is not this tool's (review S4).
+    if optional_text(value, "zip_sha256")?.is_some() {
+        return Err("mac-resources evidence names a ZIP, which only R03 opens".into());
+    }
     let field =
         |v: &Value, key: &str| -> Result<String, String> { Ok(v.field(key)?.string()?.to_owned()) };
     let environment = value.field("environment")?;

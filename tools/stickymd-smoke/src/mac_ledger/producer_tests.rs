@@ -308,11 +308,88 @@ fn only_the_rows_a_producer_runs_are_recorded() {
             "{row}: {error}"
         );
     }
-    for row in ["W02", "W05", "W12-logout-text", "K02"] {
+    for row in ["W02", "W05", "K02"] {
         assert!(record(&gui_evidence(&[row], "")).is_ok(), "{row}");
     }
     let error = record(&gui_evidence(&["W02"], ",\"tool\":\"mac-latency\"")).unwrap_err();
     assert!(error.contains("tool \"mac-latency\""), "{error}");
+    // Review S4: a logout row comes only from mac-logout's evidence, which names its case.
+    let error = record(&gui_evidence(&["W12-logout-text"], "")).unwrap_err();
+    assert!(
+        error.contains("not a row mac-gui or mac-logout runs"),
+        "{error}"
+    );
+    let logout = |case: &str, row: &str| {
+        gui_evidence(&[row], "").replacen(
+            "\"unix_seconds\":42",
+            &format!("\"unix_seconds\":42,\"case\":\"{case}\",\"boot_session\":\"b\""),
+            1,
+        )
+    };
+    assert!(record(&logout("text", "W12-logout-text")).is_ok());
+    for (case, row) in [
+        ("text", "W12-logout-dialog"),
+        ("text", "W02"),
+        ("other", "W12-logout-other"),
+    ] {
+        let error = record(&logout(case, row)).unwrap_err();
+        assert!(error.contains("not a row"), "{case} {row}: {error}");
+    }
+}
+
+/// Review B5: resource rows are their own record kind; a line of the other kind naming one (an
+/// older GUI-shaped import) is refused, and the importer writes the resource kind.
+#[test]
+fn resource_rows_are_recorded_only_under_their_own_kind() {
+    let records = record(&crate::mac_resources::evidence_json(false)).unwrap();
+    let line = records[0].line();
+    assert!(line.contains("\"kind\":\"resources\""), "{line}");
+    assert_eq!(read_all(&line).unwrap(), records[..1]);
+    let error =
+        read_all(&line.replace("\"kind\":\"resources\"", "\"kind\":\"automated\"")).unwrap_err();
+    assert!(error.contains("not one any producer writes"), "{error}");
+    let gui = record(&gui_evidence(&["W02"], "")).unwrap();
+    let error = read_all(
+        &gui[0]
+            .line()
+            .replace("\"kind\":\"automated\"", "\"kind\":\"resources\""),
+    )
+    .unwrap_err();
+    assert!(error.contains("not one any producer writes"), "{error}");
+}
+
+/// Review B4: two spellings of one image digest are one identity, so neither a FAIL nor a system
+/// can be split from a PASS by renaming the image.
+#[test]
+fn one_image_digest_is_one_identity_whatever_its_name() {
+    let digest = "AB".repeat(32);
+    let named = format!("ghcr.io/x/y@sha256:{digest}");
+    let bare = format!("sha256:{}", digest.to_ascii_lowercase());
+    let records = |image: &str| {
+        from_evidence(gui_evidence(&["W02"], "").as_bytes(), "/e.json", image, 3).unwrap()
+    };
+    let identity = |records: &[Record]| match &records[0] {
+        Record::Automated { identity, .. } => identity.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(identity(&records(&named)), identity(&records(&bare)));
+    assert_eq!(identity(&records(&named)).image, bare);
+    // Read back from a line spelled with the name, the key is the digest.
+    let line = records(&named)[0].line().replace(
+        &format!("\"image\":\"{bare}\""),
+        &format!("\"image\":\"{named}\""),
+    );
+    assert!(line.contains("ghcr.io/x/y@"));
+    assert_eq!(
+        identity(&read_all(&line).unwrap()),
+        identity(&records(&bare))
+    );
+    // One digest with two systems is refused whichever spelling each record used.
+    let mut both = records(&named);
+    let other_system = gui_evidence(&["W03"], "").replace("27.2", "27.3");
+    both.extend(from_evidence(other_system.as_bytes(), "/f.json", &bare, 4).unwrap());
+    assert!(check_system(&both).is_err());
+    assert_eq!(super::record::image_key("sha256:image"), "sha256:image");
 }
 
 /// Review F10: one image, one spelling, so its records group together.

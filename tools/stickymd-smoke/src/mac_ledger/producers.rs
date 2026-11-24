@@ -7,9 +7,29 @@
 
 use crate::release::json::Value;
 
-/// Whether a `mac-gui` or `mac-logout` run can produce `row` (stored without its prefix).
-pub(super) fn gui_row(row: &str) -> bool {
-    crate::mac_gui::IDS.contains(&row) || crate::mac_gui::logout::rows().iter().any(|r| r == row)
+/// The rows only `mac-resources` writes.
+pub(super) const RESOURCE_ROWS: [&str; 2] = ["R01", "R02"];
+
+/// The ledger record kind of an automated result of `row`: resource rows have their own, so a
+/// line of the other kind cannot stand for them (review B5).
+pub(super) fn kind_of(row: &str) -> &'static str {
+    if RESOURCE_ROWS.contains(&row) {
+        "resources"
+    } else {
+        "automated"
+    }
+}
+
+/// Whether the producer can write `row` (stored without its prefix): `mac-logout`, whose
+/// evidence names its `case`, only that case's row; `mac-gui` (no case) only the rows it runs.
+pub(super) fn gui_row(row: &str, case: Option<&str>) -> bool {
+    match case {
+        Some(case) => {
+            let row_of_case = format!("W12-logout-{case}");
+            row == row_of_case && crate::mac_gui::logout::rows().contains(&row_of_case)
+        }
+        None => crate::mac_gui::IDS.contains(&row),
+    }
 }
 
 /// An R03 PASS holds exactly R03's checks, in order, and with a ZIP the first names it.
