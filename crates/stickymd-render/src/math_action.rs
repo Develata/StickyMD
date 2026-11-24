@@ -14,9 +14,9 @@ use stickymd_core::DocumentSnapshot;
 
 use crate::math_text::{EqualsLineConversion, join_math_equals_lines};
 use crate::preview::{
-    BlockNode, MAX_PREVIEW_SOURCE_BYTES, MathDelimiterConversion, OwnedDocumentTree,
+    BlockNode, InlineNode, MAX_PREVIEW_SOURCE_BYTES, MathDelimiterConversion, OwnedDocumentTree,
     PreviewParseError, PreviewParser, SemanticConversionError, SourceRange,
-    convert_parsed_latex_math_delimiters,
+    convert_parsed_latex_math_delimiters, validate_scope,
 };
 
 /// The result of one pass that changed the text.
@@ -92,6 +92,7 @@ pub fn run_math_action(
     // block that a Setext heading starts in the Preview's reading for formula
     // text. Then step 1 is dropped whole and step 2 runs on the original text,
     // which costs one more parse on that path only.
+    validate_scope(&snapshot.text, scope.as_ref())?;
     let mut joined = join_math_equals_lines(&snapshot.text, scope.clone());
     let mut tree = None;
     if let Some(joins) = &joined {
@@ -121,39 +122,55 @@ pub fn run_math_action(
 }
 
 /// Whether every `=` that step 1 joined lies, in `tree` (the Preview's parse
-/// of step 1's result), in a paragraph, a heading or a display formula: not
-/// in code, Raw HTML, a table, or on a line no block holds, such as a link
+/// of step 1's result), in a paragraph, a heading or a display formula, and
+/// there outside inline code, Raw HTML, links and images: not in a code block,
+/// an HTML block, a table, or on a line no block holds, such as a link
 /// reference definition. A leaf block without a source range cannot hold a
-/// join, so a join only such a block could hold fails closed. Leaf blocks do
-/// not overlap and `leaf_blocks` yields them in document order, so each join
-/// is one binary search: O(blocks + joins log blocks).
+/// join, and a text block with a protected inline that has none holds no
+/// join, so such joins fail closed. Leaves and protected inlines do not
+/// overlap and are collected in document order, so each join is two binary
+/// searches: O(nodes + joins log nodes).
 fn joins_lie_in_text(tree: &OwnedDocumentTree, joins: &EqualsLineConversion) -> bool {
     let mut leaves = Vec::new();
-    leaf_blocks(&tree.blocks, &mut leaves);
+    let mut protected = Vec::new();
+    leaf_blocks(&tree.blocks, &mut leaves, &mut protected);
     joins.joined_equals().all(|equal| {
         let at = leaves.partition_point(|(range, _)| range.end <= equal);
-        leaves
+        let in_text = leaves
             .get(at)
-            .is_some_and(|&(range, text)| text && range.start <= equal)
+            .is_some_and(|&(range, text)| text && range.start <= equal);
+        let at = protected.partition_point(|range: &SourceRange| range.end <= equal);
+        in_text && protected.get(at).is_none_or(|range| equal < range.start)
     })
 }
 
 /// The leaf blocks under `blocks` that have a source range, in document order,
-/// each with whether it holds text a join may touch.
-fn leaf_blocks(blocks: &[BlockNode], output: &mut Vec<(SourceRange, bool)>) {
+/// each with whether it holds text a join may touch; and, in `protected`, the
+/// ranges of the inline code, Raw HTML, links and images in those text blocks.
+fn leaf_blocks(
+    blocks: &[BlockNode],
+    output: &mut Vec<(SourceRange, bool)>,
+    protected: &mut Vec<SourceRange>,
+) {
     for block in blocks {
         let (range, text) = match block {
-            BlockNode::Paragraph { source_range, .. } | BlockNode::Heading { source_range, .. } => {
-                (*source_range, true)
+            BlockNode::Paragraph {
+                source_range,
+                content,
             }
+            | BlockNode::Heading {
+                source_range,
+                content,
+                ..
+            } => (*source_range, protected_inlines(content, protected)),
             BlockNode::DisplayMath(math) => (math.source_range, true),
             BlockNode::BlockQuote { blocks, .. } => {
-                leaf_blocks(blocks, output);
+                leaf_blocks(blocks, output, protected);
                 continue;
             }
             BlockNode::List(list) => {
                 for item in &list.items {
-                    leaf_blocks(&item.blocks, output);
+                    leaf_blocks(&item.blocks, output, protected);
                 }
                 continue;
             }
@@ -164,6 +181,31 @@ fn leaf_blocks(blocks: &[BlockNode], output: &mut Vec<(SourceRange, bool)>) {
         };
         output.extend(range.map(|range| (range, text)));
     }
+}
+
+/// Adds the ranges of the protected inlines in `inlines` (inline code, Raw
+/// HTML, links, images; nothing inside them) to `protected`, in document
+/// order. False when one of them has no range, so no join is placed there.
+fn protected_inlines(inlines: &[InlineNode], protected: &mut Vec<SourceRange>) -> bool {
+    inlines.iter().all(|inline| match inline {
+        InlineNode::Emphasis { children, .. }
+        | InlineNode::Strong { children, .. }
+        | InlineNode::Strikethrough { children, .. } => protected_inlines(children, protected),
+        InlineNode::Code { source_range, .. }
+        | InlineNode::Link { source_range, .. }
+        | InlineNode::Image { source_range, .. }
+        | InlineNode::HtmlLiteral { source_range, .. } => match source_range {
+            Some(range) => {
+                protected.push(*range);
+                true
+            }
+            None => false,
+        },
+        InlineNode::Text { .. }
+        | InlineNode::InlineMath(_)
+        | InlineNode::SoftBreak { .. }
+        | InlineNode::HardBreak { .. } => true,
+    })
 }
 
 /// Whether `text` holds a `\r` that is not followed by `\n`: one pass over the bytes, no
@@ -198,6 +240,28 @@ mod tests {
         assert_eq!(pass("\\(x\\) and \\(y\\)").change_count(), 2);
     }
 
+    /// An invalid scope is refused before either step parses, so a document over the node limit
+    /// still reports the scope.
+    #[test]
+    fn phase11b_math_action_refuses_an_invalid_scope_before_parsing() {
+        let text = "a\n\n".repeat(100_001);
+        let snapshot = stickymd_core::DocumentSnapshot {
+            text: std::sync::Arc::from(text.as_str()),
+            generation: stickymd_core::Generation::initial(),
+            line_ending: stickymd_core::LineEnding::Lf,
+        };
+        assert!(matches!(
+            super::run_math_action(&snapshot, None),
+            Err(super::SemanticConversionError::Parse(
+                super::PreviewParseError::NodeLimit { .. }
+            ))
+        ));
+        assert!(matches!(
+            super::run_math_action(&snapshot, Some(0..text.len() + 1)),
+            Err(super::SemanticConversionError::InvalidScope)
+        ));
+    }
+
     /// Step 1 scans with Setext off. After a Setext heading, the Preview's dialect reads the
     /// lines it joins as a link reference definition, indented code or an HTML block, so the
     /// joined `=` is not text in the Preview's parse of the result: step 1 is dropped whole and
@@ -220,6 +284,9 @@ mod tests {
             "Heading\n===\n[x]: /v \"$$a\n    =\nb$$\"\n\n[x]",
             "Heading\n===\n    $$a\n    =\n    b$$",
             "Heading\n===\n<custom-tag>\n$$a\n=\nb$$\n",
+            // The Setext heading leaves its backtick unpaired, so the lines below are one code
+            // span; with Setext off the backticks pair the other way (second review, 2026-11-24).
+            "H `\n===\n`$$a\n    =\nb$$`",
         ] {
             assert_eq!(pass(text), None, "{text:?}");
             // Step 2 still converts the original text.

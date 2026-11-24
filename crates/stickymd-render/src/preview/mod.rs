@@ -54,10 +54,10 @@ pub use render_tree::{
     RenderTreeBuilder, SpanAction,
 };
 pub use selection::{PreviewRect, PreviewSelection, PreviewTextBox, PreviewTextIndex};
-pub(crate) use semantic_conversion::convert_parsed_latex_math_delimiters;
 pub use semantic_conversion::{
     MathDelimiterConversion, SemanticConversionError, convert_latex_math_delimiters,
 };
+pub(crate) use semantic_conversion::{convert_parsed_latex_math_delimiters, validate_scope};
 use source_map::SourceMap;
 
 pub use horizontal::{PreviewBlockId, PreviewHorizontalOffsets, PreviewHorizontalTarget};

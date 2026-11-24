@@ -140,7 +140,7 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   `crates/stickymd-render/src/math_text/tests.rs:290` `phase11b_equals_lines_locate_closers_after_escaped_backslashes`、
   `crates/stickymd-render/src/math_text/tests.rs:398` `phase11b_equals_lines_name_each_joined_equals_in_the_result`、
   `phase11b_equals_lines_leave_tables_whole`，`semantic_conversion` 的
-  `crates/stickymd-render/src/preview/semantic_conversion.rs:379` `phase11b_conversion_after_reference_definitions_leaves_titles`，`math_action` 的 `crates/stickymd-render/src/math_action.rs:207` `phase11b_math_action_drops_joins_the_preview_reads_outside_text`（Setext 标题之后的引用定义、缩进代码与 HTML 块中的 `=` 不连接），以及 `flow/editor` 的
+  `crates/stickymd-render/src/preview/semantic_conversion.rs:379` `phase11b_conversion_after_reference_definitions_leaves_titles`，`math_action` 的 `crates/stickymd-render/src/math_action.rs:271` `phase11b_math_action_drops_joins_the_preview_reads_outside_text`（Setext 标题之后的引用定义、缩进代码、HTML 块与行内代码中的 `=` 不连接）、`crates/stickymd-render/src/math_action.rs:246` `phase11b_math_action_refuses_an_invalid_scope_before_parsing`（无效选区在解析前拒绝），以及 `flow/editor` 的
   `phase11b_math_button_joins_equals_before_recognizing_latex_formulas`（含两次点击）、
   `phase11b_math_button_maps_scope_through_equals_then_delimiters`、
   `phase11b_math_button_refuses_a_result_it_would_change_again`、
@@ -149,7 +149,7 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   每个单元另含公式外的裸 `=` 行与一个段首有引用定义的段落；计时为 Flow 调用的同一函数：
   一次处理加提交前的再次处理，不含提交；不计时运行 3 轮后计时 100 轮，每轮先解析同一文档一次：
   按钮中位数不超过解析中位数的 10 倍，nearest-rank p95 `< 100 ms`，即最多 5 个样本可超出）与
-  `crates/stickymd-render/src/math_action.rs:459` `phase11b_performance_math_action_stays_linear_after_reference_definitions`（附加诊断，
+  `crates/stickymd-render/src/math_action.rs:526` `phase11b_performance_math_action_stays_linear_after_reference_definitions`（附加诊断，
   不属于 plan 07 的两项检查：23,717 个段首有引用定义的段落，按钮小于同一文档单次 Comrak 解析的 12 倍）由现有 Phase 11-B
   Release 基线任务运行；实测值连同所用提交与原始
   输出记录在[报告](../report/2026-11-12-math-button-equals-first.md)末节；Comrak 1.2 上的复测见

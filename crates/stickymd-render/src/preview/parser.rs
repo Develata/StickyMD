@@ -83,7 +83,7 @@ impl PreviewParser {
                 source: &snapshot.text,
                 source_map: &source_map,
                 node_count: 0,
-                in_table_cell: false,
+                pipes_unescaped: false,
             };
             let blocks = context.convert_blocks(root, 0)?;
             (blocks, context.node_count)
@@ -109,8 +109,9 @@ struct ConvertContext<'a> {
     source: &'a str,
     source_map: &'a SourceMap,
     node_count: usize,
-    /// Set while a table cell's inlines convert (`escaped_pipe_text_range`).
-    in_table_cell: bool,
+    /// Set while the inlines of a table cell, or of the paragraph Comrak splits off above a
+    /// table, convert: Comrak removed the backslash of each `\|` there (`escaped_pipe_text_range`).
+    pipes_unescaped: bool,
 }
 
 impl ConvertContext<'_> {
@@ -139,9 +140,10 @@ impl ConvertContext<'_> {
             .range(self.source, node.data.borrow().sourcepos)
     }
 
-    /// In a table cell Comrak drops the backslash of `\|` from the text, and a text node that
-    /// starts with such a pipe (at the cell's start, or after emphasis, a link or code) is
-    /// reported from the `|`, leaving the backslash outside every node. The range is widened
+    /// In a table cell, and in the paragraph Comrak splits off above a table, Comrak drops the
+    /// backslash of `\|` from the text, and a text node that starts with such a pipe (at the
+    /// cell's start, or after emphasis, a link or code) is reported from the `|`, leaving the
+    /// backslash outside every node. The range is widened
     /// by that one byte, so the text no longer reads as identical to its source and a copy
     /// that starts there keeps the escape (plan 06 #preview-copy-semantics rule 6). A pipe a
     /// backslash escapes is always text: `\\|` ends the cell instead. Elsewhere the range is
@@ -153,7 +155,7 @@ impl ConvertContext<'_> {
     ) -> Option<SourceRange> {
         let range = range?;
         let widened = range.start.checked_sub(1).and_then(|start| {
-            (self.in_table_cell
+            (self.pipes_unescaped
                 && literal.starts_with('|')
                 && self.source.as_bytes().get(start) == Some(&b'\\')
                 && self.source.as_bytes().get(range.start) == Some(&b'|'))
@@ -194,8 +196,15 @@ impl ConvertContext<'_> {
                     self.touch(depth + 1)?;
                     output.push(BlockNode::DisplayMath(self.math_node(only, math)));
                 } else {
+                    // Comrak also unescapes the pipes of the paragraph it splits off above a
+                    // table's header row.
+                    self.pipes_unescaped = node.next_sibling().is_some_and(|next| {
+                        matches!(next.data.borrow().value, NodeValue::Table(_))
+                    });
+                    let content = self.convert_inlines(node, depth);
+                    self.pipes_unescaped = false;
                     output.push(BlockNode::Paragraph {
-                        content: self.convert_inlines(node, depth)?,
+                        content: content?,
                         source_range,
                     });
                 }
@@ -261,9 +270,9 @@ impl ConvertContext<'_> {
                     let mut cells = Vec::new();
                     for cell in row.children() {
                         self.touch(depth + 2)?;
-                        self.in_table_cell = true;
+                        self.pipes_unescaped = true;
                         let content = self.convert_inlines(cell, depth + 2);
-                        self.in_table_cell = false;
+                        self.pipes_unescaped = false;
                         cells.push(TableCell {
                             content: content?,
                             source_range: self.source_range(cell),

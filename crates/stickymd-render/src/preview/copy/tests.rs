@@ -431,6 +431,8 @@ fn an_escaped_pipe_in_a_table_cell_keeps_its_backslash() {
         copy(&table("a@b.cd\\|e@f.gh\\|i"), "d|e"),
         "a@b.cd\\|e@f.gh"
     );
+    // Comrak unescapes the paragraph it splits off above a table's header row too.
+    assert_eq!(copy("a **\\|xy** q\n| h |\n| - |", "a |"), "a **\\|xy**");
 }
 
 /// P17-C10: for fixed-seed random selections over documents mixing every construct, slices

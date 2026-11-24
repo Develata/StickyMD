@@ -166,7 +166,7 @@ fn apply_replacements(
     Ok(text)
 }
 
-fn validate_scope(
+pub(crate) fn validate_scope(
     source: &str,
     scope: Option<&Range<usize>>,
 ) -> Result<(), SemanticConversionError> {
