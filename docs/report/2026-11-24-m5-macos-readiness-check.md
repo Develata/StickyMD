@@ -283,3 +283,7 @@ M5 producers 转来的 #23 部分：同 bundle、异可执行文件的样本即 
 也经同一函数），去掉可执行文件一项时它变红；本分支的资源行不读字节，资源行的同类样本属于 #24 的 `ready/tests/producers.rs`。本分支的 `with_the_user_records_every_row_but_r03_holds`
 中 S06 凭显式运行 PASS，去掉 R03 前后的就绪对照只差 R03，不需另外排除。P18-P04 与 G01–G03 的行号按测试名重新生成。
 
+**验证**（本机 macOS 27.2.1 arm64，`4e36ebd`）：`stickymd-smoke` 706 + 20 个测试、`stickymd-mac` 124 个测试通过；clippy 在八个 macOS 包上与
+`stickymd-smoke --target x86_64-pc-windows-msvc` 都无警告；fmt 通过。运行器的真实演练（`4e36ebd`，不是正式收据）：23 个目标的 2005 个测试逐个对上清单
+（1972 通过、33 忽略、0 未运行），`problems` 为空，即按完整路径归属与重复名检查在真实输出上没有误拒；same-key 2/2 与 S06 1/1 通过，两个测试自己测得
+临时卷 `case-insensitive`、映像 `case-sensitive`；三项判定都为 PASS，开始与结束都干净。`macos-ready` 的逐行输出仍要等 R 进入 `main`。
