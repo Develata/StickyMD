@@ -10,6 +10,30 @@ pub(crate) fn is_batch(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
+/// A VM image digest as `--image` takes it: `sha256:<64 hex>`, optionally after `<name>@`
+/// (an OCI reference), in lower case so one image is always spelled one way in the ledger.
+pub(crate) fn image_digest(value: &str) -> Result<String, String> {
+    let lower = value.to_ascii_lowercase();
+    // One reference, one digest (review fix round, B3): `name@digest` splits at its only `@`;
+    // a second `@` (`repo@sha256:A@sha256:B`) names two digests and is no reference.
+    let digest = match lower.split_once('@') {
+        None => lower.as_str(),
+        Some((name, digest)) if !name.is_empty() && !digest.contains('@') => digest,
+        Some(_) => "",
+    };
+    let valid = digest
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+        && !lower.bytes().any(|b| b.is_ascii_whitespace());
+    if valid {
+        Ok(lower)
+    } else {
+        Err(format!(
+            "--image {value:?} is not an image digest (sha256:<64 hex>, optionally after <name>@)"
+        ))
+    }
+}
+
 pub(super) const HELP: &str =
     "usage: stickymd-smoke mac-ledger <plan|record|receipt|waive|revoke> [options]
   The product input fingerprint of a checkout is printed by `stickymd-package app-inputs`:
@@ -18,9 +42,11 @@ pub(super) const HELP: &str =
           Lists the mac-gui rows to run, the rows whose PASS is reused (same product inputs,
           driver, VM image and VM system), and the rows the USER or agents still have to judge
           for these inputs. It writes no ledger and launches no app.
-  record  --evidence <mac-gui.json> --image <digest>
-          Appends every row of a finished run in the VM. The same evidence is never recorded
-          twice for a row. Records are not ordered by time: any FAIL, NOT_TESTED or revoked PASS
+  record  --evidence <mac-gui.json | mac-resources.json> --image <digest>
+          Appends every row of a finished run in the VM: each mac-gui row (R03 with the ZIP it
+          opened, when mac-gui --zip gave one; a release's R03 needs the candidate ZIP), or
+          P16-R01 and P16-R02 of a mac-resources run (schema 5, recomputed from its runs). The
+          same evidence is never recorded twice for a row. Records are not ordered by time: any FAIL, NOT_TESTED or revoked PASS
           of a row under an identity stops reuse of that row under it.
   receipt --app <StickyMD.app> --rows <ids> --quote <the USER's words> [--batch <name>]
           Appends a USER receipt per Manual row for the app's product inputs on this desktop.
@@ -190,7 +216,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
             "--ledger" => result.ledger = Some(value.into()),
             "--app" => result.app = Some(value.into()),
             "--driver" => result.driver = Some(value.into()),
-            "--image" => result.image = Some(value.clone()),
+            "--image" => result.image = Some(image_digest(value)?),
             "--system" => result.system = Some(value.into()),
             "--evidence" => result.evidence = Some(value.into()),
             "--evidence-sha256" => result.evidence_sha256 = Some(value.to_ascii_lowercase()),

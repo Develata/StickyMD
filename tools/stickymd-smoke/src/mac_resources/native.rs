@@ -80,10 +80,13 @@ unsafe extern "C" {
     fn CGWindowListCopyWindowInfo(options: u32, relative: u32) -> Cf;
     fn CGRectMakeWithDictionaryRepresentation(dictionary: Cf, rect: *mut Rect) -> bool;
     fn CGMainDisplayID() -> u32;
+    fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
     fn CGDisplayBounds(display: u32) -> Rect;
     fn CGDisplayCopyDisplayMode(display: u32) -> Cf;
     fn CGDisplayModeGetPixelWidth(mode: Cf) -> usize;
     fn CGDisplayModeGetPixelHeight(mode: Cf) -> usize;
+    fn CGDisplayModeGetIODisplayModeID(mode: Cf) -> i32;
+    fn CGDisplayModeGetRefreshRate(mode: Cf) -> f64;
     fn CGDisplayModeRelease(mode: Cf);
 }
 
@@ -151,6 +154,59 @@ pub(super) fn window_ready(pid: u32) -> Result<bool, String> {
         CFRelease(array);
     }
     Ok(ready)
+}
+
+/// How many displays are active: one, for a campaign whose scale is that display's.
+pub(super) fn display_count() -> Result<u32, String> {
+    let mut count = 0_u32;
+    // SAFETY: a zero-length request with a null list only writes the count it was given.
+    let error = unsafe { CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut count) };
+    if error != 0 {
+        return Err(format!("CGGetActiveDisplayList failed: {error}"));
+    }
+    Ok(count)
+}
+
+/// The main display's ID and the active displays' IDs, sorted: what every sample checks is still
+/// the campaign's (review round 3: a second display, or another main one of the same size).
+pub(super) fn displays() -> Result<(u32, Vec<u32>), String> {
+    // Room for displays attached since they were counted: a list that fills it may be cut short
+    // and is not taken (review fix round, 6).
+    let capacity = display_count()? + 4;
+    let mut ids = vec![0_u32; capacity as usize];
+    let mut written = 0_u32;
+    // SAFETY: `ids` holds `capacity` elements; the call writes at most `capacity` IDs into it
+    // and how many it wrote into `written`.
+    let error = unsafe { CGGetActiveDisplayList(capacity, ids.as_mut_ptr(), &mut written) };
+    if error != 0 {
+        return Err(format!("CGGetActiveDisplayList failed: {error}"));
+    }
+    if written >= capacity {
+        return Err("the active display list may be cut short".into());
+    }
+    ids.truncate(written as usize);
+    ids.sort_unstable();
+    // SAFETY: a getter with no arguments.
+    let main = unsafe { CGMainDisplayID() };
+    Ok((main, ids))
+}
+
+/// The main display's mode identifier and refresh rate: a mode of the same size at another
+/// refresh rate is another mode (review fix round, 6).
+pub(super) fn main_mode() -> Result<(i32, f64), String> {
+    // SAFETY: getters borrow the main display; the copied mode is released exactly once.
+    unsafe {
+        let mode = CGDisplayCopyDisplayMode(CGMainDisplayID());
+        if mode.is_null() {
+            return Err("No main display mode".into());
+        }
+        let identity = (
+            CGDisplayModeGetIODisplayModeID(mode),
+            CGDisplayModeGetRefreshRate(mode),
+        );
+        CGDisplayModeRelease(mode);
+        Ok(identity)
+    }
 }
 
 pub(super) fn display() -> Result<[f64; 4], String> {

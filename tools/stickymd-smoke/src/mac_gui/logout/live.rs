@@ -282,19 +282,9 @@ fn coordinate(options: &Options) -> Result<(), String> {
             options.case
         ))
     });
-    let out = crate::mac_gui::runner::output_path(&out)?;
-    if out.starts_with(&app)
-        || out.starts_with(app.parent().ok_or("bundle has no parent")?.join("note"))
-    {
-        return Err("evidence cannot be inside the input bundle or its note directory".into());
-    }
-    if out.join("mac-gui.json").exists() {
-        return Err(format!(
-            "{} already holds a mac-gui.json; each run needs its own --out",
-            out.display()
-        ));
-    }
-    fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    let out = crate::mac_common::output::guarded(&out, &app)?;
+    // Review round 3, B2: nothing in --out is replaced but this run's own checkpoint.
+    crate::mac_common::output::prepare(&out, &super::written_here, &[])?;
     let mut session = Session::new()?;
     fixture::copy_fixture(&mut session, &app, NOTE, CONFIG, &exe_hash)?;
     let dir = session.path().to_path_buf();
@@ -308,7 +298,8 @@ fn coordinate(options: &Options) -> Result<(), String> {
         boot,
         last_key: None,
     };
-    let publish = |row: &Row, ids: &Ids, finished: bool| -> Result<(), String> {
+    // `first`: the run's first checkpoint, created exclusively; later ones replace only it.
+    let publish = |row: &Row, ids: &Ids, finished: bool, first: bool| -> Result<(), String> {
         let optional = |v: Option<String>| v.unwrap_or_else(|| "null".into());
         let environment = format!(
             "{{\"os\":{},\"architecture\":{},\"hv_vmm_present\":\"1\",\"allow_host\":false,\"unix_seconds\":{started},\"fixture_config\":{},\"case\":{},\"boot_session\":{},\"processes\":{{\"coordinator\":{},\"prepare\":{},\"product\":{}}},\"last_key_us\":{}}}",
@@ -336,10 +327,15 @@ fn coordinate(options: &Options) -> Result<(), String> {
             quote(&driver_hash),
             row.json()
         );
-        crate::atomic_evidence::write(&out.join("mac-gui.json"), json.as_bytes())
+        let path = out.join("mac-gui.json");
+        if first {
+            crate::atomic_evidence::write_new(&path, json.as_bytes())
+        } else {
+            crate::atomic_evidence::write(&path, json.as_bytes())
+        }
     };
     // A started record that is never taken for a finished one, whatever happens next.
-    publish(&row, &ids, false)?;
+    publish(&row, &ids, false, true)?;
     let trigger = dir.join("logout-now");
     let mut sender = armed_logout(&trigger)?;
     let mut requested = 0;
@@ -458,7 +454,7 @@ fn coordinate(options: &Options) -> Result<(), String> {
         });
         match &log {
             Ok(log) => {
-                crate::atomic_evidence::write(
+                crate::atomic_evidence::write_new(
                     &out.join(format!("W12-logout-{}-system.log", options.case)),
                     log.as_bytes(),
                 )?;
@@ -482,7 +478,7 @@ fn coordinate(options: &Options) -> Result<(), String> {
         judge(&options.case, &facts, &mut row);
     }
     if let Ok(stderr) = fs::read(dir.join("stderr.log")) {
-        crate::atomic_evidence::write(
+        crate::atomic_evidence::write_new(
             &out.join(format!("W12-logout-{}-stderr.log", options.case)),
             &stderr,
         )?;
@@ -494,7 +490,7 @@ fn coordinate(options: &Options) -> Result<(), String> {
     // Finished only once nothing of the fixture runs and its directory is gone.
     // Finished only when the case ran and nothing of the fixture is left: a GUI part that did
     // not finish is not a run of the case, and a NOT_TESTED from it would block reuse.
-    publish(&row, &ids, executed && cleanup.is_ok())?;
+    publish(&row, &ids, executed && cleanup.is_ok(), false)?;
     let verdict = aggregate(&row.checks);
     println!("W12-logout-{}: {}", options.case, verdict.name());
     println!("Evidence: {}", out.join("mac-gui.json").display());

@@ -11,6 +11,7 @@ use super::{
     },
     options::IDS,
     scenarios::{self, Driver},
+    staging::{self, Bytes, Candidate},
 };
 use crate::mac_common::{
     fixture::{bundle_hash, contained_executable, copy_fixture},
@@ -30,6 +31,19 @@ struct AppHash {
     inputs: Option<String>,
     /// This driver's own executable, so the ledger can tell which driver produced the evidence.
     driver: String,
+    /// The candidate ZIP R03 opens (`--zip`), checked to hold this bundle before any row runs.
+    zip: Option<Candidate>,
+    /// R03's write watch calibration (`--r03-write-restore`): its evidence cannot be recorded.
+    write_restore: bool,
+}
+
+impl AppHash {
+    fn bytes(&self) -> Bytes {
+        Bytes {
+            executable: self.executable.clone(),
+            bundle: self.bundle.clone(),
+        }
+    }
 }
 pub(super) fn execute(options: &Options) -> Result<(), String> {
     // This must precede app canonicalization, TCC checks, output creation and native GUI APIs.
@@ -66,22 +80,32 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     if app.extension().is_none_or(|e| e != "app") || !app.is_dir() {
         return Err("--app must be a .app directory".into());
     }
-    let hash = AppHash {
+    let mut hash = AppHash {
         executable: crate::integrity::sha256(&contained_executable(&app)?)?,
         driver: crate::integrity::sha256(
             &std::env::current_exe().map_err(|e| format!("driver path: {e}"))?,
         )?,
         bundle: bundle_hash(&app)?,
         inputs: crate::mac_common::fixture::app_inputs(&app)?,
+        zip: None,
+        write_restore: options.r03_write_restore,
     };
-    // Prevent output from ever targeting the supplied bundle or its canonical note directory.
-    let out = output_path(&options.out)?;
-    if out.starts_with(&app)
-        || out.starts_with(app.parent().ok_or("bundle has no parent")?.join("note"))
-    {
-        return Err("evidence cannot be inside the input bundle or its note directory".into());
+    // A ZIP that does not hold this bundle refuses the run: it is the operator's mistake, not an
+    // R03 result (plan 11 #phase-16-macos-host).
+    if let Some(zip) = &options.zip {
+        let mut scratch = Session::new()?;
+        let checked = staging::check(zip, &hash.bytes(), scratch.path());
+        scratch.cleanup()?;
+        hash.zip = Some(checked?);
     }
-    fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    // Prevent output from ever targeting the supplied bundle or its canonical note directory.
+    let out = crate::mac_common::output::guarded(&options.out, &app)?;
+    // Review B7 and round 3 B2: nothing of an earlier run, nor a file named like one, nor the
+    // --zip input, is replaced; every file below is created exclusively.
+    // The ZIP as staging resolved it, so a relative path through `..` is compared where it
+    // lands (review fix round, 8).
+    let inputs: Vec<&Path> = hash.zip.iter().map(|z| z.path.as_path()).collect();
+    crate::mac_common::output::prepare(&out, &written_here, &inputs)?;
     let environment = format!(
         "{{\"os\":{},\"architecture\":{},\"hv_vmm_present\":{},\"allow_host\":{},\"permissions\":{{\"accessibility\":{},\"post_event\":{},\"screen_recording\":{}}},\"unix_seconds\":{},\"fixture_config\":{},\"main_display\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}},\"coordinate_space\":\"main-display global CG points (DIP)\",\"keyboard_precondition\":\"ABC/US; not automatically verified\"}}",
         quote(&command("/usr/bin/sw_vers", &[])?),
@@ -116,6 +140,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         &rows,
         false,
         options.batch.as_deref(),
+        true,
     )?;
     events::install_cancel()?;
     let mut input = Injection::new(Events::new());
@@ -136,6 +161,12 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             }));
             match result {
                 Ok(Ok(())) => {}
+                // Review round 3, B4: an error around R03 (its session directory, attachments,
+                // cleanup) is the machine's, not the product's: untested, and the run unfinished.
+                Ok(Err(error)) if id == "R03" => {
+                    untested_after_error(&mut row, &error);
+                    input.stopped = Some(format!("R03 could not complete: {error}"));
+                }
                 Ok(Err(error)) => row.check("execution", false, error),
                 Err(payload) => {
                     std::mem::forget(payload);
@@ -159,6 +190,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             &rows,
             false,
             options.batch.as_deref(),
+            false,
         )?;
     }
     cut_short |= input.stopped.is_some() || events::running().is_err();
@@ -169,6 +201,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         &rows,
         !cut_short,
         options.batch.as_deref(),
+        false,
     )?;
     if cut_short {
         println!(
@@ -248,35 +281,20 @@ pub(super) fn launch(
 }
 /// `path` made absolute with its existing part canonical; `..` is refused. W12's logout cases use
 /// it too.
-pub(super) fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
-    let absolute = std::path::absolute(path).map_err(|e| e.to_string())?;
-    if absolute
-        .components()
-        .any(|c| c == std::path::Component::ParentDir)
-    {
-        return Err("--out must not contain '..'".into());
-    }
-    let mut ancestor = absolute.as_path();
-    let mut missing = Vec::new();
-    while !ancestor.exists() {
-        missing.push(
-            ancestor
-                .file_name()
-                .ok_or("invalid output path")?
-                .to_owned(),
-        );
-        ancestor = ancestor.parent().ok_or("output has no existing ancestor")?;
-    }
-    let mut resolved = ancestor.canonicalize().map_err(|e| e.to_string())?;
-    for name in missing.into_iter().rev() {
-        resolved.push(name);
-    }
-    Ok(resolved)
-}
 /// Writes the evidence; `finished` is true only on the write after the last row, so a checkpoint
 /// of an interrupted run is never taken for a finished one (mac-ledger records only finished runs).
 /// Schema 2 is the first whose `finished` only this driver's rules set, and the first that names
 /// the batch the run was started for; mac-ledger records no older schema.
+/// Whether `name` (lowercased) is one `mac-gui` may write into --out: the evidence, each row's
+/// `<id>-stderr.log`, R03's attachments and F01's screenshot.
+pub(crate) fn written_here(name: &str) -> bool {
+    name == "mac-gui.json"
+        || name == "f01.ppm"
+        || name.ends_with("-stderr.log")
+        || name.starts_with("r03-")
+}
+
+/// `first`: the run's first checkpoint, created exclusively; later ones replace only it.
 fn save(
     out: &Path,
     environment: &str,
@@ -284,10 +302,67 @@ fn save(
     rows: &[Row],
     finished: bool,
     batch: Option<&str>,
+    first: bool,
 ) -> Result<(), String> {
+    let json = evidence_json(environment, hash, rows, finished, batch);
+    let path = out.join("mac-gui.json");
+    if first {
+        crate::atomic_evidence::write_new(&path, json.as_bytes())
+    } else {
+        crate::atomic_evidence::write(&path, json.as_bytes())
+    }
+}
+
+/// R03's row after an error of the machine (review round 3 B4, fix round 4): untested, whatever
+/// its checks said before, which stay in its trace for diagnosis.
+fn untested_after_error(row: &mut Row, error: &str) {
+    for check in std::mem::take(&mut row.checks) {
+        row.trace.push(Trace {
+            ms: 0,
+            event: format!(
+                "before the error: {}: {}: {}",
+                check.name,
+                check.verdict.name(),
+                check.observation
+            ),
+        });
+    }
+    row.skip("execution", error);
+}
+
+/// Whether an attachment must exist: R03's prompt image, once its prompt check passed.
+fn required(id: &str, name: &str, row: &Row) -> bool {
+    id == "R03"
+        && name == "prompt.ppm"
+        && row.checks.iter().any(|c| {
+            c.name == super::translocation::PROMPTED && c.verdict == super::model::Verdict::Pass
+        })
+}
+
+/// The evidence as written. A calibration run (`--r03-write-restore`) is never marked finished,
+/// so a `mac-ledger` that does not know the `calibration` member refuses it too (review fix
+/// round, B1): its R03 FAIL is the driver's bad sample, not the product's.
+fn evidence_json(
+    environment: &str,
+    hash: &AppHash,
+    rows: &[Row],
+    finished: bool,
+    batch: Option<&str>,
+) -> String {
+    let finished = finished && !hash.write_restore;
     let batch = batch.map_or_else(String::new, |b| format!(",\"batch\":{}", quote(b)));
-    let json = format!(
-        "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished}{batch},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"scenarios\":[{}]}}\n",
+    // The candidate ZIP R03 opened; mac-ledger records it with R03 alone.
+    let zip = hash.zip.as_ref().map_or_else(String::new, |zip| {
+        format!(",\"zip_sha256\":{}", quote(&zip.sha256))
+    });
+    // A calibration run's evidence says so, and mac-ledger refuses it.
+    let zip = if hash.write_restore {
+        format!("{zip},\"calibration\":\"r03-write-restore\"")
+    } else {
+        zip
+    };
+    format!(
+        "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished}{batch},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{}{zip},\"scenarios\":[{}]}}\n",
         hash.inputs
             .as_ref()
             .map_or_else(String::new, |inputs| format!(
@@ -298,8 +373,7 @@ fn save(
         quote(&hash.bundle),
         quote(&hash.driver),
         rows.iter().map(Row::json).collect::<Vec<_>>().join(",")
-    );
-    crate::atomic_evidence::write(&out.join("mac-gui.json"), json.as_bytes())
+    )
 }
 fn one(
     app: &Path,
@@ -317,13 +391,21 @@ fn one(
         super::fault::RestoreOnDrop::new(matches!(id, "W11" | "W12").then(|| session.anchor()));
     let result = (|| {
         if id == "R03" {
-            return super::translocation::run(
+            let stopped = super::translocation::run(
                 app,
                 session.path(),
-                &hash.bundle,
+                &hash.bytes(),
+                hash.zip.as_ref(),
+                hash.write_restore,
                 input.backend.started,
                 row,
-            );
+            )?;
+            // Not a product result: the row stays untested and the run is not finished.
+            if let Some(reason) = stopped {
+                untested_after_error(row, &reason);
+                input.stopped = Some(format!("R03 stopped the run: {reason}"));
+            }
+            return Ok(());
         }
         let note = match id {
             "F01" => "中文字体验证\n\n`Menlo code 012345`\n",
@@ -371,20 +453,34 @@ fn one(
     } else {
         &["stderr.log"]
     };
+    // Each attachment this run made is named in its trace with its SHA-256; a file of the same
+    // name that an earlier run left in --out is not removed (it is not provably this tool's),
+    // and the trace says it is not this run's.
     let log = attachments.iter().try_for_each(|name| {
         let target = out.join(format!("{id}-{name}"));
+        let ms = input.backend.started.elapsed().as_millis() as u64;
         match fs::read(session.path().join(name)) {
-            Ok(bytes) => crate::atomic_evidence::write(&target, &bytes),
-            // An R03 attachment this run did not make: one left by an earlier run in the same
-            // --out must not pass for this run's. A removal that fails is recorded, not fatal.
+            Ok(bytes) => {
+                crate::atomic_evidence::write_new(&target, &bytes)?;
+                row.trace.push(Trace {
+                    ms,
+                    event: format!(
+                        "attachment {} sha256={}",
+                        target.display(),
+                        crate::integrity::sha256_bytes(&bytes)?
+                    ),
+                });
+                Ok(())
+            }
+            // The prompt's image must exist once the prompt was seen (review fix round, B2).
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && required(id, name, row) => {
+                Err(format!("{name} is missing though R03 saw its prompt"))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                if id == "R03"
-                    && let Err(e) = fs::remove_file(&target)
-                    && e.kind() != std::io::ErrorKind::NotFound
-                {
+                if target.exists() {
                     row.trace.push(Trace {
-                        ms: input.backend.started.elapsed().as_millis() as u64,
-                        event: format!("stale {} not removed: {e}", target.display()),
+                        ms,
+                        event: format!("{} is from an earlier run, not this one", target.display()),
                     });
                 }
                 Ok(())
@@ -408,5 +504,65 @@ fn one(
         Ok(())
     } else {
         Err(errors.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppHash, Row, evidence_json, required, untested_after_error};
+    use crate::mac_gui::{
+        model::{Verdict, aggregate},
+        translocation::{CHECKS, PROMPTED, UNWRITTEN},
+    };
+
+    /// Review fix round, B2 and 4: every R03 check passing but the prompt image missing is an
+    /// error, and an error after any result leaves the row untested, its checks kept in the
+    /// trace.
+    #[test]
+    fn r03_errors_leave_the_row_untested_and_the_prompt_image_is_required() {
+        let mut row = Row::new("R03");
+        for name in CHECKS {
+            row.check(name, true, "seen");
+        }
+        assert!(required("R03", "prompt.ppm", &row));
+        assert!(!required("R03", "stderr.log", &row));
+        assert!(!required("W02", "prompt.ppm", &row));
+        assert!(!required("R03", "prompt.ppm", &Row::new("R03")));
+        // A write observed, then an attachment that could not be kept.
+        let mut failed = Row::new("R03");
+        failed.check(UNWRITTEN, false, "written");
+        untested_after_error(&mut failed, "R03-stderr.log: Permission denied");
+        assert_eq!(aggregate(&failed.checks), Verdict::NotTested);
+        assert_eq!(failed.checks.len(), 1);
+        assert!(
+            failed
+                .trace
+                .iter()
+                .any(|t| t.event.contains(UNWRITTEN) && t.event.contains("FAIL"))
+        );
+        untested_after_error(&mut row, "prompt.ppm is missing");
+        assert_eq!(aggregate(&row.checks), Verdict::NotTested);
+        assert!(row.trace.iter().any(|t| t.event.contains(PROMPTED)));
+    }
+
+    /// Review fix round, B1: a calibration run's evidence is never marked finished, so a reader
+    /// that ignores `calibration` (the mac-ledger of 916a0f1) refuses it as unfinished too.
+    #[test]
+    fn calibration_evidence_is_never_finished() {
+        let hash = |write_restore| AppHash {
+            executable: "a".repeat(64),
+            bundle: "b".repeat(64),
+            inputs: None,
+            driver: "d".repeat(64),
+            zip: None,
+            write_restore,
+        };
+        let rows = [Row::new("R03")];
+        let ordinary = evidence_json("{}", &hash(false), &rows, true, Some("rc1"));
+        assert!(ordinary.contains("\"finished\":true"), "{ordinary}");
+        assert!(!ordinary.contains("calibration"));
+        let calibration = evidence_json("{}", &hash(true), &rows, true, Some("rc1"));
+        assert!(calibration.contains("\"finished\":false"), "{calibration}");
+        assert!(calibration.contains("\"calibration\":\"r03-write-restore\""));
     }
 }

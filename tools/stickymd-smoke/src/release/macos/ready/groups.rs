@@ -5,7 +5,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 use crate::mac_ledger::decide::NEVER_REUSED;
-use crate::mac_ledger::record::{Built, Record, Revoked};
+use crate::mac_ledger::record::{Built, Record, Revoked, image_attributable};
 
 /// The ledger's verdict on one or more rows for the candidate's bytes.
 pub(super) enum Ledger {
@@ -21,12 +21,15 @@ pub(super) enum Ledger {
 /// inputs, and a record may lack them.
 pub(super) type Group = (String, String, String);
 
-/// Where results count: the ledger, the candidate's bytes and the batch being judged.
+/// Where results count: the ledger, the candidate's bytes and the batch being judged; for R03,
+/// the candidate ZIP its counted PASS must have opened. The ZIP does not split groups: a FAIL,
+/// NOT_TESTED or revoked PASS through another ZIP, or through none, still spoils its group.
 #[derive(Clone, Copy)]
 pub(super) struct Scope<'a> {
     pub records: &'a [Record],
     pub built: &'a Built,
     pub batch: Option<&'a str>,
+    pub zip: Option<&'a str>,
     /// The SHA-256 of R's `mac-gui` driver (`macos-ready --driver`, checked against the driver the
     /// run on R built), or why R's driver is not known: only a group run by it can hold a PASS; a
     /// FAIL counts whatever the driver (USER 2026-11-24; review round 4, BLOCKER 1).
@@ -41,6 +44,8 @@ enum Status {
     Failed,
     /// Some NOT_TESTED or revoked PASS, and no FAIL.
     Incomplete,
+    /// Only PASS records, but none opened the ZIP the scope requires.
+    OtherZip,
 }
 
 fn group_of(record: &Record) -> Option<Group> {
@@ -111,9 +116,22 @@ fn statuses(scope: &Scope<'_>, row: &str) -> Vec<(Group, Status)> {
         }) {
             Status::Incomplete
         } else {
-            match group.last().map(|r| **r) {
-                Some(Record::Automated { evidence, .. }) => Status::Clean(evidence.clone()),
-                _ => Status::Incomplete,
+            let counted = group.iter().rev().find_map(|r| match **r {
+                // For R03, a PASS that opened the candidate ZIP with "nothing written" read
+                // through the write watch (review round 3, B1).
+                Record::Automated { evidence, zip, .. }
+                    if scope.zip.is_none_or(|wanted| {
+                        zip.as_ref()
+                            .is_some_and(|z| z.sha256 == wanted && z.write_watch)
+                    }) =>
+                {
+                    Some(evidence.clone())
+                }
+                _ => None,
+            });
+            match counted {
+                Some(evidence) => Status::Clean(evidence),
+                None => Status::OtherZip,
             }
         };
         out.push((key, status));
@@ -133,6 +151,19 @@ pub(super) fn failure(scope: &Scope<'_>, row: &str) -> Option<String> {
 /// holds a clean PASS in it; with no such group, a group in which any row failed makes the
 /// verdict FAIL; otherwise the evidence is missing.
 pub(super) fn joint(scope: &Scope<'_>, rows: &[String]) -> Ledger {
+    // A record whose VM image names no digest (an old line's tag) cannot be placed in or apart
+    // from any group, so no group of these rows is shown clean while it stands; a FAIL still
+    // counts (review round 3, B5).
+    let unknown = rows.iter().find_map(|row| {
+        scoped(scope, row)
+            .into_iter()
+            .find_map(|record| match record {
+                Record::Automated { identity, .. } if !image_attributable(&identity.image) => {
+                    Some((row, identity.image.clone()))
+                }
+                _ => None,
+            })
+    });
     let per_row: Vec<Vec<(Group, Status)>> = rows.iter().map(|row| statuses(scope, row)).collect();
     let mut keys: Vec<&Group> = Vec::new();
     for statuses in &per_row {
@@ -162,12 +193,17 @@ pub(super) fn joint(scope: &Scope<'_>, rows: &[String]) -> Ledger {
                 .map(|i| &rows[i]);
         }
     }
-    if !clean.is_empty() {
+    if !clean.is_empty() && unknown.is_none() {
         return Ledger::Clean(evidence);
     }
     if let Some(row) = failed {
         return Ledger::Fail(format!(
             "a FAIL of P16-{row} is recorded on the candidate's bytes, and no identity holds a clean run of every row it needs"
+        ));
+    }
+    if let Some((row, image)) = unknown {
+        return Ledger::None(format!(
+            "a record of P16-{row} on the candidate's bytes names the VM image {image:?}, not a digest: its identity is unknown, so no group can be shown clean"
         ));
     }
     let lacking = rows.iter().zip(&per_row).find(|(_, statuses)| {
@@ -187,22 +223,25 @@ pub(super) fn joint(scope: &Scope<'_>, rows: &[String]) -> Ledger {
     })
 }
 
-/// The ledger's verdict on `row` alone.
-pub(super) fn ledger(scope: &Scope<'_>, row: &str) -> Ledger {
-    joint(scope, &[row.to_owned()])
-}
-
 /// Why `row` has no clean group.
 fn why_none(scope: &Scope<'_>, row: &str) -> String {
     let same_executable = scope.records.iter().any(|r| {
         matches!(r, Record::Automated { row: rr, built: b, verdict, .. }
             if rr == row && verdict == "PASS" && b.executable == scope.built.executable && b.bundle != scope.built.bundle)
     });
-    let other_driver = statuses(scope, row).iter().any(|(key, status)| {
-        scope.driver != Ok(key.0.as_str()) && matches!(status, Status::Clean(_))
+    let statuses = statuses(scope, row);
+    let other_zip = statuses.iter().any(|(key, status)| {
+        scope.driver == Ok(key.0.as_str()) && matches!(status, Status::OtherZip)
+    });
+    let other_driver = statuses.iter().any(|(key, status)| {
+        scope.driver != Ok(key.0.as_str()) && matches!(status, Status::Clean(_) | Status::OtherZip)
     });
     if let Err(reason) = scope.driver {
         format!("no run of P16-{row} counts as R's driver's: {reason}")
+    } else if let (true, Some(zip)) = (other_zip, scope.zip) {
+        format!(
+            "no clean group of P16-{row} on the candidate's bytes holds a PASS that opened the candidate ZIP {zip} under the write watch (a ZIP zipped from the .app names none; a PASS recorded without the watch, as an older driver's, does not count)"
+        )
     } else if other_driver {
         format!(
             "a clean run of P16-{row} on the candidate's bytes exists only under another driver than R's ({})",

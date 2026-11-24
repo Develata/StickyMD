@@ -17,9 +17,11 @@ pub(super) enum Class {
     Gui,
     /// Judged by the USER: a release receipt or waiver bound to the candidate.
     Manual,
-    /// Measured by `mac-resources` / `mac-latency`, whose evidence does not yet bind both byte
-    /// identities and is not recorded in the ledger.
+    /// Measured by `mac-resources`: a ledger PASS on the candidate's bytes, as for `Gui`.
     Resources,
+    /// V03: baseline and new package alternating through `mac-latency` and `mac-resources`;
+    /// `mac-latency` is not in the ledger and has no release rule, so only a waiver holds it.
+    Comparison,
     /// R03: App Translocation of the release ZIP itself.
     Translocation,
     /// A Windows regression of the shared layer; Windows readiness judges it.
@@ -79,7 +81,7 @@ pub(super) const ROWS: &[(&str, Class, &str)] = &[
     ("R03", Class::Translocation, "Automated"),
     ("V01", Class::Source, "Automated"),
     ("V02", Class::Source, "Automated"),
-    ("V03", Class::Resources, "Automated"),
+    ("V03", Class::Comparison, "Automated"),
     ("V04", Class::Manual, "Manual"),
     ("V05", Class::Windows, "Manual"),
 ];
@@ -96,7 +98,11 @@ pub(crate) fn receipt_row(row: &str) -> bool {
 /// and the source rows may not be waived; Windows rows are not macOS release rows.
 pub(crate) fn waivable(row: &str) -> bool {
     ROWS.iter().any(|(id, class, _)| {
-        *id == row && matches!(class, Class::Gui | Class::Manual | Class::Resources)
+        *id == row
+            && matches!(
+                class,
+                Class::Gui | Class::Manual | Class::Resources | Class::Comparison
+            )
     })
 }
 

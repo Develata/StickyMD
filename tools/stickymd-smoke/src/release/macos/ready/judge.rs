@@ -6,7 +6,7 @@
 //! nothing forces a row through.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
-use super::groups::{Ledger, Scope, failure, joint, ledger};
+use super::groups::{Ledger, Scope, failure, joint};
 use super::receipts::{self, Wanted};
 use super::rows::{Class, ROWS};
 use super::source_tests::{self, Outcome};
@@ -184,15 +184,16 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
                 item,
                 ..package.clone()
             },
-            Class::Gui => waived(inputs, gui(inputs, &item, row), row),
+            // A mac-resources row is judged from the ledger as a mac-gui row is.
+            Class::Gui | Class::Resources => waived(inputs, gui(inputs, &item, row), row),
             Class::Translocation => translocation(inputs, &item, row),
             Class::Manual => waived(inputs, manual(inputs, &item, row), row),
-            Class::Resources => waived(
+            Class::Comparison => waived(
                 inputs,
                 line(
                     &item,
                     Verdict::NotTested,
-                    "no evidence binds both byte identities: mac-resources records only the executable and is not in the ledger",
+                    "no producer: V03 alternates a baseline through mac-latency, which is not in the ledger and has no release rule (plan 11 #macos-readiness-check)",
                 ),
                 row,
             ),
@@ -419,6 +420,7 @@ fn scope<'a>(inputs: &'a Inputs<'_>, records: &'a [Record], candidate: &'a Candi
         records,
         built: &candidate.built,
         batch: inputs.batch,
+        zip: None,
         driver: inputs.driver,
     }
 }
@@ -442,31 +444,36 @@ fn gui(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     }
 }
 
-/// R03 must be judged on the release ZIP itself; the probe still zips the `.app`, so a PASS on
-/// the candidate's bundle is not that ZIP (plan 11 #macos-release-gate). A FAIL on these bytes is
-/// an observed violation and counts.
+/// R03 is judged on the release ZIP itself (plan 11 #macos-release-gate): a clean group counts
+/// only when a PASS in it opened the candidate's ZIP (`mac-gui --zip`) under R's driver, with
+/// "nothing written" read through the write watch; one from a ZIP zipped from the `.app`, even
+/// around the same bundle, or recorded without the watch (an older driver's), does not. It cannot
+/// be waived. A FAIL on these bytes in this batch, through any ZIP, is an observed violation and
+/// counts first (review round 3, B1 and S1).
 fn translocation(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     let (records, candidate) = match evidence(inputs, item) {
         Ok(found) => found,
         Err(line) => return line,
     };
-    let scope = scope(inputs, records, candidate);
-    // A FAIL recorded on the candidate's bytes in this batch, under any identity, stays a FAIL,
-    // whatever another group shows (review round 3, S1).
+    let scope = Scope {
+        zip: Some(&candidate.zip_sha256),
+        ..scope(inputs, records, candidate)
+    };
+    // A FAIL recorded on the candidate's bytes in this batch, under any identity or ZIP, stays a
+    // FAIL, whatever another group shows (review round 3, S1).
     if let Some(reason) = failure(&scope, row) {
         return line(item, Verdict::Fail, reason);
     }
-    let found = match ledger(&scope, row) {
-        Ledger::Fail(reason) => return line(item, Verdict::Fail, reason),
-        Ledger::Clean(..) => "a PASS on the candidate's bundle exists, but",
-        Ledger::None(_) => "no evidence binds it:",
-    };
-    line(
-        item,
-        Verdict::NotTested,
-        format!(
-            "{found} R03 must run on the candidate ZIP {} and the probe zips the .app itself (M5 report)",
-            candidate.zip_sha256
+    match joint(&scope, &[row.to_owned()]) {
+        Ledger::Clean(evidence) => line(
+            item,
+            Verdict::Pass,
+            format!(
+                "ledger PASS on the candidate ZIP {} under the write watch ({evidence})",
+                candidate.zip_sha256
+            ),
         ),
-    )
+        Ledger::Fail(reason) => line(item, Verdict::Fail, reason),
+        Ledger::None(reason) => line(item, Verdict::NotTested, reason),
+    }
 }

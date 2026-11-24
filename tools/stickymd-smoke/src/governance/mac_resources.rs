@@ -63,6 +63,8 @@ fn check_gui(path: &str, source: &str) -> Result<(), String> {
         "mac_gui/native/cf.rs" => &["CoreFoundation"],
         "mac_gui/native/accessibility.rs" => &["ApplicationServices"],
         "mac_gui/native/permissions.rs" => &["ApplicationServices", "CoreGraphics"],
+        // R03's kqueue write watch: libSystem's kqueue and kevent, no framework.
+        "mac_gui/native/vnodes.rs" => &["System"],
         _ => &[],
     };
     if !source
@@ -298,6 +300,14 @@ mod tests {
         let prefix = "//! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host\n";
         let source = format!("{prefix}// SAFETY: SDK storage.\nunsafe {{ call() }}");
         assert!(super::check_gui("mac_gui/native/events.rs", &source).is_ok());
+        assert!(super::check_gui("mac_gui/native/vnodes.rs", &source).is_ok());
+        assert!(
+            super::check_gui(
+                "mac_gui/native/vnodes.rs",
+                &format!("{prefix}#[link(name = \"CoreServices\", kind = \"framework\")]")
+            )
+            .is_err()
+        );
         for path in [
             "mac_gui/scenarios.rs",
             "mac_gui/nested/native.rs",

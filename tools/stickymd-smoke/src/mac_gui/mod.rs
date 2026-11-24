@@ -4,7 +4,8 @@
 //! presenter diagnostic and captures the window (`visual`). W12's logout is not driven: it ends
 //! the VM's GUI session, and loginwindow ends this driver with it; W12 sends the product the quit request and the
 //! SIGTERM a logout brings directly instead. R03 opens a quarantined copy through LaunchServices
-//! with the user-approved quarantine bit preset (USER 2026-11-19; `translocation`). W15 needs
+//! with the user-approved quarantine bit preset (USER 2026-11-19; `translocation`), from the
+//! release ZIP given with `--zip` (`staging`). W15 needs
 //! Windows. These are never inferred PASS.
 //! W11/W12 inject the save failure by taking write permission from the fixture's note directory
 //! (USER 2026-11-11).
@@ -54,6 +55,12 @@ mod scenario_tests;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod scenarios;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod snapshot;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod staging;
 #[cfg(test)]
 mod tests;
 #[cfg(any(target_os = "macos", test))]
@@ -62,7 +69,22 @@ mod translocation;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod visual;
+/// The rows `mac-gui` runs, which mac-ledger alone reads (on macOS and in tests).
+#[cfg(any(target_os = "macos", test))]
+pub(crate) use options::IDS;
 pub(crate) use options::{Options, parse};
+/// The names `mac-gui` may write into --out, for the shared --out rule's tests.
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use runner::written_here;
+/// A run's R03 facts for mac-ledger's tests.
+#[cfg(test)]
+pub(crate) use translocation::facts::sample as r03_sample_facts;
+/// R03's checks, which mac-ledger requires of an R03 row and recomputes from its facts.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) use translocation::{
+    CHECKS as R03_CHECKS, SNAPSHOT_ONLY_UNWRITTEN as R03_SNAPSHOT_ONLY_UNWRITTEN,
+    UNWRITTEN as R03_UNWRITTEN, ZIP_CHECK as R03_ZIP_CHECK, facts::rejudge as r03_rejudge,
+};
 /// Chooses `label` in the product's menu-bar menu through Accessibility, as the GUI scenarios
 /// do. `mac-resources` uses it to reach the hidden state. Returns how long the status item took
 /// to appear in the AX tree.
