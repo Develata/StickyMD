@@ -1,11 +1,14 @@
 //! The gate against bad samples: one good set of inputs, and samples that each change one fact.
-//! The two samples the contract names (plan 11 #macos-release-gate) are tests of their own.
+//! The two samples the contract names (plan 11 #macos-release-gate) are tests of their own; the
+//! producers' samples (R03's ZIP, the resource rows) are in `producers`.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
+
+mod producers;
 
 use super::judge::{Candidate, Inputs, Line, Read, Verdict, judge, ready};
 use super::rows::{Class, ROWS};
 use super::source_tests::{self, Receipt, Target};
-use crate::mac_ledger::record::{Built, Identity, Record, Revoked};
+use crate::mac_ledger::record::{Built, Identity, OpenedZip, Record, Revoked};
 use crate::mac_ledger::release::{DOWNLOAD_ROWS, ReleaseKind, ReleaseRecord};
 
 const R: &str = "1111111111111111111111111111111111111111";
@@ -33,7 +36,7 @@ fn identity(driver: char) -> Identity {
     Identity {
         inputs: Some(hex('a')),
         driver: hex(driver),
-        image: "sha256:image".into(),
+        image: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into(),
         system: "ProductName: macOS ProductVersion: 27.2".into(),
     }
 }
@@ -48,7 +51,14 @@ fn record_on_image(row: &str, verdict: &str, image: &str, built: &Built, evidenc
 }
 
 fn record(row: &str, verdict: &str, driver: char, built: &Built, evidence: char) -> Record {
+    // R03 opened the candidate's ZIP (`mac-gui --zip`), "nothing written" read through the
+    // write watch.
+    let zip = (row == "R03").then(|| OpenedZip {
+        sha256: candidate().zip_sha256,
+        write_watch: true,
+    });
     Record::Automated {
+        zip,
         row: row.to_owned(),
         verdict: verdict.to_owned(),
         identity: identity(driver),
@@ -61,12 +71,15 @@ fn record(row: &str, verdict: &str, driver: char, built: &Built, evidence: char)
     }
 }
 
-/// A PASS on the candidate's bytes for every row `mac-gui` runs, W12's logout cases and R03.
+/// A PASS on the candidate's bytes for every row `mac-gui` runs, W12's logout cases, R03 on the
+/// candidate's ZIP, and the `mac-resources` rows.
 fn ledger() -> Vec<Record> {
     let built = candidate().built;
     let mut rows: Vec<String> = ROWS
         .iter()
-        .filter(|(_, class, _)| matches!(class, Class::Gui | Class::Translocation))
+        .filter(|(_, class, _)| {
+            matches!(class, Class::Gui | Class::Translocation | Class::Resources)
+        })
         .map(|(row, _, _)| (*row).to_owned())
         .collect();
     rows.extend(crate::mac_gui::logout::rows());
@@ -121,16 +134,12 @@ fn assert_line(lines: &[Line], item: &str, expected: Verdict, words: &str) {
     assert!(line.detail.contains(words), "{line:?}");
 }
 
-/// The rows that hold only with a USER record (receipt, waiver, download path) or, for R03, a
-/// producer that runs on the candidate ZIP (M5 report).
+/// The rows that hold only with a USER record (receipt, waiver, download path); V03 has no
+/// producer and holds only with a waiver.
 fn awaiting_decision(item: &str) -> bool {
     item == "download-path"
         || ROWS.iter().any(|(row, class, _)| {
-            format!("P16-{row}") == item
-                && matches!(
-                    class,
-                    Class::Manual | Class::Resources | Class::Translocation
-                )
+            format!("P16-{row}") == item && matches!(class, Class::Manual | Class::Comparison)
         })
 }
 
@@ -160,18 +169,35 @@ fn good_inputs_pass_every_row_that_has_an_evidence_source() {
     assert!(ready(&held));
 }
 
-/// Contract sample (on this branch): an R03 PASS on the candidate's bundle names no ZIP, so it is
-/// not evidence of the release ZIP; the probe that opens the candidate ZIP is #24's.
+/// Contract sample: the evidence of a ZIP rebuilt from the `.app` is not the release ZIP, even
+/// when the bundle inside is byte-identical: zipped by the probe it names no ZIP, and given as
+/// `--zip` it names another digest.
 #[test]
 fn an_r03_pass_without_the_candidate_zip_is_not_evidence() {
     let candidate = candidate();
-    let lines = run(Read::Present(&candidate), &ledger(), &receipt());
-    assert_line(
-        &lines,
-        "P16-R03",
-        Verdict::NotTested,
-        "a PASS on the candidate's bundle exists, but R03 must run on the candidate ZIP dddd",
-    );
+    for repacked in [None, Some(hex('f'))] {
+        let records: Vec<Record> = ledger()
+            .into_iter()
+            .map(|mut record| {
+                if let Record::Automated { row, zip, .. } = &mut record
+                    && row == "R03"
+                {
+                    *zip = repacked.clone().map(|sha256| OpenedZip {
+                        sha256,
+                        write_watch: true,
+                    });
+                }
+                record
+            })
+            .collect();
+        let lines = run(Read::Present(&candidate), &records, &receipt());
+        assert_line(
+            &lines,
+            "P16-R03",
+            Verdict::NotTested,
+            "no clean group of P16-R03 on the candidate's bytes holds a PASS that opened the candidate ZIP dddd",
+        );
+    }
 }
 
 /// Contract sample: a PASS for the candidate's executable inside another bundle does not count.
@@ -224,12 +250,45 @@ fn a_fail_spoils_its_identity_and_another_identity_can_still_hold() {
     records.push(record_on_image(
         "W03",
         "PASS",
-        "sha256:other-image",
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         &built,
         '7',
     ));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-W03", Verdict::Pass, "run-7");
+}
+
+/// Review round 3, B5: a record whose VM image names no digest (an old line's tag) cannot be
+/// placed in or apart from a group, so beside it no group is shown clean; its FAIL still counts.
+#[test]
+fn a_record_of_unknown_image_blocks_the_row_and_its_fail_still_counts() {
+    let candidate = candidate();
+    let built = candidate.built.clone();
+    let mut records = ledger();
+    records.push(record_on_image(
+        "W03",
+        "PASS",
+        "mac-test:latest",
+        &built,
+        '8',
+    ));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "P16-W03",
+        Verdict::NotTested,
+        "its identity is unknown",
+    );
+    records.pop();
+    records.push(record_on_image(
+        "W03",
+        "FAIL",
+        "mac-test:latest",
+        &built,
+        '8',
+    ));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W03", Verdict::Fail, "a FAIL of P16-W03");
 }
 
 #[test]
@@ -272,7 +331,7 @@ fn w12_needs_its_three_logout_cases_in_one_identity() {
     records.push(record_on_image(
         "W12-logout-dialog",
         "PASS",
-        "sha256:other-image",
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         &built,
         '6',
     ));
@@ -298,7 +357,7 @@ fn r03_counts_only_this_batch_and_a_fail_on_these_bytes_blocks() {
         *batch = Some("rc0".into());
     }
     let lines = run(Read::Present(&candidate), &records, &receipt());
-    assert_line(&lines, "P16-R03", Verdict::NotTested, "candidate ZIP");
+    assert_line(&lines, "P16-R03", Verdict::Pass, "candidate ZIP dddd");
     // Without a batch nothing counts.
     let lines = judge(&Inputs {
         release: R,
@@ -314,7 +373,7 @@ fn r03_counts_only_this_batch_and_a_fail_on_these_bytes_blocks() {
         &lines,
         "P16-R03",
         Verdict::NotTested,
-        "no evidence binds it",
+        "counts only the batch named with --batch",
     );
 }
 
@@ -422,15 +481,15 @@ fn withdraw(row: &str, candidate: &str) -> Record {
     }
 }
 
-/// The ledger with every USER record a release needs: receipts for the Manual rows, waivers for
-/// the resource rows, and the five download paths, all for this candidate.
+/// The ledger with every USER record a release needs: receipts for the Manual rows, the waiver
+/// for V03, and the five download paths, all for this candidate.
 fn released() -> Vec<Record> {
     let digest = candidate().receipt_sha256;
     let mut records = ledger();
     for (row, class, _) in ROWS {
         match class {
             Class::Manual => records.push(release(ReleaseKind::Receipt, row, &digest, "rc1")),
-            Class::Resources => records.push(release(ReleaseKind::Waiver, row, &digest, "rc1")),
+            Class::Comparison => records.push(release(ReleaseKind::Waiver, row, &digest, "rc1")),
             _ => {}
         }
     }
@@ -439,25 +498,27 @@ fn released() -> Vec<Record> {
 }
 
 #[test]
-fn with_the_user_records_every_row_but_r03_holds() {
+fn with_the_user_records_every_row_holds() {
     let candidate = candidate();
     let lines = run(Read::Present(&candidate), &released(), &receipt());
     for line in &lines {
         let expected = match line.item.as_str() {
-            "P16-R03" => Verdict::NotTested,
             "P16-W15" | "P16-W16" | "P16-V05" => Verdict::Excluded,
-            "P16-R01" | "P16-R02" | "P16-V03" => Verdict::Waived,
+            "P16-V03" => Verdict::Waived,
             _ => Verdict::Pass,
         };
         assert_eq!(line.verdict, expected, "{line:?}");
     }
     assert_line(&lines, "P16-W01", Verdict::Pass, "W01 看过了");
-    assert!(!ready(&lines), "R03 still needs a run on the candidate ZIP");
-    let held: Vec<Line> = lines
-        .into_iter()
-        .filter(|line| line.item != "P16-R03")
-        .collect();
-    assert!(ready(&held));
+    assert_line(&lines, "P16-R03", Verdict::Pass, "under the write watch");
+    assert_line(&lines, "P16-S06", Verdict::Pass, "explicit run");
+    assert!(ready(&lines));
+    // Without R03's run on the candidate ZIP the gate does not hold.
+    let mut records = released();
+    records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "R03"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-R03", Verdict::NotTested, "no PASS of P16-R03");
+    assert!(!ready(&lines));
 }
 
 #[test]
@@ -466,7 +527,7 @@ fn a_record_for_another_candidate_does_not_count() {
     let other = hex('9');
     let mut records = ledger();
     records.push(release(ReleaseKind::Receipt, "W01", &other, "rc1"));
-    records.push(release(ReleaseKind::Waiver, "R01", &other, "rc1"));
+    records.push(release(ReleaseKind::Waiver, "V03", &other, "rc1"));
     records.extend(DOWNLOAD_ROWS.map(|row| download(row, &other)));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(
@@ -475,7 +536,7 @@ fn a_record_for_another_candidate_does_not_count() {
         Verdict::NotTested,
         "no USER release receipt",
     );
-    assert_line(&lines, "P16-R01", Verdict::NotTested, "mac-resources");
+    assert_line(&lines, "P16-V03", Verdict::NotTested, "no producer");
     assert_line(&lines, "download-path", Verdict::NotTested, "P18-D01");
 }
 
@@ -485,7 +546,7 @@ fn a_revocation_withdraws_the_release_records_before_it_only() {
     let digest = candidate.receipt_sha256.clone();
     let mut records = released();
     records.push(withdraw("W05", &digest));
-    records.push(withdraw("R02", &digest));
+    records.push(withdraw("V03", &digest));
     records.push(withdraw("P18-D04", &digest));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(
@@ -494,7 +555,7 @@ fn a_revocation_withdraws_the_release_records_before_it_only() {
         Verdict::NotTested,
         "no USER release receipt",
     );
-    assert_line(&lines, "P16-R02", Verdict::NotTested, "mac-resources");
+    assert_line(&lines, "P16-V03", Verdict::NotTested, "no producer");
     assert_line(&lines, "download-path", Verdict::NotTested, "P18-D04");
     // The USER confirms again after the withdrawal: the new record stands.
     records.push(release(ReleaseKind::Receipt, "W05", &digest, "rc1"));
@@ -508,14 +569,14 @@ fn a_waiver_never_stands_for_a_fail_or_an_unwaivable_row() {
     let digest = candidate.receipt_sha256.clone();
     let mut records = ledger();
     records.push(record("W03", "FAIL", '1', &candidate.built, '8'));
-    records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "W02"));
+    records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "W02" || row == "R03"));
     for row in ["W02", "W03", "R03", "S01"] {
         records.push(release(ReleaseKind::Waiver, row, &digest, "rc1"));
     }
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-W03", Verdict::Fail, "a FAIL of P16-W03");
     assert_line(&lines, "P16-W02", Verdict::Waived, "no PASS of P16-W02");
-    assert_line(&lines, "P16-R03", Verdict::NotTested, "candidate ZIP");
+    assert_line(&lines, "P16-R03", Verdict::NotTested, "no PASS of P16-R03");
     let mut failing = receipt();
     failing.exit = super::source_tests::Exit::Code(101);
     let lines = run(Read::Present(&candidate), &records, &failing);
@@ -727,7 +788,7 @@ fn over_every_row_a_recorded_fail_is_never_waived_and_never_hidden_from_a_manual
             records.push(record_on_image(
                 member,
                 "PASS",
-                "sha256:other-image",
+                "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                 &candidate.built,
                 '7',
             ));
@@ -742,10 +803,9 @@ fn over_every_row_a_recorded_fail_is_never_waived_and_never_hidden_from_a_manual
         let line = verdict(&lines, &format!("P16-{row}"));
         assert_ne!(line.verdict, Verdict::Waived, "{line:?}");
         match class {
-            Class::Manual | Class::Resources => {
-                assert_eq!(line.verdict, Verdict::Fail, "{line:?}");
-            }
-            Class::Gui => assert_eq!(line.verdict, Verdict::Pass, "{line:?}"),
+            Class::Manual => assert_eq!(line.verdict, Verdict::Fail, "{line:?}"),
+            // A resource row is judged from the ledger as a mac-gui row is (#24).
+            Class::Gui | Class::Resources => assert_eq!(line.verdict, Verdict::Pass, "{line:?}"),
             _ => assert_ne!(line.verdict, Verdict::Waived, "{line:?}"),
         }
     }
@@ -917,7 +977,13 @@ fn a_fail_of_another_driver_still_counts() {
 fn an_r03_fail_beside_a_clean_group_is_a_fail_in_either_order() {
     let candidate = candidate();
     let fail = record("R03", "FAIL", '1', &candidate.built, '8');
-    let pass = record_on_image("R03", "PASS", "sha256:other-image", &candidate.built, '7');
+    let pass = record_on_image(
+        "R03",
+        "PASS",
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        &candidate.built,
+        '7',
+    );
     for (first, second) in [(fail.clone(), pass.clone()), (pass, fail)] {
         let mut records: Vec<Record> = ledger()
             .into_iter()

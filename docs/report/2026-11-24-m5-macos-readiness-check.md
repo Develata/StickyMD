@@ -5,7 +5,7 @@
 
 ## 结论
 
-下文写于 USER 决定之前；决定与之后的实现见文末“Resolution（2026-11-24）”，届时只剩 R03 与资源行的生产者改动未落地。
+下文写于 USER 决定之前；决定与之后的实现见文末“Resolution（2026-11-24）”，届时只剩 R03 与资源行的生产者改动未落地；它们随后在另一分支落地，见文末“生产者改动”。
 
 M5 不只是一个核对程序：发布门七类中有三类今天没有任何生产者能给出门要求的字节身份，另有两类收据的格式与记录方式合同没有交给 M5。
 本分支只实现合同已确定或明确交给 M5 的部分（“R 上的源码测试”收据与其运行器、逐行核对的程序本身）；其余各项列在“需要 Develata 决定”，
@@ -105,6 +105,72 @@ USER 对“需要 Develata 决定”四项与四项待确认提议的回复（�
 实现与验证：判定加入 `WAIVED`（与 PASS 一样使行成立）；P18-G03 记录新增的 11 个测试（账本侧 4 个、判定侧 7 个）。本机 `cargo test --locked -p stickymd-smoke
 -- release::macos mac_ledger` 65 个测试通过；`stickymd-smoke` 的 clippy 在 macOS 与 `x86_64-pc-windows-msvc` 上都无警告。带真实候选的记录器
 （`receipt --release-source`、`waive`）需要先有一次晋升，尚未运行。
+
+## 生产者改动（2026-11-24）
+
+分支 `feat/m5-producers`（从 `feat/m5-macos-readiness` 的 `c605f27` 开出），实现 Resolution 第 3 项。合同写进 `11` #phase-16-macos-host 的
+“R03 的输入 ZIP”与“资源运行进账本”两条，#macos-readiness-check 的分类、账本判定与“尚无来源的行”随之更新；验收见 Phase 18 P18-G04。
+
+1. **R03 打开候选 ZIP。** `mac-gui --zip <ZIP>`：运行任何一行之前把 ZIP 解进临时目录，核对其中 `StickyMD/StickyMD.app` 的 bundle 清单与可执行文件两项
+   SHA-256 都等于 `--app`，不符即拒绝整次运行。R03 把 ZIP 原样复制进下载目录（复制件须与检查时同一摘要）、加隔离标记后解开，观察 `StickyMD/`
+   文件夹（便携版的 `note/` 写在那里，不是下载目录的顶层），解出的 bundle 再核对一次。证据顶层记 `zip_sha256`，账本只记进 R03 的记录（可选字段，
+   旧记录字节不变）。不给 `--zip` 时照旧从 `.app` 打包，证据不含 ZIP 摘要。门只认干净组中打开了候选 ZIP 的 PASS。
+2. **资源行进账本。** `mac-resources` 证据升为 schema 5：两项字节身份、产品输入指纹、驱动摘要、`sw_vers`、`kern.hv_vmm_present`、`finished` 与按行的
+   结论 `rows`。`mac-ledger record` 接受跑完的 VM 运行，从各次运行重算 R01、R02，与写下的结论不符即拒绝；门对 R01、R02 的判定与 `mac-gui` 行相同。
+
+由我定下、待你确认（可以否决）的三点（USER 的决定见本节末尾的 Resolution）：
+
+- **R02 的统计量取各场景有效运行的中位数**，对照 `10` 目标表的硬失败条件“> 0.1%”。理由：这一行以往就按中位数判（按周期开关光标图层时 Split
+  中位 0.103% 判为超过硬门）；`10` 的测量口径是“报告 median 与最大值”，没有写门看哪一个。替代：取最大值，更严，但一次读数就能使整行失败。
+  这条规则在合同中标为提议；`mac-resources` 的退出码与证据的 `cpu_gate` 也随它。
+- **V03 不由程序判定，仍可 waiver。** V03 要求基线与新包交替跑 `mac-latency` 与 `mac-resources`，呈现器计数只在 `mac-latency` 中；`mac-latency`
+  是诊断，不进账本，也没有发布用的判定规则（发布时的“基线”是什么也没有定义）。要让它由程序判定，需要你先定规则（例如候选字节上 `mac-latency`
+  全部有效且呈现器失败为 0），再让 `mac-latency` 进账本；在此之前每版由你 waiver。
+- **ZIP 不参与分组。** R03 的干净组里，经别的 ZIP（含从 `.app` 打包）记下的 FAIL、NOT_TESTED 与被撤销的 PASS 同样使该组不干净；没有干净组时，
+  候选字节上的 FAIL 判 FAIL，不论它经哪个 ZIP。比“把 ZIP 当作身份的一部分”更严：同一批里的开发运行也会影响发布判定，需要时换一个批次名。
+
+验证（本机 macOS 27.2 arm64；实现提交 `8c47cfc`，其后一个提交只改文档与帮助文字）：
+
+- `cargo test --locked -p stickymd-smoke`：703 个测试通过（单元 683、集成 20），3 个忽略；新增 19 个，其中 `staging` 的 3 个在 macOS 上用 `ditto`
+  做出真实的发布布局 ZIP。改坏检查后（不核对 ZIP 摘要、不比较 bundle 清单）相应的 3 个坏样本测试失败，恢复后通过。
+- `cargo clippy --locked --all-targets -D warnings`：八个 macOS 包无警告；`stickymd-smoke` 加 `--target x86_64-pc-windows-msvc` 无警告。`cargo fmt --check` 通过。
+- `phase 00` 在已提交的干净树上 PASS；`phase 16` PASS；`phase 18` 的三个任务（governance、release tooling 与 macOS host 测试）全部 PASSED，
+  最后的矩阵状态检查因 P18-P04 为 `NOT TESTED` 而失败，与 `c605f27` 相同（P04、P06、P07 需要真实的 `release-macos` 运行）。
+
+未验证：
+
+- schema 5 的 `mac-resources` 没有在 `mac-test` 中跑过（R03 的虚拟机运行见下节）。
+- 新测试在 Windows 上只编译检查（clippy），由 CI 运行。
+
+### Resolution（2026-11-24，生产者改动）
+
+USER 在父会话（M5 就绪核对）中对上面三点与“推送并开 PR、在 `mac-test` 里跑一次 R03”的回复（原话，由父会话转达）：
+
+> 都同意
+
+据此：R02 取各场景有效运行的中位数，对照 `10` 的 0.1% 硬失败线；V03 在 USER 定下发布用的规则之前不由程序判定，保持 `NOT TESTED`，每版可
+waiver；R03 的 ZIP 摘要不参与分组。`11` #macos-readiness-check 的状态行与 #phase-16-macos-host 的 R02 一条已改为已批准。
+
+### R03 在 `mac-test` 中的运行（2026-11-24）
+
+这是实现的验证，不是发布证据：ZIP 由本机打包，不是晋升的候选。
+
+- **被测字节：** 在分支提交 `be6cce1` 的干净克隆中，`build-app.sh` 构建 app，`stickymd-package macos-package` 按发布布局打出
+  `StickyMD-0.2.0-macos-arm64-portable.zip`：ZIP `f99e819c…`，bundle 清单 `14fd817a…`，可执行文件 `92531ef9…`，产品输入指纹 `01b7c840…`，
+  签名 AD_HOC。本 worktree 嵌在主检出之下，主检出的 `.cargo/config.toml` 是祖先目录的 Cargo 配置，`app-inputs` 按设计拒绝在这里构建，所以改在克隆中构建。
+- **驱动：** `74d5b52` 的开发版（unwind）`stickymd-smoke`，`30a86491…`。
+- **命令：** 虚拟机（macOS 27.2，26B123，`hv_vmm_present` 为 1）中执行
+  `stickymd-smoke mac-gui --app StickyMD.app --zip StickyMD-0.2.0-macos-arm64-portable.zip --only R03 --batch m5p-1`。
+- **结果：** R03 PASS，六项检查全部通过，证据 `finished` 为真，顶层 `zip_sha256` 等于 ZIP 的摘要：
+  - 运行前核对通过；
+  - 解出的 `download/StickyMD/StickyMD.app` 以 App Translocation 的只读 nullfs 挂载启动，挂载行的源路径就是嵌套布局的路径；
+  - 模态提示窗出现，stderr 给出“请先把 StickyMD.app 拖进‘应用程序’，或把整个 StickyMD 文件夹移到别处”；
+  - Return 后退出，runningboard 记录为 `(0, 0, 256)`；
+  - `StickyMD/` 文件夹前后同为 `LICENSE.txt`、`README.txt`、`StickyMD.app`、`THIRD_PARTY_NOTICES.txt`、`licenses`。
+- **证据：** 已忽略的 `dist/evidence/mac-vm-2026-11-24-m5p/`（`mac-gui.json` 的 SHA-256 为 `b3499710…`），在本 worktree 中。
+- **账本：** 用 `mac-ledger record` 登记进真实账本的一份副本（真实账本未改动）。原有 337 行照常读取，新增的 R03 记录带 `zip_sha256`、批次 `m5p-1`。
+
+见[审查修复报告](2026-11-24-m5-producers-review-fixes.md)：生产者一侧（scope B）的跨模型审查与处理。
 
 ## 复审与修复（2026-11-24）
 

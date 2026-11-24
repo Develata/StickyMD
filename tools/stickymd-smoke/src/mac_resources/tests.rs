@@ -1,7 +1,7 @@
 //! Pure measurement and CLI regression tests; no GUI is started.
 //! plan_ref: docs/plan/10_performance_reliability.md#macos-gates
 
-use super::{model::*, report::Evidence};
+use super::{model::*, report::Evidence, rows::Conditions};
 
 fn sample(seconds: f64, ticks: u64, wakeups: u64) -> Sample {
     Sample {
@@ -14,16 +14,51 @@ fn sample(seconds: f64, ticks: u64, wakeups: u64) -> Sample {
     }
 }
 
-fn valid_run(repetition: usize, footprint_bytes: u64) -> Run {
+/// CPU ticks (timebase 125/3) for 0.001% over 60 s, and for Split's 0.103% of the row's history.
+pub(super) const IDLE_TICKS: u64 = 14_400;
+pub(super) const BUSY_TICKS: u64 = 1_483_200;
+
+/// A valid run as the tool takes it: ready at 0.5 s, the first sample after the 30 s warm-up, the
+/// middle one 59.9 s later and the last 60 s later, at `footprint_bytes`, `cpu_ticks` of CPU
+/// between the first and the last spread evenly, 100 interrupt and 25 idle wake-ups a second,
+/// readings computed from them.
+pub(super) fn measured(repetition: usize, footprint_bytes: u64, cpu_ticks: u64) -> Run {
+    measured_over(repetition, footprint_bytes, cpu_ticks, 60.0)
+}
+
+/// [`measured`] with the second sample `window` seconds after the first.
+pub(super) fn measured_over(
+    repetition: usize,
+    footprint_bytes: u64,
+    cpu_ticks: u64,
+    window: f64,
+) -> Run {
+    let mut before = sample(31.5, 1_000, 2_000);
+    before.footprint_bytes = footprint_bytes;
+    let mut after = sample(31.5 + window, 1_000 + cpu_ticks / 2, 2_000 + 6_000);
+    after.system_ticks = 1_000 + cpu_ticks - cpu_ticks / 2;
+    after.pkg_idle_wakeups = 2_000 + 1_500;
+    after.footprint_bytes = footprint_bytes;
+    let spread = (u128::from(cpu_ticks) * 599 / (window * 10.0).round() as u128) as u64;
+    let mut lower = sample(
+        31.5 + LOWER_SAMPLE_SECONDS,
+        1_000 + spread / 2,
+        2_000 + 5_990,
+    );
+    lower.system_ticks = 1_000 + spread - spread / 2;
+    lower.pkg_idle_wakeups = 2_000 + 1_497;
+    lower.footprint_bytes = footprint_bytes;
     let mut run = Run::new(repetition);
+    run.pid = Some(4242);
+    run.ready_seconds = Some(0.5);
+    run.metrics = Some(metrics(&before, &after, 125, 3).unwrap());
+    run.samples = vec![before, lower, after];
     run.status = "VALID";
-    run.metrics = Some(Metrics {
-        footprint_bytes,
-        idle_cpu_percent: 100.0,
-        interrupt_wakeups_per_second: 100.0,
-        idle_wakeups_per_second: 25.0,
-    });
     run
+}
+
+fn valid_run(repetition: usize, footprint_bytes: u64) -> Run {
+    measured(repetition, footprint_bytes, IDLE_TICKS)
 }
 
 #[test]
@@ -104,15 +139,26 @@ fn memory_gate_includes_boundary_but_never_ignores_failed_or_missing_runs() {
 #[test]
 fn cpu_uses_actual_elapsed_time_and_mach_conversion_without_overflow() {
     let before = sample(30.0, 9_000, 10);
-    let mut after = sample(150.0, 1_500_009_000, 130);
+    let mut after = sample(90.0, 750_009_000, 70);
     after.pkg_idle_wakeups = 40;
     let values = metrics(&before, &after, 125, 3).unwrap();
     assert!((values.idle_cpu_percent - 104.16666666666667).abs() < 1e-9);
     assert_eq!(values.interrupt_wakeups_per_second, 1.0);
-    assert_eq!(values.idle_wakeups_per_second, 0.25);
+    assert_eq!(values.idle_wakeups_per_second, 0.5);
     assert_eq!(values.footprint_bytes, 1024);
     assert!(metrics(&before, &sample(90.0, 0, 130), 1, 1).is_err());
     assert!(metrics(&before, &sample(89.0, 10_000, 130), 1, 1).is_err());
+    // `10`'s window is 60 s: a late second sample would dilute the average. 0.5 s of scheduling
+    // is allowed (VM runs overshot by at most 20 ms); 80 ms of CPU in the window and 60 s idle
+    // after it read 0.0667% over 120 s where the window held 0.1333%.
+    let late = |seconds: f64| {
+        let mut late = after.clone();
+        late.elapsed_seconds = seconds;
+        metrics(&before, &late, 125, 3)
+    };
+    assert!(late(90.5).is_ok());
+    assert!(late(90.51).is_err());
+    assert!(late(150.0).is_err());
     assert!(metrics(&before, &after, 1, 0).is_err());
     let mut empty = before.clone();
     empty.footprint_bytes = 0;
@@ -187,20 +233,64 @@ fn cli_parses_paths_defaults_equals_help_and_rejects_incomplete_or_ambiguous_opt
     }
 }
 
-#[test]
-fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
-    let mut evidence = Evidence {
-        environment: "{}".into(),
+/// A finished campaign in the VM: every scenario's runs valid and within the gates.
+pub(super) fn evidence() -> Evidence {
+    Evidence {
+        environment: "{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\nBuildVersion:\\t26B123\\n\",\"hv_vmm_present\":\"1\",\"display_count\":1,\"macos_version\":\"27.2\",\"os_build\":\"26B123\",\"unix_seconds\":7,\"main_display\":{\"pixel_width\":2048,\"pixel_height\":1536,\"point_width\":1024,\"point_height\":768,\"scale_x\":2,\"scale_y\":2}}".into(),
+        conditions: Conditions {
+            macos_version: "27.2".into(),
+            scale: [2.0, 2.0],
+            displays: 1,
+        },
         app_hash: "a".repeat(64),
-        fixture_hash: "b".repeat(64),
+        bundle_hash: "c".repeat(64),
+        inputs: Some("e".repeat(64)),
+        driver: "d".repeat(64),
+        finished: true,
+        fixture_hash: crate::integrity::sha256_bytes(fixture().as_bytes()).unwrap(),
         repetitions: 5,
         timebase: (125, 3),
         scenarios: SCENARIOS
             .iter()
-            .map(|scenario| (1..=5).map(|i| valid_run(i, scenario.limit)).collect())
+            .map(|scenario| {
+                (1..=5)
+                    .map(|i| {
+                        let mut run = valid_run(i, scenario.limit);
+                        if scenario.hidden {
+                            hide(&mut run);
+                        }
+                        run
+                    })
+                    .collect()
+            })
             .collect(),
-    };
-    assert!(evidence.passed());
+    }
+}
+
+/// A run of the Hidden scenario: hidden through the menu 0.5 s after it was ready, which the
+/// first sample's warm-up (31.5 s) still covers.
+pub(super) fn hide(run: &mut Run) {
+    run.status_item_wait_seconds = Some(0.004);
+    run.hidden_seconds = Some(1.0);
+}
+
+/// A good campaign's JSON for the ledger's tests; `busy` gives Split a median idle CPU of 0.103%
+/// (an R02 FAIL), with rows that agree.
+pub(crate) fn evidence_json(busy: bool) -> String {
+    let mut evidence = evidence();
+    if busy {
+        let limit = SCENARIOS[2].limit;
+        for (index, run) in evidence.scenarios[2].iter_mut().enumerate() {
+            *run = measured(index + 1, limit, BUSY_TICKS);
+        }
+    }
+    evidence.json()
+}
+
+#[test]
+fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
+    let mut evidence = evidence();
+    assert!(evidence.measured());
     let text = evidence.json();
     assert!(!text.contains("\"wakeups_per_second\""));
     assert!(text.contains("\"interrupt_wakeups_per_second\":100"));
@@ -221,7 +311,10 @@ fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
         hidden.field("scenario").unwrap().string().unwrap(),
         "hidden"
     );
-    assert_eq!(hidden.field("status").unwrap().string().unwrap(), "PASS");
+    assert_eq!(
+        hidden.field("memory_status").unwrap().string().unwrap(),
+        "PASS"
+    );
     assert_eq!(
         hidden.field("config").unwrap().string().unwrap(),
         "version = 1\nview_mode = \"source\"\n"
@@ -232,11 +325,11 @@ fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
     );
     // A hidden run over its own 48 MiB gate fails, though it is within Source's 72 MiB.
     evidence.scenarios[3][0] = valid_run(1, 48 * 1024 * 1024 + 1);
-    assert!(!evidence.passed());
+    assert!(!evidence.measured());
     evidence.scenarios[3][0] = valid_run(1, 48 * 1024 * 1024);
-    assert!(evidence.passed());
+    assert!(evidence.measured());
     evidence.scenarios[0][0].exited(0.1, "signal: 9\n\"test\"".into());
-    assert!(!evidence.passed());
+    assert!(!evidence.measured());
     let json = crate::release::json::parse(&evidence.json()).unwrap();
     let run = &json.field("scenarios").unwrap().array().unwrap()[0]
         .field("runs")
