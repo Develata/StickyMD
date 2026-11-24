@@ -69,7 +69,8 @@ pub(super) fn changed(before: &[String], after: &[String]) -> Vec<String> {
     gone.chain(new).collect()
 }
 
-#[cfg(test)]
+// Links and directory times as macOS has them.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::time::{Duration, SystemTime};
@@ -100,6 +101,9 @@ mod tests {
         }
     }
 
+    /// A write to the folder under observation.
+    type Change = fn(&Path);
+
     /// The writes a direct-child name list misses are all differences here.
     #[test]
     fn rewrites_nested_files_and_transient_files_all_show() {
@@ -120,7 +124,7 @@ mod tests {
             "nothing changed, nothing differs"
         );
         assert!(changed(&before, &before).is_empty());
-        let samples: [(&str, fn(&Path)); 4] = [
+        let samples: [(&str, Change); 4] = [
             ("rewritten", |root| {
                 fs::write(root.join("README.txt"), "other").unwrap()
             }),

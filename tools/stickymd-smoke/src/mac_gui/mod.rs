@@ -69,7 +69,10 @@ mod translocation;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod visual;
-pub(crate) use options::{IDS, Options, parse};
+/// The rows `mac-gui` runs, which mac-ledger alone reads (on macOS and in tests).
+#[cfg(any(target_os = "macos", test))]
+pub(crate) use options::IDS;
+pub(crate) use options::{Options, parse};
 /// R03's checks, which mac-ledger requires of an R03 PASS.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) use translocation::{CHECKS as R03_CHECKS, ZIP_CHECK as R03_ZIP_CHECK};

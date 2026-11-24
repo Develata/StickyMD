@@ -21,7 +21,7 @@ pub(super) fn r03_pass(checks: &[Value], zip: Option<&str>) -> Result<(), String
     expected.extend(crate::mac_gui::R03_CHECKS);
     let names = checks
         .iter()
-        .map(|check| Ok(check.field("name")?.string()?))
+        .map(|check| check.field("name").and_then(Value::string))
         .collect::<Result<Vec<_>, String>>()?;
     if names != expected {
         return Err(format!(
