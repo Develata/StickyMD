@@ -177,14 +177,14 @@ fn outside_plan_10s_environment_the_rows_are_not_tested() {
     let good = evidence().json();
     let text = good.replacen("\"scale_x\":2", "\"scale_x\":1", 1);
     assert_ne!(text, good);
-    refused(&text, "its runs give");
+    refused(&text, "pixels over its points");
     let text = good.replacen(
         "\"macos_version\":\"27.2\"",
         "\"macos_version\":\"26.4\"",
         1,
     );
     assert_ne!(text, good);
-    refused(&text, "its runs give");
+    refused(&text, "disagrees with itself");
 }
 
 /// Every reading is recomputed from the run's two raw samples and the Mach timebase.
@@ -247,6 +247,10 @@ fn the_reader_refuses_runs_that_are_not_the_repetitions_in_order() {
     refused(&repeated.json(), "repetitions 1..=5 in order");
     let mut extra = evidence();
     extra.scenarios[0].push(measured(6, 1024, super::tests::IDLE_TICKS));
+    // A finished campaign ran each scenario exactly its repetitions (review S3); a checkpoint
+    // cannot list more runs than repetitions either.
+    refused(&extra.json(), "ran other than 5 times");
+    extra.finished = false;
     refused(&extra.json(), "6 runs for 5 repetitions");
 }
 
@@ -301,4 +305,125 @@ fn the_reader_refuses_other_gates_scenarios_or_timings() {
         assert!(good.contains(&from), "{from}");
         refused(&good.replacen(&from, &to, 1), words);
     }
+}
+/// Review B1: a VALID run must have lived as the driver drives it; S3: a finished campaign ran
+/// everything, and only this tool's statuses; and the note measured is the tool's fixture.
+#[test]
+fn the_reader_refuses_runs_the_driver_cannot_produce() {
+    type Change = fn(&mut Evidence);
+    let samples: [(&str, Change); 9] = [
+        ("warm-up", |e| e.scenarios[0][0].ready_seconds = Some(2.0)),
+        ("names no process", |e| e.scenarios[1][0].pid = None),
+        ("records an exit", |e| {
+            e.scenarios[2][0].exit_status = Some("exit status: 0".into())
+        }),
+        ("readiness wait", |e| {
+            e.scenarios[0][1].ready_seconds = Some(31.0)
+        }),
+        ("hiding", |e| e.scenarios[3][0].hidden_seconds = None),
+        ("hiding", |e| super::tests::hide(&mut e.scenarios[0][2])),
+        ("warm-up", |e| e.scenarios[3][1].hidden_seconds = Some(5.0)),
+        ("ran other than 5 times", |e| e.scenarios.truncate(3)),
+        ("another note", |e| e.fixture_hash = "b".repeat(64)),
+    ];
+    for (words, change) in samples {
+        let mut evidence = evidence();
+        change(&mut evidence);
+        refused(&evidence.json(), words);
+    }
+    let good = evidence().json();
+    refused(
+        &good.replacen("\"status\":\"VALID\"", "\"status\":\"FINE\"", 1),
+        "not one this tool writes",
+    );
+}
+
+/// Review B3: the system and the scale are judged from one environment record whose parts agree.
+#[test]
+fn the_environment_must_agree_with_itself() {
+    let good = evidence().json();
+    for (from, to, words) in [
+        (
+            "\"os_build\":\"26B123\"",
+            "\"os_build\":\"26C1\"",
+            "disagrees with itself",
+        ),
+        (
+            "BuildVersion:\\t26B123",
+            "BuildVersion:\\t26C1",
+            "disagrees with itself",
+        ),
+        (
+            "ProductVersion:\\t27.2",
+            "ProductVersion:\\t26.4",
+            "disagrees with itself",
+        ),
+        (
+            "\"pixel_width\":2048",
+            "\"pixel_width\":1024",
+            "pixels over its points",
+        ),
+    ] {
+        assert!(good.contains(from), "{from}");
+        refused(&good.replacen(from, to, 1), words);
+    }
+    let both = good
+        .replacen("ProductVersion:\\t27.2", "ProductVersion:\\t27.2b", 1)
+        .replacen(
+            "\"macos_version\":\"27.2\"",
+            "\"macos_version\":\"27.2b\"",
+            1,
+        );
+    refused(&both, "not a macOS version");
+    // Two displays: the recorded scale need not be the window's, so R01 is not judged.
+    let mut two = evidence();
+    two.conditions.displays = 2;
+    assert_eq!(verdicts(&two), [("R01", "NOT_TESTED"), ("R02", "MEASURED")]);
+    refused(
+        &good.replacen("\"display_count\":1", "\"display_count\":2", 1),
+        "its runs give",
+    );
+}
+
+/// Review B8: a second sample up to 0.5 s late dilutes the average; holding needs the CPU time
+/// within the 60 s budget, a FAIL the diluted median above the line, and in between the scenario
+/// is measured again. The median is of five runs: three high and two low fail, two and three hold.
+#[test]
+fn a_late_sample_cannot_turn_a_hard_failure_into_a_pass() {
+    use super::tests::measured_over;
+    // CPU seconds over a 60.5 s window: 0.0603 reads 0.09967% of the window, 0.1005% of 60 s.
+    let ticks = |cpu_seconds: f64| (cpu_seconds * 1e9 * 3.0 / 125.0).round() as u64;
+    let with = |cpu_seconds: f64, window: f64| {
+        let mut evidence = evidence();
+        let limit = SCENARIOS[1].limit;
+        for (index, run) in evidence.scenarios[1].iter_mut().enumerate() {
+            *run = measured_over(index + 1, limit, ticks(cpu_seconds), window);
+        }
+        evidence
+    };
+    let undecided = with(0.0603, 60.5);
+    assert_eq!(
+        verdicts(&undecided),
+        [("R01", "MEASURED"), ("R02", "NOT_TESTED")]
+    );
+    assert!(undecided.rows()[1].detail.contains("measure again"));
+    assert_eq!(read(&undecided.json()).unwrap()[1].verdict, "NOT_TESTED");
+    assert_eq!(verdicts(&with(0.0607, 60.5))[1].1, "FAIL");
+    assert_eq!(verdicts(&with(0.0599, 60.5))[1].1, "MEASURED");
+    assert_eq!(verdicts(&with(0.0603, 60.0))[1].1, "FAIL");
+    let mixed = |high: usize| {
+        let mut evidence = evidence();
+        let limit = SCENARIOS[2].limit;
+        for (index, run) in evidence.scenarios[2].iter_mut().enumerate() {
+            let cpu = if index < high {
+                BUSY_TICKS
+            } else {
+                super::tests::IDLE_TICKS
+            };
+            *run = measured(index + 1, limit, cpu);
+        }
+        evidence
+    };
+    assert_eq!(verdicts(&mixed(3))[1].1, "FAIL");
+    assert_eq!(verdicts(&mixed(2))[1].1, "MEASURED");
 }

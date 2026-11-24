@@ -27,17 +27,30 @@ const MACOS_MAJOR: &str = "27";
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Reading {
     pub footprint: u64,
+    /// The CPU over the measured window, as a percent of that window.
     pub idle_cpu: f64,
+    /// The same CPU time as a percent of `10`'s 60 s budget (review B8): at least the first
+    /// 60 s window's average, however late the second sample came.
+    pub budget_cpu: f64,
 }
 
 impl Reading {
-    /// The reading of a run's metrics; `None` for readings no valid run can have.
-    pub(super) fn of(metrics: &Metrics) -> Option<Self> {
+    /// The reading of a run's metrics over a `window` of seconds; `None` for readings no valid
+    /// run can have.
+    pub(super) fn of(metrics: &Metrics, window: f64) -> Option<Self> {
+        let budget_cpu =
+            metrics.idle_cpu_percent * window / crate::resource_plan::CPU_SECONDS as f64;
         Some(Self {
             footprint: metrics.footprint_bytes,
             idle_cpu: metrics.idle_cpu_percent,
+            budget_cpu,
         })
-        .filter(|r| r.idle_cpu.is_finite() && r.idle_cpu >= 0.0 && r.footprint > 0)
+        .filter(|r| {
+            r.idle_cpu.is_finite()
+                && r.idle_cpu >= 0.0
+                && r.budget_cpu.is_finite()
+                && r.footprint > 0
+        })
     }
 }
 
@@ -55,6 +68,8 @@ pub(super) struct Scenario {
 pub(super) struct Conditions {
     pub macos_version: String,
     pub scale: [f64; 2],
+    /// Active displays: the scale is the campaign's only when there is one.
+    pub displays: u32,
 }
 
 impl Conditions {
@@ -67,13 +82,13 @@ impl Conditions {
     }
 
     fn scale_2(&self) -> bool {
-        self.scale == [MEMORY_SCALE, MEMORY_SCALE]
+        self.displays == 1 && self.scale == [MEMORY_SCALE, MEMORY_SCALE]
     }
 
     fn describe(&self) -> String {
         format!(
-            "measured on macOS {} at scale {}x{}",
-            self.macos_version, self.scale[0], self.scale[1]
+            "measured on macOS {} at scale {}x{} with {} display(s)",
+            self.macos_version, self.scale[0], self.scale[1], self.displays
         )
     }
 }
@@ -176,23 +191,37 @@ pub(super) fn judge(
         ("NOT_TESTED", missing.clone())
     };
     // R02: each scenario's median idle CPU over its valid runs, against the hard failure line.
-    let medians: Vec<(&str, f64)> = scenarios
+    // The measured window may overshoot 60 s by scheduling (at most 0.5 s), which dilutes the
+    // average (review B8). A FAIL needs the diluted median above the line; holding needs the
+    // CPU time within the 60 s budget, which bounds the first 60 s from above; between the two
+    // the run cannot tell, and the scenario is to be measured again.
+    let medians: Vec<(&str, f64, f64)> = scenarios
         .iter()
         .filter_map(|s| {
             Some((
                 s.name,
                 model::summarize(valid(s).map(|r| r.idle_cpu))?.median,
+                model::summarize(valid(s).map(|r| r.budget_cpu))?.median,
             ))
         })
         .collect();
     let above: Vec<String> = medians
         .iter()
-        .filter(|(_, median)| *median > CPU_HARD_FAILURE_PERCENT)
-        .map(|(name, median)| format!("{name} median {median:.6}%"))
+        .filter(|(_, median, _)| *median > CPU_HARD_FAILURE_PERCENT)
+        .map(|(name, median, _)| format!("{name} median {median:.6}%"))
+        .collect();
+    let undecided: Vec<String> = medians
+        .iter()
+        .filter(|(_, median, budget)| {
+            *median <= CPU_HARD_FAILURE_PERCENT && *budget > CPU_HARD_FAILURE_PERCENT
+        })
+        .map(|(name, median, budget)| {
+            format!("{name} median {median:.6}% over the window, {budget:.6}% of the 60 s budget")
+        })
         .collect();
     let listed = medians
         .iter()
-        .map(|(name, median)| format!("{name} {median:.6}%"))
+        .map(|(name, _, budget)| format!("{name} {budget:.6}%"))
         .collect::<Vec<_>>()
         .join(", ");
     let r02 = if !conditions.macos_27() {
@@ -208,10 +237,20 @@ pub(super) fn judge(
                 above.join(", ")
             ),
         )
+    } else if !undecided.is_empty() {
+        (
+            "NOT_TESTED",
+            format!(
+                "crosses the {CPU_HARD_FAILURE_PERCENT}% line within the window's timing tolerance; measure again: {}",
+                undecided.join(", ")
+            ),
+        )
     } else if held {
         (
             "MEASURED",
-            format!("median idle CPU at most {CPU_HARD_FAILURE_PERCENT}%: {listed}"),
+            format!(
+                "median idle CPU within {CPU_HARD_FAILURE_PERCENT}% of the 60 s budget: {listed}"
+            ),
         )
     } else {
         ("NOT_TESTED", missing)
@@ -273,13 +312,76 @@ fn metrics(value: &Value) -> Result<Metrics, String> {
 /// The reading of one run as written, or why the evidence cannot be what this tool writes. A
 /// VALID run has exactly two samples whose window and counters give exactly the readings beside
 /// them (`model::metrics`, the same function that wrote them; numbers round-trip exactly).
-fn reading(run: &Value, timebase: (u32, u32), finished: bool) -> Result<Option<Reading>, String> {
+/// How a run of this tool can end (`runner`); any other status is not this tool's.
+const STATUSES: [&str; 7] = [
+    "VALID",
+    "ERROR",
+    "EXITED_EARLY",
+    "READINESS_TIMEOUT",
+    "HIDE_TIMEOUT",
+    "NOT_HIDDEN",
+    "DISPLAY_CHANGED",
+];
+
+fn optional_number(value: &Value, key: &str) -> Result<Option<f64>, String> {
+    match value.field(key)? {
+        Value::Null => Ok(None),
+        other => number(other).map(Some),
+    }
+}
+
+/// A VALID run's life as the tool drives it (review B1): a process started, its window ready
+/// within 30 s, for Hidden hidden through the menu after that, then 30 s of warm-up before the
+/// first sample; the process did not exit.
+fn lifecycle(run: &Value, hidden: bool, first_sample: f64) -> Result<(), String> {
+    let refused = |what: &str| Err(format!("a VALID run {what}, which the tool never writes"));
+    if matches!(run.field("pid")?, Value::Null) {
+        return refused("names no process");
+    }
+    if optional_number(run, "exit_observed_seconds")?.is_some()
+        || !matches!(run.field("exit_status")?, Value::Null)
+    {
+        return refused("records an exit");
+    }
+    let Some(ready) = optional_number(run, "ready_seconds")? else {
+        return refused("was never ready");
+    };
+    if !(0.0..=30.0).contains(&ready) {
+        return refused("was ready outside the 30 s readiness wait");
+    }
+    let hidden_at = optional_number(run, "hidden_seconds")?;
+    let waited = optional_number(run, "status_item_wait_seconds")?;
+    let start = match (hidden, hidden_at, waited) {
+        (true, Some(at), Some(_)) if at >= ready => at,
+        (false, None, None) => ready,
+        _ => {
+            return refused(
+                "does not record the hiding its scenario needs, or records one it does not",
+            );
+        }
+    };
+    if first_sample < start + crate::resource_plan::WARMUP_SECONDS as f64 {
+        return refused("sampled before the 30 s warm-up ended");
+    }
+    Ok(())
+}
+
+fn reading(
+    run: &Value,
+    timebase: (u32, u32),
+    finished: bool,
+    hidden: bool,
+) -> Result<Option<Reading>, String> {
     let cleaned = matches!(run.field("cleanup_error")?, Value::Null);
     // The tool stops a campaign at the first failed cleanup, before marking it finished.
     if finished && !cleaned {
         return Err("a finished campaign holds a run with a cleanup error, which stops the tool before it finishes".into());
     }
-    if run.field("status")?.string()? != "VALID" {
+    let status = run.field("status")?.string()?;
+    if !STATUSES.contains(&status) {
+        return Err(format!("run status {status:?} is not one this tool writes"));
+    }
+    if status != "VALID" {
         return Ok(None);
     }
     if !cleaned {
@@ -297,13 +399,63 @@ fn reading(run: &Value, timebase: (u32, u32), finished: bool) -> Result<Option<R
             samples.len()
         ));
     };
+    lifecycle(run, hidden, before.elapsed_seconds)?;
     let recomputed = model::metrics(before, after, timebase.0, timebase.1)
         .map_err(|e| format!("a VALID run's samples give no reading: {e}"))?;
     let written = run.field("metrics")?;
     if matches!(written, Value::Null) || metrics(written)? != recomputed {
         return Err("a VALID run's written readings differ from those its samples give".into());
     }
-    Ok(Reading::of(&recomputed))
+    Ok(Reading::of(
+        &recomputed,
+        after.elapsed_seconds - before.elapsed_seconds,
+    ))
+}
+
+/// The value of `key: <value>` in `sw_vers` text.
+fn sw_vers<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines()
+        .find_map(|line| line.strip_prefix(key)?.strip_prefix(':'))
+        .map(str::trim)
+}
+
+/// The conditions, from one environment record whose parts agree (review B3): the system's
+/// version and build as `sw_vers` reports them and as the kernel does, a version that is only
+/// digits and dots, and a scale that is the display's pixels over its points.
+fn conditions(environment: &Value) -> Result<Conditions, String> {
+    let text = |key: &str| -> Result<&str, String> { environment.field(key)?.string() };
+    let os = text("os")?;
+    let version = text("macos_version")?;
+    let build = text("os_build")?;
+    if sw_vers(os, "ProductVersion") != Some(version) || sw_vers(os, "BuildVersion") != Some(build)
+    {
+        return Err(format!(
+            "the environment disagrees with itself: sw_vers {os:?}, kernel version {version:?} build {build:?}"
+        ));
+    }
+    let parts: Vec<&str> = version.split('.').collect();
+    if !(2..=3).contains(&parts.len())
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(format!("{version:?} is not a macOS version"));
+    }
+    let display = environment.field("main_display")?;
+    let size = |key: &str| number(display.field(key)?);
+    let scale = [
+        size("pixel_width")? / size("point_width")?,
+        size("pixel_height")? / size("point_height")?,
+    ];
+    if scale != [size("scale_x")?, size("scale_y")?] {
+        return Err("the display's scale is not its pixels over its points".into());
+    }
+    Ok(Conditions {
+        macos_version: version.to_owned(),
+        scale,
+        displays: u32::try_from(environment.field("display_count")?.unsigned()?)
+            .map_err(|e| e.to_string())?,
+    })
 }
 
 /// The rows a `mac-resources` evidence file (schema 5) establishes, recomputed from its raw
@@ -320,18 +472,39 @@ pub(crate) fn from_evidence(value: &Value) -> Result<[RowVerdict; 2], String> {
     let finished = matches!(value.field("finished")?, Value::Bool(true));
     let base = value.field("mach_timebase")?;
     let timebase = (small(base.field("numer")?)?, small(base.field("denom")?)?);
-    let environment = value.field("environment")?;
-    let display = environment.field("main_display")?;
-    let conditions = Conditions {
-        macos_version: environment.field("macos_version")?.string()?.to_owned(),
-        scale: [
-            number(display.field("scale_x")?)?,
-            number(display.field("scale_y")?)?,
-        ],
-    };
+    // The measured note is this tool's fixture.
+    if value.field("fixture_sha256")?.string()?
+        != crate::integrity::sha256_bytes(model::fixture().as_bytes())?
+        || unsigned("fixture_bytes")? != 20480
+        || unsigned("formula_count")? != 20
+    {
+        return Err("the evidence measured another note than this tool's fixture".into());
+    }
+    let conditions = conditions(value.field("environment")?)?;
     let listed = value.field("scenarios")?.array()?;
     if listed.len() > SCENARIOS.len() {
         return Err("the evidence lists more scenarios than this tool measures".into());
+    }
+    // A finished campaign ran every scenario, each its repetitions times (review S3).
+    if finished {
+        if listed.len() != SCENARIOS.len() {
+            return Err(format!(
+                "a finished campaign lists {} of {} scenarios",
+                listed.len(),
+                SCENARIOS.len()
+            ));
+        }
+        if repetitions < crate::resource_plan::REPETITIONS {
+            return Err(format!("a finished campaign of {repetitions} repetitions"));
+        }
+        for scenario in listed {
+            if scenario.field("runs")?.array()?.len() != repetitions {
+                return Err(format!(
+                    "a finished campaign whose {} ran other than {repetitions} times",
+                    scenario.field("scenario")?.string()?
+                ));
+            }
+        }
     }
     let mut scenarios = Vec::new();
     for (scenario, expected) in listed.iter().zip(SCENARIOS) {
@@ -362,7 +535,7 @@ pub(crate) fn from_evidence(value: &Value) -> Result<[RowVerdict; 2], String> {
                 ));
             }
             runs.push(
-                reading(run, timebase, finished)
+                reading(run, timebase, finished, expected.hidden)
                     .map_err(|e| format!("{name} run {}: {e}", index + 1))?,
             );
         }

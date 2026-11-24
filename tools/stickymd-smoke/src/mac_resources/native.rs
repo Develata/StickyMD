@@ -80,6 +80,7 @@ unsafe extern "C" {
     fn CGWindowListCopyWindowInfo(options: u32, relative: u32) -> Cf;
     fn CGRectMakeWithDictionaryRepresentation(dictionary: Cf, rect: *mut Rect) -> bool;
     fn CGMainDisplayID() -> u32;
+    fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
     fn CGDisplayBounds(display: u32) -> Rect;
     fn CGDisplayCopyDisplayMode(display: u32) -> Cf;
     fn CGDisplayModeGetPixelWidth(mode: Cf) -> usize;
@@ -151,6 +152,17 @@ pub(super) fn window_ready(pid: u32) -> Result<bool, String> {
         CFRelease(array);
     }
     Ok(ready)
+}
+
+/// How many displays are active: one, for a campaign whose scale is that display's.
+pub(super) fn display_count() -> Result<u32, String> {
+    let mut count = 0_u32;
+    // SAFETY: a zero-length request with a null list only writes the count it was given.
+    let error = unsafe { CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut count) };
+    if error != 0 {
+        return Err(format!("CGGetActiveDisplayList failed: {error}"));
+    }
+    Ok(count)
 }
 
 pub(super) fn display() -> Result<[f64; 4], String> {

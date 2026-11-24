@@ -34,12 +34,17 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     let fixture = model::fixture();
     // The output may not reach the input bundle, its note directory or the mac-gui ledger.
     let out = crate::mac_common::output::guarded(&options.out, &app)?;
-    let [pixel_width, pixel_height, point_width, point_height] = native::display()?;
+    // One reading of the environment gives both the evidence and the conditions it is judged
+    // under (review B3); every sample checks the display is still this one.
+    let display = native::display()?;
+    let [pixel_width, pixel_height, point_width, point_height] = display;
+    let displays = native::display_count()?;
     let mut evidence = Evidence {
-        environment: environment()?,
+        environment: environment(display, displays)?,
         conditions: Conditions {
             macos_version: native::system_text(c"kern.osproductversion")?,
             scale: [pixel_width / point_width, pixel_height / point_height],
+            displays,
         },
         app_hash: crate::integrity::sha256(&executable)?,
         bundle_hash: bundle_hash(&app)?,
@@ -63,7 +68,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
                 "{name} run {repetition}/{}: starting isolated measurement",
                 options.repetitions
             );
-            let run = one_run(&app, &fixture, scenario, repetition, &evidence);
+            let run = one_run(&app, &fixture, scenario, repetition, &evidence, display);
             println!("{name} run {repetition}: {} {}", run.status, run.reason);
             let cleanup_error = run.cleanup_error.clone();
             evidence
@@ -98,6 +103,7 @@ fn one_run(
     scenario: Scenario,
     repetition: usize,
     evidence: &Evidence,
+    display: [f64; 4],
 ) -> Run {
     let timebase = evidence.timebase;
     let mut run = Run::new(repetition);
@@ -109,7 +115,7 @@ fn one_run(
         }
     };
     let result = prepare(&mut session, app, fixture, scenario.mode, evidence)
-        .and_then(|()| measure(&mut session, &mut run, timebase, scenario.hidden));
+        .and_then(|()| measure(&mut session, &mut run, timebase, scenario.hidden, display));
     if let Err(error) = result {
         run.reason = error;
     }
@@ -177,9 +183,19 @@ fn wait(
     Ok(true)
 }
 
-fn capture(session: &mut Session, run: &mut Run, started: Instant) -> Result<bool, String> {
+fn capture(
+    session: &mut Session,
+    run: &mut Run,
+    started: Instant,
+    display: [f64; 4],
+) -> Result<bool, String> {
     if exited(session, run, started)? {
         return Ok(false);
+    }
+    // The scale the campaign records must be the one measured under (review B3).
+    if native::display()? != display {
+        run.status = "DISPLAY_CHANGED";
+        return Err("the main display changed during the campaign".into());
     }
     let result = native::sample(run.pid.ok_or("Missing measured PID")?, started);
     let error = match result {
@@ -204,6 +220,7 @@ fn measure(
     run: &mut Run,
     timebase: (u32, u32),
     hidden: bool,
+    display: [f64; 4],
 ) -> Result<(), String> {
     let started = Instant::now();
     let pid = session.child.as_ref().ok_or("Missing child")?.id();
@@ -237,7 +254,7 @@ fn measure(
         run,
         started,
         Instant::now() + Duration::from_secs(crate::resource_plan::WARMUP_SECONDS),
-    )? || !capture(session, run, started)?
+    )? || !capture(session, run, started, display)?
     {
         return Ok(());
     }
@@ -247,7 +264,7 @@ fn measure(
     let deadline = started
         + Duration::from_secs_f64(run.samples[0].elapsed_seconds)
         + Duration::from_secs(crate::resource_plan::CPU_SECONDS);
-    if !wait(session, run, started, deadline)? || !capture(session, run, started)? {
+    if !wait(session, run, started, deadline)? || !capture(session, run, started, display)? {
         return Ok(());
     }
     if hidden {
@@ -318,8 +335,8 @@ fn sysctl(name: &str) -> String {
         )
 }
 
-fn environment() -> Result<String, String> {
-    let [pixel_width, pixel_height, point_width, point_height] = native::display()?;
+fn environment(display: [f64; 4], displays: u32) -> Result<String, String> {
+    let [pixel_width, pixel_height, point_width, point_height] = display;
     // The ledger takes the system from `sw_vers` as it does for mac-gui runs, so one image digest
     // names one system across both tools.
     let sw_vers = Command::new("/usr/bin/sw_vers")
@@ -329,7 +346,7 @@ fn environment() -> Result<String, String> {
         return Err("sw_vers failed".into());
     }
     Ok(format!(
-        "{{\"os\":{},\"hv_vmm_present\":{},\"macos_version\":{},\"os_build\":{},\"model\":{},\"cpu\":{},\"ram_bytes\":{},\"architecture\":{},\"unix_seconds\":{},\"main_display\":{{\"pixel_width\":{},\"pixel_height\":{},\"point_width\":{},\"point_height\":{},\"scale_x\":{},\"scale_y\":{}}},\"release_build\":\"caller-supplied; not inferred from binary\",\"desktop_conditions\":\"caller must keep desktop unlocked, display on, and avoid interaction\"}}",
+        "{{\"os\":{},\"hv_vmm_present\":{},\"display_count\":{displays},\"macos_version\":{},\"os_build\":{},\"model\":{},\"cpu\":{},\"ram_bytes\":{},\"architecture\":{},\"unix_seconds\":{},\"main_display\":{{\"pixel_width\":{},\"pixel_height\":{},\"point_width\":{},\"point_height\":{},\"scale_x\":{},\"scale_y\":{}}},\"release_build\":\"caller-supplied; not inferred from binary\",\"desktop_conditions\":\"caller must keep desktop unlocked, display on, and avoid interaction\"}}",
         quote(&String::from_utf8_lossy(&sw_vers.stdout)),
         quote(&sysctl("kern.hv_vmm_present")),
         quote(&native::system_text(c"kern.osproductversion")?),
@@ -364,7 +381,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let mut run = super::Run::new(1);
-        super::measure(&mut session, &mut run, (1, 1), false).unwrap();
+        super::measure(&mut session, &mut run, (1, 1), false, [1.0; 4]).unwrap();
         assert_eq!(run.status, "EXITED_EARLY");
         assert!(run.samples.is_empty() && run.metrics.is_none());
         assert!(run.exit_status.as_deref().unwrap().contains('1'));

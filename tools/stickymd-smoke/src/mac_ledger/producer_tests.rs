@@ -72,7 +72,7 @@ fn gui_evidence(rows: &[&str], extra: &str) -> String {
 fn with_scenarios(scenarios: &[String], extra: &str) -> String {
     let scenarios = scenarios.join(",");
     format!(
-        "{{\"schema_version\":2,\"finished\":true,\"batch\":\"rc1\",\"environment\":{{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\n\",\"hv_vmm_present\":\"1\",\"allow_host\":false,\"unix_seconds\":42}},\"app_inputs\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"driver_sha256\":\"{}\"{extra},\"scenarios\":[{scenarios}]}}",
+        "{{\"schema_version\":2,\"finished\":true,\"batch\":\"rc1\",\"environment\":{{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\nBuildVersion:\\t26B123\\n\",\"hv_vmm_present\":\"1\",\"allow_host\":false,\"unix_seconds\":42}},\"app_inputs\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"driver_sha256\":\"{}\"{extra},\"scenarios\":[{scenarios}]}}",
         hex('1'),
         hex('a'),
         hex('b'),
@@ -182,7 +182,7 @@ fn a_finished_resources_run_in_the_vm_records_r01_and_r02_with_both_digests() {
                 driver: hex('d'),
                 image: "sha256:image".into(),
                 // From sw_vers, as for a mac-gui run: one image names one system across both.
-                system: "ProductName: macOS ProductVersion: 27.2".into(),
+                system: "ProductName: macOS ProductVersion: 27.2 BuildVersion: 26B123".into(),
             }
         );
         assert_eq!(

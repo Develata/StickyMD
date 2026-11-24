@@ -87,7 +87,12 @@ impl Evidence {
                     .map(|run| {
                         let metrics = run.metrics.as_ref()?;
                         (run.status == "VALID" && run.cleanup_error.is_none())
-                            .then(|| Reading::of(metrics))
+                            .then(|| {
+                                let [before, after] = run.samples.as_slice() else {
+                                    return None;
+                                };
+                                Reading::of(metrics, after.elapsed_seconds - before.elapsed_seconds)
+                            })
                             .flatten()
                     })
                     .collect(),

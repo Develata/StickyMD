@@ -18,12 +18,23 @@ fn sample(seconds: f64, ticks: u64, wakeups: u64) -> Sample {
 pub(super) const IDLE_TICKS: u64 = 14_400;
 pub(super) const BUSY_TICKS: u64 = 1_483_200;
 
-/// A valid run as the tool takes it: two samples 60 s apart at `footprint_bytes`, `cpu_ticks` of
-/// CPU between them, 100 interrupt and 25 idle wake-ups a second, readings computed from them.
+/// A valid run as the tool takes it: ready at 0.5 s, the first sample after the 30 s warm-up and
+/// the second 60 s later at `footprint_bytes`, `cpu_ticks` of CPU between them, 100 interrupt and
+/// 25 idle wake-ups a second, readings computed from them.
 pub(super) fn measured(repetition: usize, footprint_bytes: u64, cpu_ticks: u64) -> Run {
-    let mut before = sample(30.0, 1_000, 2_000);
+    measured_over(repetition, footprint_bytes, cpu_ticks, 60.0)
+}
+
+/// [`measured`] with the second sample `window` seconds after the first.
+pub(super) fn measured_over(
+    repetition: usize,
+    footprint_bytes: u64,
+    cpu_ticks: u64,
+    window: f64,
+) -> Run {
+    let mut before = sample(31.5, 1_000, 2_000);
     before.footprint_bytes = footprint_bytes;
-    let mut after = sample(90.0, 1_000 + cpu_ticks / 2, 2_000 + 6_000);
+    let mut after = sample(31.5 + window, 1_000 + cpu_ticks / 2, 2_000 + 6_000);
     after.system_ticks = 1_000 + cpu_ticks - cpu_ticks / 2;
     after.pkg_idle_wakeups = 2_000 + 1_500;
     after.footprint_bytes = footprint_bytes;
@@ -215,24 +226,42 @@ fn cli_parses_paths_defaults_equals_help_and_rejects_incomplete_or_ambiguous_opt
 /// A finished campaign in the VM: every scenario's runs valid and within the gates.
 pub(super) fn evidence() -> Evidence {
     Evidence {
-        environment: "{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\n\",\"hv_vmm_present\":\"1\",\"macos_version\":\"27.2\",\"unix_seconds\":7,\"main_display\":{\"pixel_width\":2048,\"pixel_height\":1536,\"point_width\":1024,\"point_height\":768,\"scale_x\":2,\"scale_y\":2}}".into(),
+        environment: "{\"os\":\"ProductName:\\tmacOS\\nProductVersion:\\t27.2\\nBuildVersion:\\t26B123\\n\",\"hv_vmm_present\":\"1\",\"display_count\":1,\"macos_version\":\"27.2\",\"os_build\":\"26B123\",\"unix_seconds\":7,\"main_display\":{\"pixel_width\":2048,\"pixel_height\":1536,\"point_width\":1024,\"point_height\":768,\"scale_x\":2,\"scale_y\":2}}".into(),
         conditions: Conditions {
             macos_version: "27.2".into(),
             scale: [2.0, 2.0],
+            displays: 1,
         },
         app_hash: "a".repeat(64),
         bundle_hash: "c".repeat(64),
         inputs: Some("e".repeat(64)),
         driver: "d".repeat(64),
         finished: true,
-        fixture_hash: "b".repeat(64),
+        fixture_hash: crate::integrity::sha256_bytes(fixture().as_bytes()).unwrap(),
         repetitions: 5,
         timebase: (125, 3),
         scenarios: SCENARIOS
             .iter()
-            .map(|scenario| (1..=5).map(|i| valid_run(i, scenario.limit)).collect())
+            .map(|scenario| {
+                (1..=5)
+                    .map(|i| {
+                        let mut run = valid_run(i, scenario.limit);
+                        if scenario.hidden {
+                            hide(&mut run);
+                        }
+                        run
+                    })
+                    .collect()
+            })
             .collect(),
     }
+}
+
+/// A run of the Hidden scenario: hidden through the menu 0.5 s after it was ready, which the
+/// first sample's warm-up (31.5 s) still covers.
+pub(super) fn hide(run: &mut Run) {
+    run.status_item_wait_seconds = Some(0.004);
+    run.hidden_seconds = Some(1.0);
 }
 
 /// A good campaign's JSON for the ledger's tests; `busy` gives Split a median idle CPU of 0.103%
