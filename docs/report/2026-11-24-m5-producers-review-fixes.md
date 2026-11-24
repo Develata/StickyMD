@@ -40,4 +40,10 @@
 
 - 本机（macOS 27.2 arm64）`cargo test --locked -p stickymd-smoke`：单元 692 个、集成 20 个通过，3 个忽略。
 - `cargo clippy --all-targets -D warnings`：八个 macOS 包无警告；`stickymd-smoke` 加 `--target x86_64-pc-windows-msvc` 无警告。`cargo fmt --check` 通过。
-- 新测试在 Windows 上只编译检查，由 CI 运行。
+- `phase 00` 与 `phase 16` 在已提交的干净树上 PASS。
+- `mac-test` 虚拟机（macOS 27.2，26B123），批次 `m5p-2`：本分支 `29e74d2` 的驱动（`908a92d7…`）以 `--zip` 打开同一个本机打包的发布布局 ZIP
+  （`f99e819c…`，取自 `be6cce1`，不是晋升的候选），R03 PASS。检查表为七项：“opened the candidate ZIP as given”，观察为 `sha256=f99e819c…`；
+  其余六项全部通过。“不写文件”比较递归快照：`StickyMD/` 下 14 项的大小、SHA-256 与时间前后相同，没有误报。登记进真实账本的一份副本时，
+  新的检查表校验通过，记录带 `zip_sha256`（真实账本未改动）。证据在本 worktree 已忽略的 `dist/evidence/mac-vm-2026-11-24-m5p-2/`
+  （`mac-gui.json` 为 `28bdd9c9…`）。
+- 新测试在 Windows 上只编译检查，由 CI 运行。schema 5 的 `mac-resources` 没有在虚拟机中跑过。
