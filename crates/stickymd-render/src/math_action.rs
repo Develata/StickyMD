@@ -261,14 +261,11 @@ fn protected_inlines(inlines: &[InlineNode], protected: &mut Vec<SourceRange>) -
     })
 }
 
-/// Whether `text` holds a `\r` that is not followed by `\n`: one pass over the bytes, no
+/// Whether `text` holds a `\r` that is not followed by `\n`: one SIMD search for `\r`, no
 /// allocation. A `\r\n` pair is one line break for both Comrak and the source maps.
 fn has_isolated_cr(text: &str) -> bool {
     let bytes = text.as_bytes();
-    bytes
-        .iter()
-        .enumerate()
-        .any(|(index, &byte)| byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
+    memchr::memchr_iter(b'\r', bytes).any(|index| bytes.get(index + 1) != Some(&b'\n'))
 }
 
 #[cfg(test)]

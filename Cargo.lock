@@ -2501,6 +2501,7 @@ dependencies = [
  "comrak",
  "cosmic-text",
  "image",
+ "memchr",
  "ratex-font",
  "ratex-font-loader",
  "ratex-layout",

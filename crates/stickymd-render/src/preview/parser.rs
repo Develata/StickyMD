@@ -477,14 +477,12 @@ impl ConvertContext<'_> {
     }
 }
 
-/// The byte of the first `\r` that no `\n` follows, or `source.len()`. O(source bytes), no
-/// allocation.
+/// The byte of the first `\r` that no `\n` follows, or `source.len()`. O(source bytes) with a
+/// SIMD search for `\r`, no allocation.
 fn first_isolated_cr(source: &str) -> usize {
     let bytes = source.as_bytes();
-    bytes
-        .iter()
-        .enumerate()
-        .position(|(index, &byte)| byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
+    memchr::memchr_iter(b'\r', bytes)
+        .find(|&index| bytes.get(index + 1) != Some(&b'\n'))
         .unwrap_or(bytes.len())
 }
 

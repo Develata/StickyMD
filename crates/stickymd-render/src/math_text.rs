@@ -141,15 +141,26 @@ fn collect_dollar_pairs(
     let mut protection = 0;
     let mut open: Option<(usize, bool)> = None;
     while cursor < bytes.len() {
-        if let Some(range) = protected.get(protection)
-            && cursor >= range.start
-        {
+        let next_protected = protected
+            .get(protection)
+            .map_or(bytes.len(), |range| range.start);
+        if cursor >= next_protected {
             if let Some((_, blocked)) = &mut open {
                 *blocked = true;
             }
-            cursor = cursor.max(range.end);
+            cursor = cursor.max(protected[protection].end);
             protection += 1;
             continue;
+        }
+        // Only `$` and `\` act before the next protected range, so the scan
+        // jumps to the first of them (SIMD `memchr2`) instead of stepping
+        // byte by byte; the bytes it passes would only have advanced the cursor.
+        match memchr::memchr2(b'$', b'\\', &bytes[cursor..next_protected]) {
+            Some(offset) => cursor += offset,
+            None => {
+                cursor = next_protected;
+                continue;
+            }
         }
         match bytes[cursor] {
             // Escaped dollars cannot become delimiters. Advancing
