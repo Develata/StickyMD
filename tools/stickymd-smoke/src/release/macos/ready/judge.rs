@@ -6,7 +6,7 @@
 //! nothing forces a row through.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
-use super::groups::{Group, Ledger, ledger};
+use super::groups::{Ledger, Scope, failure, joint, ledger};
 use super::receipts::{self, Wanted};
 use super::rows::{Class, ROWS};
 use super::source_tests::{self, Outcome};
@@ -176,12 +176,25 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
 /// A NOT TESTED line of a waivable row becomes WAIVED when the USER's waiver for this candidate
 /// stands; any other line is left as it is.
 fn waived(inputs: &Inputs<'_>, judged: Line, row: &str) -> Line {
-    if judged.verdict != Verdict::NotTested || !super::rows::waivable(row) {
+    if judged.verdict != Verdict::NotTested {
         return judged;
     }
     let Ok((records, candidate)) = evidence(inputs, &judged.item) else {
         return judged;
     };
+    // The one place a NOT TESTED line meets the ledger's failures: any FAIL of the row, or of a
+    // row it needs, on the candidate's bytes under any identity makes it FAIL, so neither missing
+    // evidence nor a waiver can stand for a failure observed (plan 11 #macos-readiness-check).
+    let scope = scope(inputs, records, candidate);
+    if let Some(reason) = members(row)
+        .iter()
+        .find_map(|member| failure(&scope, member))
+    {
+        return line(&judged.item, Verdict::Fail, reason);
+    }
+    if !super::rows::waivable(row) {
+        return judged;
+    }
     match receipts::standing(
         records,
         Wanted::Waiver,
@@ -209,7 +222,9 @@ fn manual(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
         Ok(found) => found,
         Err(line) => return line,
     };
-    if let Ledger::Fail(reason) = ledger(records, row, &candidate.built, inputs.batch) {
+    // A program FAIL on the candidate's bytes under any identity fails the row, whatever another
+    // identity's PASS or a USER receipt says (plan 11 #macos-readiness-check).
+    if let Some(reason) = failure(&scope(inputs, records, candidate), row) {
         return line(item, Verdict::Fail, reason);
     }
     match receipts::standing(
@@ -314,64 +329,41 @@ fn evidence<'a>(inputs: &'a Inputs<'_>, item: &str) -> Result<(&'a [Record], &'a
     }
 }
 
+/// The rows a row's ledger verdict needs: W12 counts only with its three real logout cases
+/// (plan 11 #phase-16-macos-host); every other row is itself.
+fn members(row: &str) -> Vec<String> {
+    let (parent, parts) = crate::mac_ledger::decide::composite();
+    if row == parent {
+        std::iter::once(row.to_owned()).chain(parts).collect()
+    } else {
+        vec![row.to_owned()]
+    }
+}
+
+fn scope<'a>(inputs: &'a Inputs<'_>, records: &'a [Record], candidate: &'a Candidate) -> Scope<'a> {
+    Scope {
+        records,
+        built: &candidate.built,
+        batch: inputs.batch,
+    }
+}
+
+/// A `mac-gui` row: a group in which it and every row it needs hold a clean PASS. The rows are
+/// judged together inside each group, so a FAIL in every complete group is a FAIL (plan 11
+/// #macos-readiness-check).
 fn gui(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     let (records, candidate) = match evidence(inputs, item) {
         Ok(found) => found,
         Err(line) => return line,
     };
-    // W12 counts only with its three real logout cases, in one identity (plan 11).
-    let (parent, parts) = crate::mac_ledger::decide::composite();
-    let group: Vec<String> = if row == parent {
-        std::iter::once(row.to_owned()).chain(parts).collect()
-    } else {
-        vec![row.to_owned()]
-    };
-    // Every member is judged before any verdict, so a recorded FAIL of a later member is never
-    // hidden behind an earlier member's missing evidence (which a waiver could then cover).
-    let judged: Vec<(&String, Ledger)> = group
-        .iter()
-        .map(|member| {
-            (
-                member,
-                ledger(records, member, &candidate.built, inputs.batch),
-            )
-        })
-        .collect();
-    if let Some((_, Ledger::Fail(reason))) =
-        judged.iter().find(|(_, l)| matches!(l, Ledger::Fail(_)))
-    {
-        return line(item, Verdict::Fail, reason.clone());
-    }
-    if let Some((_, Ledger::None(reason))) =
-        judged.iter().find(|(_, l)| matches!(l, Ledger::None(_)))
-    {
-        return line(item, Verdict::NotTested, reason.clone());
-    }
-    let mut common: Option<Vec<Group>> = None;
-    let mut evidence_of_row = String::new();
-    for (member, judgement) in judged {
-        if let Ledger::Clean(groups, evidence) = judgement {
-            if member == row {
-                evidence_of_row = evidence;
-            }
-            common = Some(match common {
-                None => groups,
-                Some(kept) => kept.into_iter().filter(|g| groups.contains(g)).collect(),
-            });
-        }
-    }
-    if common.is_some_and(|identities| !identities.is_empty()) {
-        line(
+    match joint(&scope(inputs, records, candidate), &members(row)) {
+        Ledger::Clean(evidence) => line(
             item,
             Verdict::Pass,
-            format!("ledger PASS on the candidate's bytes ({evidence_of_row})"),
-        )
-    } else {
-        line(
-            item,
-            Verdict::NotTested,
-            format!("P16-{row} and its logout cases have no clean identity in common"),
-        )
+            format!("ledger PASS on the candidate's bytes ({evidence})"),
+        ),
+        Ledger::Fail(reason) => line(item, Verdict::Fail, reason),
+        Ledger::None(reason) => line(item, Verdict::NotTested, reason),
     }
 }
 

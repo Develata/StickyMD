@@ -703,3 +703,110 @@ fn without_r_s_target_list_the_source_rows_stay_open() {
     assert_line(&lines, "source-tests", Verdict::NotTested, "cargo metadata");
     assert_line(&lines, "P16-S01", Verdict::NotTested, "cargo metadata");
 }
+
+/// Every row of the table, given a FAIL under one identity, a clean PASS under another, a waiver
+/// and a receipt for this candidate: no row is ever WAIVED over the FAIL, and no Manual row
+/// PASSes (plan 11 #macos-readiness-check: a waiver stands for evidence not taken, a program FAIL
+/// beats a receipt). A row that can PASS here does so only through the clean identity.
+#[test]
+fn over_every_row_a_recorded_fail_is_never_waived_and_never_hidden_from_a_manual_row() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    for (row, class, _) in ROWS {
+        let mut records = ledger();
+        let rows: Vec<String> = if *row == "W12" {
+            std::iter::once("W12".to_owned())
+                .chain(crate::mac_gui::logout::rows())
+                .collect()
+        } else {
+            vec![(*row).to_owned()]
+        };
+        for member in &rows {
+            records.retain(|r| !matches!(r, Record::Automated { row: rr, .. } if rr == member));
+            records.push(record(member, "FAIL", '1', &candidate.built, '8'));
+            records.push(record(member, "PASS", '2', &candidate.built, '7'));
+        }
+        if super::rows::waivable(row) {
+            records.push(release(ReleaseKind::Waiver, row, &digest, "rc1"));
+        }
+        if super::rows::receipt_row(row) {
+            records.push(release(ReleaseKind::Receipt, row, &digest, "rc1"));
+        }
+        let lines = run(Read::Present(&candidate), &records, &receipt());
+        let line = verdict(&lines, &format!("P16-{row}"));
+        assert_ne!(line.verdict, Verdict::Waived, "{line:?}");
+        match class {
+            Class::Manual | Class::Resources => {
+                assert_eq!(line.verdict, Verdict::Fail, "{line:?}");
+            }
+            Class::Gui => assert_eq!(line.verdict, Verdict::Pass, "{line:?}"),
+            _ => assert_ne!(line.verdict, Verdict::Waived, "{line:?}"),
+        }
+    }
+}
+
+/// Review round 2, finding 6: a Manual row's FAIL under one driver is not hidden by another
+/// driver's PASS.
+#[test]
+fn a_manual_row_fail_under_one_driver_is_not_hidden_by_another_driver_s_pass() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = released();
+    records.push(release(ReleaseKind::Receipt, "I03", &digest, "rc1"));
+    records.push(record("I03", "FAIL", '1', &candidate.built, '8'));
+    records.push(record("I03", "PASS", '2', &candidate.built, '7'));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-I03", Verdict::Fail, "a FAIL of P16-I03");
+}
+
+/// Review round 2, finding 7: W12 fails when every complete identity has a failed logout case,
+/// even though each case alone has a clean identity somewhere; a waiver cannot cover it.
+#[test]
+fn w12_fails_when_every_identity_has_a_failed_logout_case() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records: Vec<Record> = ledger()
+        .into_iter()
+        .filter(|r| !matches!(r, Record::Automated { row, .. } if row.starts_with("W12")))
+        .collect();
+    for (driver, evidence, failing) in [
+        ('1', '5', "W12-logout-fault"),
+        ('2', '6', "W12-logout-dialog"),
+    ] {
+        records.push(record("W12", "PASS", driver, &candidate.built, evidence));
+        for case in crate::mac_gui::logout::rows() {
+            let verdict = if case == failing { "FAIL" } else { "PASS" };
+            records.push(record(&case, verdict, driver, &candidate.built, evidence));
+        }
+    }
+    records.push(release(ReleaseKind::Waiver, "W12", &digest, "rc1"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "P16-W12",
+        Verdict::Fail,
+        "no identity holds a clean run",
+    );
+}
+
+/// Review round 2, finding 8: a recorded FAIL of a resource row is not waived.
+#[test]
+fn a_resource_row_fail_is_not_waived() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = ledger();
+    records.push(record("V03", "FAIL", '1', &candidate.built, '8'));
+    records.push(release(ReleaseKind::Waiver, "V03", &digest, "rc1"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-V03", Verdict::Fail, "a FAIL of P16-V03");
+}
+
+/// The resource rows' own guard, apart from the waiver's: a recorded FAIL alone is a FAIL.
+#[test]
+fn a_resource_row_fail_alone_is_a_fail() {
+    let candidate = candidate();
+    let mut records = ledger();
+    records.push(record("R01", "FAIL", '1', &candidate.built, '8'));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-R01", Verdict::Fail, "a FAIL of P16-R01");
+}
