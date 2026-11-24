@@ -215,7 +215,7 @@ impl RenderTreeBuilder {
                         } else {
                             RenderBlockKind::Paragraph
                         },
-                        spans: self.inline_spans(content),
+                        spans: self.inline_spans(content, true),
                         indent,
                         source_range: *source_range,
                         list_markers: Vec::new(),
@@ -229,7 +229,7 @@ impl RenderTreeBuilder {
                     output.leaf(OutlineKind::Heading, *source_range, content);
                     output.blocks.push(RenderBlock {
                         kind: RenderBlockKind::Heading(*level),
-                        spans: self.inline_spans(content),
+                        spans: self.inline_spans(content, false),
                         indent,
                         source_range: *source_range,
                         list_markers: Vec::new(),
@@ -376,7 +376,7 @@ impl RenderTreeBuilder {
                     cells: row
                         .cells
                         .iter()
-                        .map(|cell| self.inline_spans(&cell.content))
+                        .map(|cell| self.inline_spans(&cell.content, false))
                         .collect(),
                     source_range: row.source_range,
                 })
@@ -384,14 +384,21 @@ impl RenderTreeBuilder {
         }
     }
 
-    fn inline_spans(&self, input: &[InlineNode]) -> Vec<RenderSpan> {
+    /// `flow` is true for paragraph content: only there may display math that Comrak left among
+    /// other inline content keep its display style (plan 06 #display-math-in-paragraph).
+    fn inline_spans(&self, input: &[InlineNode], flow: bool) -> Vec<RenderSpan> {
         let mut output = Vec::new();
-        append_inline_spans(input, RenderStyle::default(), &mut output);
+        append_inline_spans(input, RenderStyle::default(), flow, &mut output);
         output
     }
 }
 
-fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mut Vec<RenderSpan>) {
+fn append_inline_spans(
+    input: &[InlineNode],
+    inherited: RenderStyle,
+    flow: bool,
+    output: &mut Vec<RenderSpan>,
+) {
     for inline in input {
         match inline {
             InlineNode::Text {
@@ -404,6 +411,7 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                     emphasis: true,
                     ..inherited
                 },
+                flow,
                 output,
             ),
             InlineNode::Strong { children, .. } => append_inline_spans(
@@ -412,6 +420,7 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                     strong: true,
                     ..inherited
                 },
+                flow,
                 output,
             ),
             InlineNode::Strikethrough { children, .. } => append_inline_spans(
@@ -420,6 +429,7 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                     strikethrough: true,
                     ..inherited
                 },
+                flow,
                 output,
             ),
             InlineNode::Code {
@@ -448,6 +458,7 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                         link: true,
                         ..inherited
                     },
+                    flow,
                     output,
                 );
                 for span in &mut output[start..] {
@@ -505,7 +516,11 @@ fn append_inline_spans(input: &[InlineNode], inherited: RenderStyle, output: &mu
                 );
                 math_span.math = Some(RenderMath {
                     source: Arc::from(math.literal.as_str()),
-                    kind: MathKind::Inline,
+                    kind: if flow && math.display {
+                        MathKind::Display
+                    } else {
+                        MathKind::Inline
+                    },
                 });
                 output.push(math_span);
             }

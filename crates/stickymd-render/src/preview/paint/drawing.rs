@@ -224,7 +224,7 @@ pub(super) fn paint_decoration(
             palette.code,
             mask,
         ),
-        DecorationRole::MathBackground => fill_rect(
+        DecorationRole::MathBackground | DecorationRole::EmbeddedMathBackground => fill_rect(
             pixmap,
             rect.x,
             y,

@@ -15,7 +15,8 @@ use super::image_requests::ImageRequests;
 use super::image_resources::LaidOutImage;
 use super::inline_text_layout::{append_text_pieces, text_piece};
 use super::layout::{
-    ChunkBuild, DecorationRole, InlinePiece, LayoutChunk, LayoutContent, LayoutDecoration,
+    BODY_SIZE_DIP, ChunkBuild, DecorationRole, InlinePiece, LayoutChunk, LayoutContent,
+    LayoutDecoration,
 };
 use super::text_layout::TextLayoutCache;
 use super::{PreviewRect, PreviewTextBox, RenderSpan};
@@ -54,6 +55,7 @@ pub(super) fn make_mixed_chunk(
 ) -> ChunkBuild {
     let mut pieces = Vec::new();
     let mut line_breaks = Vec::new();
+    let mut own_line_pieces = Vec::new();
     let mut pending_text_start = 0;
     // Coalescing pays for itself in mixed projection runs because it avoids a
     // buffer per short fragment around atomic math/image content. Attributed
@@ -90,10 +92,28 @@ pub(super) fn make_mixed_chunk(
             continue;
         }
         if let Some(math) = &span.math {
+            *formula_count = formula_count.saturating_add(1);
+            let error =
+                (*formula_count > MAX_DOCUMENT_FORMULAS).then_some(MathError::TooManyFormulas);
+            let rendered = error.map_or_else(
+                || math_engine.measure(Arc::clone(&math.source), math.kind, metrics.font_size),
+                Err,
+            );
+            // A display formula in a paragraph owns its line; a formula that failed to measure
+            // stays an inline error text (plan 06 #display-math-in-paragraph).
+            let own_line = math.kind == MathKind::Display && rendered.is_ok();
+            // The soft break next to such a line is a whitespace-only span: it still enters the
+            // copy text, but no piece is laid out for it, like a hard break.
+            let text_end =
+                if own_line && index > pending_text_start && is_flow_space(&spans[index - 1]) {
+                    index - 1
+                } else {
+                    index
+                };
             append_text_pieces(
                 font_system,
                 fonts,
-                &spans[pending_text_start..index],
+                &spans[pending_text_start..text_end],
                 metrics,
                 selection_text,
                 &mut pieces,
@@ -102,13 +122,12 @@ pub(super) fn make_mixed_chunk(
                 max_text_piece_chars,
                 text_layout_cache,
             );
-            *formula_count = formula_count.saturating_add(1);
-            let error =
-                (*formula_count > MAX_DOCUMENT_FORMULAS).then_some(MathError::TooManyFormulas);
-            let rendered = error.map_or_else(
-                || math_engine.measure(Arc::clone(&math.source), math.kind, metrics.font_size),
-                Err,
-            );
+            if text_end < index {
+                selection_text.push_span(&spans[text_end]);
+            }
+            if own_line {
+                own_line_pieces.push(pieces.len());
+            }
             pieces.push(match rendered {
                 Ok(measured) => formula_piece(
                     span,
@@ -132,6 +151,10 @@ pub(super) fn make_mixed_chunk(
                 ),
             });
             pending_text_start = index + 1;
+            if own_line && spans.get(index + 1).is_some_and(is_flow_space) {
+                selection_text.push_span(&spans[index + 1]);
+                pending_text_start = index + 2;
+            }
             continue;
         }
         if span.image.is_some() {
@@ -187,20 +210,82 @@ pub(super) fn make_mixed_chunk(
     let mut line_width = 0.0;
     let mut line_y = y;
     let mut next_break = 0;
+    let mut next_own_line = 0;
+    // A formula that shares its paragraph with other content gets the display background and a
+    // gap to its neighbours; a standalone display block (one span) has its own background and
+    // the block gap.
+    let embedded = spans.len() > 1;
+    let scale = metrics.font_size / BODY_SIZE_DIP;
+    let gap = if embedded { 6.0 * scale } else { 0.0 };
+    let mut previous_own_line = false;
     for (piece_index, piece) in pieces.into_iter().enumerate() {
+        let own_line = own_line_pieces.get(next_own_line).copied() == Some(piece_index);
         while line_breaks.get(next_break).copied() == Some(piece_index) {
-            line_y += flush_or_advance_line(
+            // A hard break beside a formula's own line is already a line break.
+            if !(own_line || previous_own_line) {
+                line_y += flush_or_advance_line(
+                    &mut line,
+                    &mut line_width,
+                    x,
+                    line_y,
+                    width,
+                    metrics,
+                    align,
+                    &mut output,
+                );
+            }
+            next_break += 1;
+        }
+        if previous_own_line {
+            line_y += gap;
+        }
+        if own_line {
+            next_own_line += 1;
+            if !line.is_empty() {
+                line_y += flush_line(
+                    &mut line,
+                    line_width,
+                    x,
+                    line_y,
+                    width,
+                    metrics,
+                    align,
+                    &mut output,
+                );
+                line_y += gap;
+            } else if line_y > y && !previous_own_line {
+                line_y += gap;
+            }
+            let piece_width = piece.width;
+            line.push(piece);
+            let top = line_y;
+            let height = flush_line(
                 &mut line,
-                &mut line_width,
+                piece_width,
                 x,
                 line_y,
                 width,
                 metrics,
-                align,
+                Align::Center,
                 &mut output,
             );
-            next_break += 1;
+            line_y += height;
+            if embedded {
+                output.decorations.push(LayoutDecoration {
+                    rect: PreviewRect {
+                        x: x - 7.0 * scale,
+                        y: top - 3.0 * scale,
+                        width: width + 14.0 * scale,
+                        height: height + 6.0 * scale,
+                    },
+                    role: DecorationRole::EmbeddedMathBackground,
+                });
+            }
+            line_width = 0.0;
+            previous_own_line = true;
+            continue;
         }
+        previous_own_line = false;
         if !line.is_empty() && line_width + piece.width > width {
             line_y += flush_line(
                 &mut line,
@@ -244,6 +329,15 @@ pub(super) fn make_mixed_chunk(
     }
     output.height = (line_y - y).max(metrics.line_height);
     output
+}
+
+/// A soft break between a paragraph's text and a formula that owns its line.
+fn is_flow_space(span: &RenderSpan) -> bool {
+    span.text.as_ref() == " "
+        && span.math.is_none()
+        && span.image.is_none()
+        && !span.hard_break
+        && span.action.is_none()
 }
 
 #[allow(clippy::too_many_arguments)]

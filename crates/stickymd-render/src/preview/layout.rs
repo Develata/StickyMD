@@ -17,7 +17,7 @@ use super::image_requests::ImageRequests;
 use super::scroll::PreviewScrollAnchor;
 use super::{PreviewRect, PreviewTextBox, RenderBlock, RenderBlockKind, RenderSpan, RenderTree};
 
-const BODY_SIZE_DIP: f32 = 17.0;
+pub(super) const BODY_SIZE_DIP: f32 = 17.0;
 const BODY_LINE_DIP: f32 = 26.35;
 const CODE_SIZE_DIP: f32 = 15.3;
 const CODE_LINE_DIP: f32 = 23.0;
@@ -78,6 +78,10 @@ pub(super) enum DecorationRole {
     QuoteBar,
     CodeBackground,
     MathBackground,
+    /// The background of a display formula among a paragraph's other content: the look of
+    /// `MathBackground`, but no block's own background, so it takes no copy rail and scrolls with
+    /// the block (plan 06 #display-math-in-paragraph).
+    EmbeddedMathBackground,
     MathError,
     Rule,
     TableCell,
@@ -425,7 +429,12 @@ fn layout_text_block(
         height: height + horizontal.map_or(0.0, |value| value.bar_height),
         horizontal,
         chunks: built.chunks,
-        decorations: {
+        decorations: if matches!(block.kind, RenderBlockKind::Quote) {
+            // The quote bar is painted over the backgrounds of the display formulas it frames.
+            let mut ordered = built.decorations;
+            ordered.extend(decorations);
+            ordered
+        } else {
             decorations.extend(built.decorations);
             decorations
         },
