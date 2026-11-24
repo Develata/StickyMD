@@ -118,7 +118,8 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
             release,
             batch,
             macos_major,
-        } => macos::ready_command(root, release, batch.as_deref(), *macos_major),
+            driver,
+        } => macos::ready_command(root, release, batch.as_deref(), *macos_major, driver),
         Command::WorkspaceVersion => {
             println!("{}", crate::repository::workspace_version(root)?);
             Ok(())

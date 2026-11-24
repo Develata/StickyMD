@@ -35,6 +35,15 @@ fn identity(driver: char) -> Identity {
     }
 }
 
+/// A record under another VM image than `record`'s, same driver.
+fn record_on_image(row: &str, verdict: &str, image: &str, built: &Built, evidence: char) -> Record {
+    let mut found = record(row, verdict, '1', built, evidence);
+    if let Record::Automated { identity, .. } = &mut found {
+        identity.image = image.to_owned();
+    }
+    found
+}
+
 fn record(row: &str, verdict: &str, driver: char, built: &Built, evidence: char) -> Record {
     Record::Automated {
         row: row.to_owned(),
@@ -88,6 +97,7 @@ fn run(candidate: Read<&Candidate>, records: &[Record], tests: &Receipt) -> Vec<
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
+        driver: &hex('1'),
         candidate,
         ledger: Read::Present(records),
         source_tests: Read::Present(tests),
@@ -206,8 +216,15 @@ fn a_fail_spoils_its_identity_and_another_identity_can_still_hold() {
     records.push(record("W03", "FAIL", '1', &built, '8'));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-W03", Verdict::Fail, "a FAIL of P16-W03");
-    // A clean run under another driver on the same bytes holds, as in the ledger's own rule.
-    records.push(record("W03", "PASS", '2', &built, '7'));
+    // A clean run of R's driver in another VM image on the same bytes holds, as in the ledger's
+    // own rule.
+    records.push(record_on_image(
+        "W03",
+        "PASS",
+        "sha256:other-image",
+        &built,
+        '7',
+    ));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-W03", Verdict::Pass, "run-7");
 }
@@ -249,7 +266,13 @@ fn w12_needs_its_three_logout_cases_in_one_identity() {
         Verdict::NotTested,
         "no PASS of P16-W12-logout-dialog",
     );
-    records.push(record("W12-logout-dialog", "PASS", '2', &built, '6'));
+    records.push(record_on_image(
+        "W12-logout-dialog",
+        "PASS",
+        "sha256:other-image",
+        &built,
+        '6',
+    ));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(
         &lines,
@@ -278,6 +301,7 @@ fn r03_counts_only_this_batch_and_a_fail_on_these_bytes_blocks() {
         release: R,
         batch: None,
         macos_major: 27,
+        driver: &hex('1'),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&records),
         source_tests: Read::Present(&receipt()),
@@ -329,6 +353,7 @@ fn the_source_rows_follow_the_receipt_on_r() {
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
+        driver: &hex('1'),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Missing("no source-test receipt".into()),
@@ -350,6 +375,7 @@ fn an_unreadable_ledger_leaves_the_ledger_rows_open() {
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
+        driver: &hex('1'),
         candidate: Read::Present(&candidate),
         ledger: Read::Invalid("the ledger is unreadable: line 3".into()),
         source_tests: Read::Present(&receipt),
@@ -665,6 +691,7 @@ fn without_r_s_target_list_the_source_rows_stay_open() {
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
+        driver: &hex('1'),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Present(&receipt),
@@ -694,7 +721,13 @@ fn over_every_row_a_recorded_fail_is_never_waived_and_never_hidden_from_a_manual
         for member in &rows {
             records.retain(|r| !matches!(r, Record::Automated { row: rr, .. } if rr == member));
             records.push(record(member, "FAIL", '1', &candidate.built, '8'));
-            records.push(record(member, "PASS", '2', &candidate.built, '7'));
+            records.push(record_on_image(
+                member,
+                "PASS",
+                "sha256:other-image",
+                &candidate.built,
+                '7',
+            ));
         }
         if super::rows::waivable(row) {
             records.push(release(ReleaseKind::Waiver, row, &digest, "rc1"));
@@ -813,6 +846,7 @@ fn the_download_path_needs_its_outcomes_and_the_checked_major_version() {
         release: R,
         batch: Some("rc1"),
         macos_major: 28,
+        driver: &hex('1'),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&records),
         source_tests: Read::Present(&receipt()),
@@ -840,4 +874,36 @@ fn another_executable_alone_does_not_count() {
     records.push(record_on("K02", &other));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-K02", Verdict::NotTested, "no PASS of P16-K02");
+}
+
+/// USER 2026-11-24 (`--driver`): a clean run of an older driver does not count for a
+/// `mac-gui` row; only R's driver's runs can hold a PASS.
+#[test]
+fn a_pass_of_another_driver_does_not_count() {
+    let candidate = candidate();
+    let mut records = ledger();
+    records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "W02"));
+    records.push(record("W02", "PASS", '2', &candidate.built, '7'));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "P16-W02",
+        Verdict::NotTested,
+        "only under another driver",
+    );
+}
+
+/// USER 2026-11-24 (`--driver`): a FAIL counts whatever the driver, and keeps a waiver off.
+#[test]
+fn a_fail_of_another_driver_still_counts() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = ledger();
+    records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "W02"));
+    records.push(record("W02", "FAIL", '2', &candidate.built, '7'));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W02", Verdict::Fail, "a FAIL of P16-W02");
+    records.push(release(ReleaseKind::Waiver, "W02", &digest, "rc1"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W02", Verdict::Fail, "a FAIL of P16-W02");
 }

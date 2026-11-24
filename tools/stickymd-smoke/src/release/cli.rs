@@ -55,6 +55,8 @@ pub(crate) enum Command {
         batch: Option<String>,
         /// The macOS major version the download paths must have run on (decision (b)).
         macos_major: u32,
+        /// R's `mac-gui` driver, the stickymd-smoke binary the VM runs used.
+        driver: PathBuf,
     },
     PlatformInputs {
         platform: super::platform::Platform,
@@ -224,6 +226,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
                 .take("--macos-major")?
                 .parse()
                 .map_err(|_| "invalid --macos-major")?,
+            driver: PathBuf::from(tokens.take("--driver")?),
         },
         "platform-inputs" => Command::PlatformInputs {
             platform: super::platform::Platform::parse(&tokens.take("--platform")?)?,

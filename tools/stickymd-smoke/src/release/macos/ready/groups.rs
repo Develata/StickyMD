@@ -27,6 +27,9 @@ pub(super) struct Scope<'a> {
     pub records: &'a [Record],
     pub built: &'a Built,
     pub batch: Option<&'a str>,
+    /// The SHA-256 of R's `mac-gui` driver (`macos-ready --driver`): only a group run by it can
+    /// hold a PASS; a FAIL counts whatever the driver (USER 2026-11-24).
+    pub driver: &'a str,
 }
 
 /// One row's standing in one group.
@@ -143,8 +146,8 @@ pub(super) fn joint(scope: &Scope<'_>, rows: &[String]) -> Ledger {
     let mut evidence = String::new();
     let mut failed: Option<&String> = None;
     for key in keys {
-        let all_clean =
-            (0..rows.len()).all(|i| matches!(status(i, key), Some((_, Status::Clean(_)))));
+        let all_clean = key.0 == scope.driver
+            && (0..rows.len()).all(|i| matches!(status(i, key), Some((_, Status::Clean(_)))));
         if all_clean {
             if clean.is_empty()
                 && let Some((_, Status::Clean(found))) = status(0, key)
@@ -169,7 +172,7 @@ pub(super) fn joint(scope: &Scope<'_>, rows: &[String]) -> Ledger {
     let lacking = rows.iter().zip(&per_row).find(|(_, statuses)| {
         !statuses
             .iter()
-            .any(|(_, status)| matches!(status, Status::Clean(_)))
+            .any(|(key, status)| key.0 == scope.driver && matches!(status, Status::Clean(_)))
     });
     Ledger::None(match lacking {
         Some((row, _)) => why_none(scope, row),
@@ -184,15 +187,8 @@ pub(super) fn joint(scope: &Scope<'_>, rows: &[String]) -> Ledger {
 }
 
 /// The ledger's verdict on `row` alone.
-pub(super) fn ledger(records: &[Record], row: &str, built: &Built, batch: Option<&str>) -> Ledger {
-    joint(
-        &Scope {
-            records,
-            built,
-            batch,
-        },
-        &[row.to_owned()],
-    )
+pub(super) fn ledger(scope: &Scope<'_>, row: &str) -> Ledger {
+    joint(scope, &[row.to_owned()])
 }
 
 /// Why `row` has no clean group.
@@ -201,7 +197,15 @@ fn why_none(scope: &Scope<'_>, row: &str) -> String {
         matches!(r, Record::Automated { row: rr, built: b, verdict, .. }
             if rr == row && verdict == "PASS" && b.executable == scope.built.executable && b.bundle != scope.built.bundle)
     });
-    if !scoped(scope, row).is_empty() {
+    let other_driver = statuses(scope, row)
+        .iter()
+        .any(|(key, status)| key.0 != scope.driver && matches!(status, Status::Clean(_)));
+    if other_driver {
+        format!(
+            "a clean run of P16-{row} on the candidate's bytes exists only under another driver than R's ({})",
+            scope.driver
+        )
+    } else if !scoped(scope, row).is_empty() {
         format!(
             "every record of P16-{row} on the candidate's bytes is NOT_TESTED or revoked, or sits beside one"
         )

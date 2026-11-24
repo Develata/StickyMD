@@ -76,6 +76,7 @@ pub(in super::super) fn ready_command(
     release: &str,
     batch: Option<&str>,
     macos_major: u32,
+    driver: &Path,
 ) -> Result<(), String> {
     use judge::Read;
     crate::integrity::validate_hex(release, 40, "release commit")?;
@@ -86,6 +87,11 @@ pub(in super::super) fn ready_command(
     // The gate is judged with R's own tools (plan 11 #platform-artifact-reuse, after reuse): its
     // row table and rules are those of a clean checkout of R, read as committed.
     let start = identity::require(root, &release, "macos-ready")?;
+    // Only R's own driver's runs can hold a `mac-gui` PASS (USER 2026-11-24): the same rule as
+    // `mac-ledger plan`, which reuses a PASS only for the current driver.
+    let driver = crate::integrity::sha256(driver)
+        .map_err(|error| format!("cannot hash the driver {}: {error}", driver.display()))?
+        .to_ascii_lowercase();
     // R must be one the release authorization can name, before any row is judged, with or
     // without a candidate (review round 2, SHOULD_FIX 5).
     super::promote::check_release(root, &release)?;
@@ -166,6 +172,7 @@ pub(in super::super) fn ready_command(
         release: &release,
         batch,
         macos_major,
+        driver: &driver,
         candidate: borrow(&candidate),
         ledger: match &ledger {
             Read::Present(records) => Read::Present(records.as_slice()),
@@ -213,7 +220,7 @@ pub(in super::super) fn ready_command(
         _ => "null".to_owned(),
     };
     println!(
-        "{{\"release_source\":\"{release}\",\"candidate_receipt_sha256\":{digest},\"batch\":{},\"macos_major\":{macos_major},\"ready\":{ready},\"rows\":[\n{}\n]}}",
+        "{{\"release_source\":\"{release}\",\"candidate_receipt_sha256\":{digest},\"batch\":{},\"macos_major\":{macos_major},\"driver_sha256\":\"{driver}\",\"ready\":{ready},\"rows\":[\n{}\n]}}",
         batch.map_or_else(|| "null".to_owned(), |name| format!("\"{name}\"")),
         rows.join(",\n")
     );

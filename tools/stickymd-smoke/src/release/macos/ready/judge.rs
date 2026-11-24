@@ -34,6 +34,8 @@ pub(super) struct Inputs<'a> {
     pub batch: Option<&'a str>,
     /// The macOS major version this release's download paths must have run on (decision (b)).
     pub macos_major: u32,
+    /// The SHA-256 of R's `mac-gui` driver, lowercase (USER 2026-11-24, `--driver`).
+    pub driver: &'a str,
     pub candidate: Read<&'a Candidate>,
     pub ledger: Read<&'a [Record]>,
     pub source_tests: Read<&'a source_tests::Receipt>,
@@ -371,6 +373,7 @@ fn scope<'a>(inputs: &'a Inputs<'_>, records: &'a [Record], candidate: &'a Candi
         records,
         built: &candidate.built,
         batch: inputs.batch,
+        driver: inputs.driver,
     }
 }
 
@@ -401,7 +404,7 @@ fn translocation(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
         Ok(found) => found,
         Err(line) => return line,
     };
-    let found = match ledger(records, row, &candidate.built, inputs.batch) {
+    let found = match ledger(&scope(inputs, records, candidate), row) {
         Ledger::Fail(reason) => return line(item, Verdict::Fail, reason),
         Ledger::Clean(..) => "a PASS on the candidate's bundle exists, but",
         Ledger::None(_) => "no evidence binds it:",
