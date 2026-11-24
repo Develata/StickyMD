@@ -169,3 +169,61 @@ waiver；R03 的 ZIP 摘要不参与分组。`11` #macos-readiness-check 的状�
   - `StickyMD/` 文件夹前后同为 `LICENSE.txt`、`README.txt`、`StickyMD.app`、`THIRD_PARTY_NOTICES.txt`、`licenses`。
 - **证据：** 已忽略的 `dist/evidence/mac-vm-2026-11-24-m5p/`（`mac-gui.json` 的 SHA-256 为 `b3499710…`），在本 worktree 中。
 - **账本：** 用 `mac-ledger record` 登记进真实账本的一份副本（真实账本未改动）。原有 337 行照常读取，新增的 R03 记录带 `zip_sha256`、批次 `m5p-1`。
+
+见[审查修复报告](2026-11-24-m5-producers-review-fixes.md)：生产者一侧（scope B）的跨模型审查与处理。
+
+## 复审与修复（2026-11-24）
+
+跨模型复审（Codex，scope A：就绪核对，审于 `b7ae1de`）给出 9 项 BLOCKER、8 项 SHOULD_FIX、1 项 NICE_TO_HAVE。逐项先在本分支上核实，再按现行合同修复；
+需要改合同或由 USER 决定的部分 fail closed 并列在下面。A5 与镜像摘要规范化（A6 的一部分）属于 PR #24，由 M5 producers 修复（双方已约定文件分工）。
+
+| 发现 | 处理 |
+| --- | --- |
+| A1 S06 的 exFAT 测试为 `#[ignore]`，默认运行却给 S06 PASS | 已修复（fail closed）：S06 改为单独一类，判 `NOT TESTED`；八个包中每个 `#[ignore]` 测试由测试逐个归类。如何在 R 上取得 S06 的结果待决 |
+| A2 L08 默认集的测试在大小写敏感的临时卷上跳过只差大小写的检查 | 已修复（fail closed）：运行器在临时卷大小写敏感时拒绝运行。收据是否记录两种卷的属性待决 |
+| A3 W12 缺本身时，注销行的 FAIL 被 waiver 盖住 | 已修复：四行先全部判定，FAIL 优先 |
+| A4 人工行忽略候选字节上的程序 FAIL | 已修复：程序 FAIL 压过收据与 waiver |
+| A5 错误的生产者可签出 R01–R03 | 转 #24（M5 producers） |
+| A6 分组用了整个身份（含可选指纹）；门跳过“一镜像一系统” | 已修复：按驱动、镜像与系统分组，门调用同一 `check_system`。镜像摘要规范化转 #24 |
+| A7 收据的目标清单只与自身比较 | 已修复：核对时在 R 上用 `cargo metadata` 独立列出目标；实际 23 项与 `285f0d4` 演练的收据一致 |
+| A8 下载记录不核对签名与系统 | 部分修复：核对签名方式等于候选、五行同一 macOS 大版本。D04 的情形、D05 是否被拦截的可核对字段，以及本次目标大版本，待决 |
+| A9 重跑失败后旧 PASS 仍可见，并发没有锁 | 已修复：先取运行锁、再删旧收据，之后才探测与运行；门以共享锁读取，运行中为 `NOT TESTED` |
+| S1 经符号链接的 `--ledger` | 已修复：账本与锁文件是符号链接时拒绝 |
+| S2 登记与核对期间候选可能被换 | 部分修复：核对结束时再解析一次候选，不同即不成立。收据在登记时声明“看的是哪个候选”需要改合同（现行合同规定摘要不手工输入），待决 |
+| S3 assume-unchanged 与 Cargo runner | 部分修复：拒绝 assume-unchanged 与 skip-worktree。Cargo target runner 的核对待决（有效配置要读 Cargo home 与环境，属于发布 workflow 已列出的同类前提） |
+| S4 包完整性接受可证伪的 `cargo_lock_sha256` 与 `app_inputs` | 已修复：resolver 重算 S 上 `Cargo.lock` 的摘要并读取暂存 bundle 的 `StickyMDInputs` |
+| S5 `ok`/`FAILED` 与计数矛盾、溢出 | 已修复：矛盾即无法读取，求和不溢出，同键运行恰为两项且没有 measured |
+| S6 发布记录读入比登记宽松 | 已修复：每种记录恰有其字段，读入与登记共用行白名单 |
+| S7 Mode 守卫与 workflow 命令守卫偏弱 | 已修复：每行的 Mode 须恰为分类时的 Mode；规定命令逐字等于 self-check 那一步的命令 |
+| S8 候选收据的读取错误被报成“从未晋升” | 已修复：只有不存在才是缺失 |
+| NICE P18-L13 错链 | 已修复 |
+| NEEDS_VERIFICATION 正式候选的端到端判定 | 未变：需要真实晋升的候选与 R 上的正式收据 |
+
+**需要 Develata 决定（新）：** 代码对以下四项都 fail closed：S06 判 `NOT TESTED`；临时卷大小写敏感时运行器拒绝；下载路径只认本候选、签名方式一致、
+五行同一大版本；登记与 Cargo runner 维持现状（核对结束时会再解析一次候选）。
+
+**(a) P16-S06（exFAT，`#[ignore]`）与 P18-L08 大小写敏感一半在 R 上的证据格式。**
+- A1（建议）：把收据的 `same_key` 一节推广为 `explicit` 列表，每项含门的条目（`same-key`、`P16-S06`）、规定命令（`--exact --include-ignored` 加测试名）、
+  测试名、计数与退出码；L08 一项另记两种卷的大小写属性（运行器在临时卷上探测，另一项由测试自己挂载的映像保证），S06 一项要求恰一项通过。
+  一次运行、一个收据、同一对开始与结束身份，格式只增不减。
+- A2：S06 单独一个收据文件与运行命令。互不影响，但多一个文件与一套身份核对。
+- A3：S06 改为 USER 逐版 waiver（矩阵中它是 Automated 源码行，需要改“源码行按现行规则”的写法）。最省事，但放弃一项能自动证明的门。
+
+**(b) P18-D04/D05 必须记什么，以及门如何得知目标 macOS 大版本。**
+- B1（建议）：下载记录增加 `outcome` 字段——D04 取 `gatekeeper-blocked`、`translocated-prompt-exit`、`portable-start` 三者之一（契约列出的三种情形），
+  D05 取 `blocked` 或 `not-blocked`；`mac-ledger receipt` 用 `--outcome` 传入，其他行不得带。`macos-ready` 增加必填的 `--macos-major <N>`，五行的
+  `sw_vers` 大版本都须等于它。D04 的三种情形都算完成（契约只要求区分并记录），D05 两种都算。
+- B2：只加 `outcome`，大版本仍要求五行一致但不与外部输入比较。少一个参数，但不能发现“整组都在旧大版本上做”。
+- B3：大版本取自候选的构建记录（`LC_BUILD_VERSION` 的最低系统）。不需要人输入，但最低系统不等于“这一版验收的目标系统”。
+
+**(c) USER 收据与 waiver 的候选前提（S2 第二部分）。**
+- C1（建议）：`receipt`/`waive` 增加必填的 `--candidate-sha256`，须等于登记时 resolver 给出的摘要，否则拒绝；摘要由 `release macos-candidate`
+  （改为同时打印摘要）复制，不是“手工计算”。这改变现行“摘要不手工输入”的写法，需要批准。
+- C2：不加参数，登记时打印候选摘要与晋升时间，请 USER 在原话中确认。不改格式，但不能机器核对。
+- C3：维持现状（晋升是本机手动操作，约定不与验收并行），只在合同中写明这一前提。
+
+**(d) 核对有效的 Cargo target runner（S3 第二部分）。**
+- D1（建议）：列为运行器不证明的前提，与发布 workflow 中“Cargo home 与环境中的编译配置”同一类写进合同；运行器拒绝明显的入口：
+  环境中的 `CARGO_TARGET_*_RUNNER`、`CARGO_BUILD_RUSTC_WRAPPER`、`RUSTC_WRAPPER`。
+- D2：读取 Cargo home 与各级祖先目录的配置文件，拒绝任何 `runner`。更完整，但要自己实现 Cargo 的配置合并规则（`include`、`cfg(...)` 表等）。
+- D3：不处理。

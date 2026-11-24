@@ -1,7 +1,8 @@
 //! Runs the source tests on R on a Mac and writes the receipt (plan 11 #macos-readiness-check).
-//! It starts only on a clean checkout of R and removes any old receipt first, so an interrupted
-//! or failed run never leaves an earlier PASS standing. Everything after the start is recorded
-//! as it happened; the gate, not this runner, decides what the receipt proves.
+//! It starts only on a clean checkout of R, takes the run lock and removes any old receipt before
+//! anything else can fail, so an interrupted, refused or failed run never leaves an earlier PASS
+//! standing. Everything after the start is recorded as it happened; the gate, not this runner,
+//! decides what the receipt proves.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 use super::output::{self, Executable};
@@ -15,11 +16,36 @@ use std::process::{Command, Stdio};
 /// More output than any test run here prints; beyond it the run is stopped and recorded.
 const OUTPUT_LIMIT: usize = 64 << 20;
 
-fn side(identity: &SourceIdentity) -> Side {
+/// Whether the Git index hides a change from `git status`: an entry marked assume-unchanged
+/// (a lowercase tag in `git ls-files -v`) or skip-worktree (`S`) can differ from the tree.
+fn hidden_changes(root: &Path) -> Result<bool, String> {
+    let listing = query(root, "git", &["ls-files", "-v"])?;
+    Ok(listing.lines().any(|line| {
+        line.chars()
+            .next()
+            .is_some_and(|tag| tag.is_ascii_lowercase() || tag == 'S')
+    }))
+}
+
+fn side(root: &Path, identity: &SourceIdentity) -> Side {
     Side {
         head: identity.commit.to_ascii_lowercase(),
-        clean: !identity.worktree_dirty,
+        clean: !identity.worktree_dirty && matches!(hidden_changes(root), Ok(false)),
     }
+}
+
+/// P18-L08's default-set test checks a name differing only in case on the temporary volume and
+/// skips that check on a case-sensitive one; the release proof needs it run, so the temporary
+/// volume must be case-insensitive (the case-sensitive side has its own image test).
+fn temporary_volume_is_case_insensitive() -> Result<bool, String> {
+    let directory =
+        std::env::temp_dir().join(format!("stickymd-case-probe-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let probe = std::fs::write(directory.join("case-probe"), b"")
+        .map(|()| directory.join("CASE-PROBE").exists())
+        .map_err(|error| error.to_string());
+    let _ = std::fs::remove_dir_all(&directory);
+    probe
 }
 
 /// The trimmed stdout of a short query that must succeed.
@@ -174,13 +200,26 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
             start.commit, start.worktree_dirty
         ));
     }
-    let host = host(root)?;
+    let _lock = super::lock(root, true)?.ok_or(
+        "another source-test run or a readiness check holds the lock; wait for it to finish",
+    )?;
     let path = root.join(RECEIPT);
     match std::fs::remove_file(&path) {
         Ok(()) => eprintln!("removed the previous receipt; it stands for no run from now on"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("cannot remove {}: {error}", path.display())),
     }
+    if hidden_changes(root)? {
+        return Err(
+            "the Git index marks files assume-unchanged or skip-worktree, so a clean status proves nothing; clear the flags".to_owned(),
+        );
+    }
+    if !temporary_volume_is_case_insensitive()? {
+        return Err(
+            "the temporary volume is case-sensitive, so P18-L08's case-insensitive check would be skipped; run with TMPDIR on a case-insensitive volume".to_owned(),
+        );
+    }
+    let host = host(root)?;
     let mut problems = Vec::new();
     let (executables, doc) = discover(root).unwrap_or_else(|error| {
         problems.push(error);
@@ -209,8 +248,13 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
     let receipt = Receipt {
         release_source: release,
         host,
-        start: side(&start),
-        end: side(&end),
+        // The index flags were refused before the run, so the start is clean exactly when Git
+        // said so; the end is checked again.
+        start: Side {
+            head: start.commit.to_ascii_lowercase(),
+            clean: !start.worktree_dirty,
+        },
+        end: side(root, &end),
         command: argv,
         exit_code,
         expected: executables

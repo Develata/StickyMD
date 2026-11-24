@@ -33,6 +33,16 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
         decide::check_system(&existing)?;
         return plan(options, &existing, &rows(root)?);
     }
+    // The ledger and its lock are replaced or locked by name: through a link the lock would name
+    // the link and the publish would replace the link, not the ledger.
+    for path in [ledger.clone(), lock_path(&ledger)] {
+        if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err(format!(
+                "{} is a symbolic link; name the ledger itself",
+                path.display()
+            ));
+        }
+    }
     let _lock = lock(&ledger)?;
     let text = read(&ledger)?;
     let existing = record::read_all(&text)?;
@@ -77,10 +87,14 @@ fn read(ledger: &Path) -> Result<String, String> {
 
 /// Another writer holding the lock refuses this one; the lock is released when the file closes,
 /// at exit too, so a crash leaves nothing to clean up.
-fn lock(ledger: &Path) -> Result<fs::File, String> {
+fn lock_path(ledger: &Path) -> PathBuf {
     let mut path = ledger.as_os_str().to_owned();
     path.push(".lock");
-    let path = PathBuf::from(path);
+    PathBuf::from(path)
+}
+
+fn lock(ledger: &Path) -> Result<fs::File, String> {
+    let path = lock_path(ledger);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }

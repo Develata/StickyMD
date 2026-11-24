@@ -47,10 +47,13 @@ fn running(line: &str) -> Option<u64> {
 /// `test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in
 /// 0.00s`, with `FAILED` for a failed run; every field present, in libtest's order.
 fn result(line: &str, ran: u64) -> Result<Counts, String> {
-    let rest = line
-        .strip_prefix("test result: ok. ")
-        .or_else(|| line.strip_prefix("test result: FAILED. "))
-        .ok_or_else(|| format!("unreadable test result {line:?}"))?;
+    let (ok, rest) = if let Some(rest) = line.strip_prefix("test result: ok. ") {
+        (true, rest)
+    } else if let Some(rest) = line.strip_prefix("test result: FAILED. ") {
+        (false, rest)
+    } else {
+        return Err(format!("unreadable test result {line:?}"));
+    };
     let parts: Vec<&str> = rest.split("; ").collect();
     let [passed, failed, ignored, measured, filtered, finished] = parts.as_slice() else {
         return Err(format!("unreadable test result {line:?}"));
@@ -63,14 +66,19 @@ fn result(line: &str, ran: u64) -> Result<Counts, String> {
             .and_then(|number| number.parse().ok())
             .ok_or_else(|| format!("unreadable test result {line:?}"))
     };
-    Ok(Counts {
+    let counts = Counts {
         ran,
         passed: number(passed, " passed")?,
         failed: number(failed, " failed")?,
         ignored: number(ignored, " ignored")?,
         measured: number(measured, " measured")?,
         filtered_out: number(filtered, " filtered out")?,
-    })
+    };
+    // libtest prints `ok` exactly when nothing failed; anything else contradicts itself.
+    if ok != (counts.failed == 0) {
+        return Err(format!("the test result contradicts itself: {line:?}"));
+    }
+    Ok(counts)
 }
 
 /// The sections of one `cargo test`, in order; every section must end with exactly one result.
@@ -175,6 +183,44 @@ pub(in super::super) fn doc_libraries(metadata: &str) -> Result<Vec<Target>, Str
             }
         }
     }
+    Ok(found)
+}
+
+/// The test binaries and doc-tested libraries `cargo test` runs for the eight packages, from
+/// `cargo metadata --no-deps --format-version 1` on R: every target with `test` set (a library,
+/// binary or test target; a build script is not a test), and the doc-tested libraries. The gate
+/// checks the receipt against this list, made apart from the run (plan 11
+/// #macos-readiness-check).
+pub(in super::super) fn listed_targets(metadata: &str) -> Result<Vec<Target>, String> {
+    let document = json::parse(metadata)?;
+    let mut found = Vec::new();
+    for package in document.field("packages")?.array()? {
+        let name = package.field("name")?.string()?;
+        if !PACKAGES.contains(&name) {
+            continue;
+        }
+        for target in package.field("targets")?.array()? {
+            let kinds: Vec<&str> = target
+                .field("kind")?
+                .array()?
+                .iter()
+                .map(Value::string)
+                .collect::<Result<_, _>>()?;
+            if matches!(target.field("test")?, Value::Bool(true)) && kinds != ["custom-build"] {
+                found.push(Target {
+                    package: name.to_owned(),
+                    kind: kinds.join(","),
+                    name: target.field("name")?.string()?.to_owned(),
+                });
+            }
+        }
+    }
+    for package in PACKAGES {
+        if !found.iter().any(|target| target.package == package) {
+            return Err(format!("cargo metadata lists no test target of {package}"));
+        }
+    }
+    found.extend(doc_libraries(metadata)?);
     Ok(found)
 }
 

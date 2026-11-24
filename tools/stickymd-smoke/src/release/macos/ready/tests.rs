@@ -24,6 +24,7 @@ fn candidate() -> Candidate {
             executable: hex('e'),
             bundle: hex('b'),
         },
+        signing: "AD_HOC".into(),
     }
 }
 
@@ -59,8 +60,10 @@ fn ledger() -> Vec<Record> {
     let built = candidate().built;
     let mut rows: Vec<String> = ROWS
         .iter()
-        .filter(|(_, class)| matches!(class, Class::Gui | Class::Translocation | Class::Resources))
-        .map(|(row, _)| (*row).to_owned())
+        .filter(|(_, class, _)| {
+            matches!(class, Class::Gui | Class::Translocation | Class::Resources)
+        })
+        .map(|(row, _, _)| (*row).to_owned())
         .collect();
     rows.extend(crate::mac_gui::logout::rows());
     rows.iter()
@@ -73,8 +76,16 @@ fn receipt() -> Receipt {
         .iter()
         .map(|package| Target {
             package: (*package).to_owned(),
-            kind: "lib".into(),
-            name: package.replace('-', "_"),
+            kind: if matches!(*package, "stickymd-mac" | "stickymd-smoke") {
+                "bin".into()
+            } else {
+                "lib".into()
+            },
+            name: if matches!(*package, "stickymd-mac" | "stickymd-smoke") {
+                (*package).to_owned()
+            } else {
+                package.replace('-', "_")
+            },
         })
         .collect();
     Receipt {
@@ -132,6 +143,7 @@ fn run(candidate: Read<&Candidate>, records: &[Record], tests: &Receipt) -> Vec<
         candidate,
         ledger: Read::Present(records),
         source_tests: Read::Present(tests),
+        targets: Read::Present(&receipt().expected),
     })
 }
 
@@ -149,11 +161,15 @@ fn assert_line(lines: &[Line], item: &str, expected: Verdict, words: &str) {
 }
 
 /// The rows that hold only with a USER record (receipt, waiver, download path); V03 has no
-/// producer and holds only with a waiver.
+/// producer and holds only with a waiver; S06 awaits a decision on how it gets evidence on R.
 fn awaiting_decision(item: &str) -> bool {
     item == "download-path"
-        || ROWS.iter().any(|(row, class)| {
-            format!("P16-{row}") == item && matches!(class, Class::Manual | Class::Comparison)
+        || ROWS.iter().any(|(row, class, _)| {
+            format!("P16-{row}") == item
+                && matches!(
+                    class,
+                    Class::Manual | Class::Comparison | Class::IgnoredSource
+                )
         })
 }
 
@@ -330,6 +346,7 @@ fn r03_counts_only_this_batch_and_a_fail_on_these_bytes_blocks() {
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&records),
         source_tests: Read::Present(&receipt()),
+        targets: Read::Present(&receipt().expected),
     });
     assert_line(
         &lines,
@@ -379,6 +396,7 @@ fn the_source_rows_follow_the_receipt_on_r() {
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Missing("no source-test receipt".into()),
+        targets: Read::Present(&receipt().expected),
     });
     assert_line(
         &lines,
@@ -398,6 +416,7 @@ fn an_unreadable_ledger_leaves_the_ledger_rows_open() {
         candidate: Read::Present(&candidate),
         ledger: Read::Invalid("the ledger is unreadable: line 3".into()),
         source_tests: Read::Present(&receipt),
+        targets: Read::Present(&receipt.expected),
     });
     assert_line(&lines, "P16-E01", Verdict::NotTested, "line 3");
     assert_line(&lines, "P16-S02", Verdict::Pass, "");
@@ -441,7 +460,7 @@ fn withdraw(row: &str, candidate: &str) -> Record {
 fn released() -> Vec<Record> {
     let digest = candidate().receipt_sha256;
     let mut records = ledger();
-    for (row, class) in ROWS {
+    for (row, class, _) in ROWS {
         match class {
             Class::Manual => records.push(release(ReleaseKind::Receipt, row, &digest, "rc1")),
             Class::Comparison => records.push(release(ReleaseKind::Waiver, row, &digest, "rc1")),
@@ -458,6 +477,7 @@ fn with_the_user_records_every_row_holds() {
     let lines = run(Read::Present(&candidate), &released(), &receipt());
     for line in &lines {
         let expected = match line.item.as_str() {
+            "P16-S06" => Verdict::NotTested,
             "P16-W15" | "P16-W16" | "P16-V05" => Verdict::Excluded,
             "P16-V03" => Verdict::Waived,
             _ => Verdict::Pass,
@@ -466,7 +486,13 @@ fn with_the_user_records_every_row_holds() {
     }
     assert_line(&lines, "P16-W01", Verdict::Pass, "W01 看过了");
     assert_line(&lines, "P16-R03", Verdict::Pass, "candidate ZIP dddd");
-    assert!(ready(&lines));
+    assert!(!ready(&lines), "S06 still awaits a decision");
+    let held: Vec<Line> = lines
+        .iter()
+        .filter(|line| line.item != "P16-S06")
+        .cloned()
+        .collect();
+    assert!(ready(&held));
     // Without R03's run on the candidate ZIP the gate does not hold.
     let mut records = released();
     records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "R03"));
@@ -591,4 +617,117 @@ fn only_rows_that_depend_on_the_app_running_are_waivable() {
     for row in ["R03", "S01", "B01", "P01", "W15", "V05", "P18-D01", "X99"] {
         assert!(!waivable(row), "{row}");
     }
+}
+
+/// Review A3: a missing W12 parent must not hide a recorded logout FAIL, or a waiver could cover it.
+#[test]
+fn a_logout_fail_is_not_hidden_behind_a_missing_w12() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = ledger();
+    records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "W12" || row == "W12-logout-fault"));
+    records.push(record(
+        "W12-logout-fault",
+        "FAIL",
+        '1',
+        &candidate.built,
+        '8',
+    ));
+    records.push(release(ReleaseKind::Waiver, "W12", &digest, "rc1"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W12", Verdict::Fail, "W12-logout-fault");
+}
+
+/// Review A4: a program FAIL of a Manual row on the candidate's bytes beats a receipt and a waiver.
+#[test]
+fn an_observed_failure_of_a_manual_row_beats_its_receipt() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = released();
+    records.push(record("W01", "FAIL", '1', &candidate.built, '8'));
+    records.push(release(ReleaseKind::Waiver, "W01", &digest, "rc1"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W01", Verdict::Fail, "a FAIL of P16-W01");
+}
+
+/// Review A6: groups are driver, image and system; the optional product inputs do not split them.
+#[test]
+fn a_record_without_inputs_shares_its_group() {
+    let candidate = candidate();
+    let mut records = ledger();
+    let mut failed = record("W03", "FAIL", '1', &candidate.built, '8');
+    if let Record::Automated { identity, .. } = &mut failed {
+        identity.inputs = None;
+    }
+    records.push(failed);
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W03", Verdict::Fail, "a FAIL of P16-W03");
+}
+
+/// Review A8: each download record must name the candidate's signing, and the five paths one
+/// macOS major version.
+#[test]
+fn download_records_must_match_the_signing_and_one_major_version() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let with = |row: &str, signing: &str, version: &str| {
+        release(
+            ReleaseKind::Download {
+                signing: signing.into(),
+                system: format!("ProductName: macOS ProductVersion: {version}"),
+            },
+            row,
+            &digest,
+            "rc1",
+        )
+    };
+    let mut records = ledger();
+    records.extend(DOWNLOAD_ROWS.map(|row| with(row, "AD_HOC", "27.2")));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "download-path", Verdict::Pass, "macOS 27");
+    records.push(with("P18-D02", "DEVELOPER_ID", "27.2"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "download-path", Verdict::NotTested, "DEVELOPER_ID");
+    records.push(with("P18-D02", "AD_HOC", "28.0"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "download-path",
+        Verdict::NotTested,
+        "different macOS major",
+    );
+    records.push(with("P18-D02", "AD_HOC", "unknown"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "download-path",
+        Verdict::NotTested,
+        "no macOS version",
+    );
+}
+
+/// Review A1: S06's test is `#[ignore]`, so a green default run does not prove it.
+#[test]
+fn s06_is_not_proven_by_the_default_run() {
+    let candidate = candidate();
+    let lines = run(Read::Present(&candidate), &released(), &receipt());
+    assert_line(&lines, "source-tests", Verdict::Pass, "");
+    assert_line(&lines, "P16-S06", Verdict::NotTested, "#[ignore]");
+}
+
+/// Review A7: without R's own target list the receipt proves nothing.
+#[test]
+fn without_r_s_target_list_the_source_rows_stay_open() {
+    let candidate = candidate();
+    let receipt = receipt();
+    let lines = judge(&Inputs {
+        release: R,
+        batch: Some("rc1"),
+        candidate: Read::Present(&candidate),
+        ledger: Read::Present(&ledger()),
+        source_tests: Read::Present(&receipt),
+        targets: Read::Invalid("cannot list R's test targets: cargo metadata failed".into()),
+    });
+    assert_line(&lines, "source-tests", Verdict::NotTested, "cargo metadata");
+    assert_line(&lines, "P16-S01", Verdict::NotTested, "cargo metadata");
 }

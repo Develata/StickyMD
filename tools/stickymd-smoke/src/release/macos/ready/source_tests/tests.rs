@@ -52,12 +52,48 @@ fn target(package: &str, kind: &str, name: &str) -> Target {
     }
 }
 
-/// A receipt that judges PASS on both rows: one library test binary per package.
+/// R's test targets as `cargo metadata` lists them for this workspace (reduced to what the
+/// packages hold; `stickymd-mac` and `stickymd-smoke` are binaries only).
+fn listed() -> Vec<Target> {
+    let mut targets = Vec::new();
+    for (package, lib, extra) in [
+        ("stickymd-core", true, &["test:property"][..]),
+        (
+            "stickymd-render",
+            true,
+            &["test:phase5_semantics", "test:table_math_pipes"][..],
+        ),
+        ("stickymd-app", true, &[][..]),
+        ("stickymd-desktop", true, &[][..]),
+        ("stickymd-posix", true, &[][..]),
+        ("stickymd-mac", false, &["bin:stickymd-mac"][..]),
+        (
+            "stickymd-package",
+            true,
+            &["bin:stickymd-package", "test:cli_exit"][..],
+        ),
+        (
+            "stickymd-smoke",
+            false,
+            &["bin:stickymd-smoke", "test:headless"][..],
+        ),
+    ] {
+        let library = package.replace('-', "_");
+        if lib {
+            targets.push(target(package, "lib", &library));
+            targets.push(target(package, "doctest", &library));
+        }
+        for item in extra {
+            let (kind, name) = item.split_once(':').unwrap();
+            targets.push(target(package, kind, name));
+        }
+    }
+    targets
+}
+
+/// A receipt that judges PASS on both rows: every listed target ran.
 fn good() -> Receipt {
-    let expected: Vec<Target> = PACKAGES
-        .iter()
-        .map(|package| target(package, "lib", &package.replace('-', "_")))
-        .collect();
+    let expected = listed();
     Receipt {
         release_source: R.to_owned(),
         host: Host {
@@ -103,7 +139,7 @@ fn good() -> Receipt {
 }
 
 fn verdicts(receipt: &Receipt) -> (Outcome, Outcome) {
-    judge(receipt, R)
+    judge(receipt, R, &listed())
 }
 
 fn not_tested(outcome: &Outcome, words: &str) {
@@ -269,13 +305,10 @@ fn a_package_or_binary_that_did_not_run_leaves_the_row_open() {
     missing_package
         .binaries
         .retain(|run| run.target.package != "stickymd-smoke");
-    not_tested(
-        &verdicts(&missing_package).0,
-        "no test binary of stickymd-smoke",
-    );
+    not_tested(&verdicts(&missing_package).0, "not R's");
     let mut unrun = good();
     unrun.binaries.pop();
-    not_tested(&verdicts(&unrun).0, "covered 7 of the 8");
+    not_tested(&verdicts(&unrun).0, "covered 19 of the 20");
     let mut doubled = good();
     let again = doubled.binaries[0].clone();
     doubled.binaries.push(again);
@@ -347,16 +380,270 @@ fn root() -> std::path::PathBuf {
     crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap()
 }
 
-/// The row's command is the self-check's, so a change to one shows in the other.
+/// The `run` text of the step named `name` in a workflow, its folded lines joined by spaces.
+fn step_command(workflow: &str, name: &str) -> Option<String> {
+    let mut lines = workflow
+        .lines()
+        .skip_while(|line| line.trim() != format!("- name: {name}"));
+    lines.next()?;
+    let run = lines.next()?.trim();
+    if let Some(single) = run.strip_prefix("run: ").filter(|rest| *rest != ">-") {
+        return Some(single.to_owned());
+    }
+    let folded: Vec<&str> = lines
+        .take_while(|line| line.starts_with("          "))
+        .map(str::trim)
+        .collect();
+    Some(folded.join(" "))
+}
+
+/// The row's command is exactly the self-check step's, so a change to one shows in the other.
 #[test]
 fn the_command_is_the_release_workflow_self_check() {
     let workflow =
         std::fs::read_to_string(root().join(".github/workflows/release-macos.yml")).unwrap();
-    let collapsed = workflow.split_whitespace().collect::<Vec<_>>().join(" ");
+    let step = "Test the shared crates, the macOS host and the release tooling";
+    assert_eq!(step_command(&workflow, step), Some(command().join(" ")));
+    // A filter appended to the step no longer matches.
+    let filtered = workflow.replace("-p stickymd-smoke\n", "-p stickymd-smoke -- note_root\n");
+    assert_ne!(step_command(&filtered, step), Some(command().join(" ")));
+}
+
+#[test]
+fn a_target_dropped_from_both_lists_is_caught() {
+    let mut narrowed = good();
+    let table = target("stickymd-render", "test", "table_math_pipes");
+    narrowed.expected.retain(|t| *t != table);
+    narrowed.binaries.retain(|run| run.target != table);
+    not_tested(&verdicts(&narrowed).0, "table_math_pipes");
+}
+
+#[test]
+fn contradictory_or_overflowing_counts_are_refused() {
+    let lying = OUTPUT.replace(
+        "test result: ok. 1 passed; 0 failed",
+        "test result: ok. 0 passed; 1 failed",
+    );
     assert!(
-        collapsed.contains(&command().join(" ")),
-        "release-macos.yml no longer runs {:?}",
-        command()
+        output::sections(&lying)
+            .unwrap_err()
+            .contains("contradicts")
+    );
+    let silent = OUTPUT.replace(
+        "test result: ok. 1 passed; 0 failed",
+        "test result: FAILED. 1 passed; 0 failed",
+    );
+    assert!(
+        output::sections(&silent)
+            .unwrap_err()
+            .contains("contradicts")
+    );
+    let mut wrapped = good();
+    wrapped.binaries[0].counts = Counts {
+        ran: 0,
+        passed: u64::MAX,
+        ignored: 1,
+        ..Counts::default()
+    };
+    not_tested(&verdicts(&wrapped).0, "add up");
+}
+
+#[test]
+fn the_same_key_run_is_exactly_its_two_tests() {
+    for counts in [
+        Counts {
+            ran: 3,
+            passed: 2,
+            ignored: 1,
+            filtered_out: 40,
+            ..Counts::default()
+        },
+        Counts {
+            ran: 3,
+            passed: 2,
+            measured: 1,
+            filtered_out: 40,
+            ..Counts::default()
+        },
+    ] {
+        let mut receipt = good();
+        receipt.same_key.counts = Some(counts);
+        not_tested(&verdicts(&receipt).1, "of its 2");
+    }
+}
+
+#[test]
+fn the_listed_targets_come_from_cargo_metadata() {
+    let package =
+        |name: &str, targets: &str| format!(r#"{{"name":"{name}","targets":[{targets}]}}"#);
+    let lib =
+        |name: &str| format!(r#"{{"kind":["lib"],"name":"{name}","test":true,"doctest":true}}"#);
+    let mut packages: Vec<String> = PACKAGES
+        .iter()
+        .filter(|p| **p != "stickymd-mac")
+        .map(|p| package(p, &lib(&p.replace('-', "_"))))
+        .collect();
+    packages.push(package(
+        "stickymd-mac",
+        r#"{"kind":["bin"],"name":"stickymd-mac","test":true,"doctest":false},
+           {"kind":["custom-build"],"name":"build-script-build","test":false,"doctest":false},
+           {"kind":["bench"],"name":"frame","test":false,"doctest":false}"#,
+    ));
+    let metadata = format!(r#"{{"packages":[{}]}}"#, packages.join(","));
+    let targets = output::listed_targets(&metadata).unwrap();
+    assert!(targets.contains(&target("stickymd-mac", "bin", "stickymd-mac")));
+    assert!(targets.contains(&target("stickymd-core", "doctest", "stickymd_core")));
+    assert!(
+        !targets
+            .iter()
+            .any(|t| t.name == "frame" || t.name == "build-script-build")
+    );
+    assert_eq!(targets.len(), 7 * 2 + 1);
+    let without_mac = metadata.replace(
+        r#""name":"stickymd-mac","test":true"#,
+        r#""name":"stickymd-mac","test":false"#,
+    );
+    assert!(
+        output::listed_targets(&without_mac)
+            .unwrap_err()
+            .contains("stickymd-mac")
+    );
+}
+
+/// Every `#[ignore]` test of the eight packages, by file, and what it is for. A Source row whose
+/// test is ignored is not proven by the default run (plan 11 #macos-release-gate): a new ignored
+/// test here must be classified before this list changes (P16-S06 is `IgnoredSource`).
+#[test]
+fn every_ignored_test_of_the_eight_packages_is_classified() {
+    const IGNORED: &[(&str, usize, &str)] = &[
+        (
+            "apps/stickymd-mac/src/paths.rs",
+            1,
+            "P16-S06 (IgnoredSource)",
+        ),
+        (
+            "apps/stickymd-mac/src/note_root/tests.rs",
+            1,
+            "P18-L08 (same-key run)",
+        ),
+        ("apps/stickymd-mac/src/export/mod.rs", 1, "timing"),
+        ("apps/stickymd-mac/src/assets/transaction.rs", 1, "timing"),
+        (
+            "crates/stickymd-posix/src/user.rs",
+            1,
+            "run by another test in a child process",
+        ),
+        ("crates/stickymd-core/src/assets.rs", 1, "timing"),
+        ("crates/stickymd-render/src/image.rs", 1, "timing"),
+        ("crates/stickymd-render/src/math_action.rs", 2, "timing"),
+        (
+            "crates/stickymd-render/src/source/scrollbar.rs",
+            1,
+            "timing",
+        ),
+        (
+            "crates/stickymd-render/src/source/projection/startup_tests.rs",
+            1,
+            "diagnostic",
+        ),
+        ("crates/stickymd-render/src/math/engine.rs", 1, "timing"),
+        (
+            "crates/stickymd-render/src/preview/text_layout.rs",
+            1,
+            "timing",
+        ),
+        (
+            "crates/stickymd-render/src/preview/semantic_conversion.rs",
+            1,
+            "timing",
+        ),
+        (
+            "crates/stickymd-render/src/preview/pipeline.rs",
+            3,
+            "timing",
+        ),
+        (
+            "crates/stickymd-render/src/preview/pipeline/audit_tests.rs",
+            2,
+            "benchmark",
+        ),
+        (
+            "crates/stickymd-render/src/preview/pipeline/resource_tests.rs",
+            3,
+            "attribution",
+        ),
+        (
+            "crates/stickymd-render/src/preview/pipeline/image_refresh_tests.rs",
+            1,
+            "benchmark",
+        ),
+        (
+            "crates/stickymd-render/src/preview/pipeline/text_reuse_tests.rs",
+            1,
+            "measurement",
+        ),
+        (
+            "crates/stickymd-render/src/preview/pipeline/horizontal_tests.rs",
+            1,
+            "diagnostic",
+        ),
+        ("crates/stickymd-app/src/source_search.rs", 1, "timing"),
+        (
+            "crates/stickymd-app/src/execution/preview_worker.rs",
+            1,
+            "timing",
+        ),
+        (
+            "crates/stickymd-app/src/flow/window/reducer.rs",
+            1,
+            "timing",
+        ),
+        ("crates/stickymd-desktop/src/shell/mod.rs", 1, "timing"),
+        ("crates/stickymd-desktop/src/controls/tests.rs", 1, "timing"),
+    ];
+    let root = root();
+    let mut found = Vec::new();
+    let mut stack: Vec<std::path::PathBuf> = [
+        "crates/stickymd-core",
+        "crates/stickymd-render",
+        "crates/stickymd-app",
+        "crates/stickymd-desktop",
+        "crates/stickymd-posix",
+        "apps/stickymd-mac",
+    ]
+    .iter()
+    .map(|dir| root.join(dir))
+    .collect();
+    while let Some(path) = stack.pop() {
+        if path.is_dir() {
+            for entry in std::fs::read_dir(&path).unwrap() {
+                stack.push(entry.unwrap().path());
+            }
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            let count = std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .filter(|line| line.trim_start().starts_with("#[ignore"))
+                .count();
+            if count > 0 {
+                let relative = path
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                found.push((relative, count));
+            }
+        }
+    }
+    found.sort();
+    let mut listed: Vec<(String, usize)> = IGNORED
+        .iter()
+        .map(|(file, count, _)| ((*file).to_owned(), *count))
+        .collect();
+    listed.sort();
+    assert_eq!(
+        found, listed,
+        "classify every ignored test before changing this list"
     );
 }
 
