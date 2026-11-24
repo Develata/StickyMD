@@ -1,11 +1,11 @@
 //! Local release-tool checks: verification of the bytes `stickymd-package` builds, remote state,
-//! the macOS promotion and the reuse rule. These commands never build release bytes (plan 11
+//! the macOS promotion, the macOS readiness check and the reuse rule. These commands never build release bytes (plan 11
 //! #platform-artifact-reuse: that is the packaging crate's), and never authorize or publish.
 //! plan_ref: docs/plan/11_testing_and_release.md#release-artifact-authority
 
 mod attachments;
 mod cli;
-mod macos;
+pub(crate) mod macos;
 mod package;
 mod package_rules;
 mod package_runtime;
@@ -113,6 +113,13 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
             zip,
         } => macos::promote_command(root, *run_id, *attempt, release, zip),
         Command::MacosCandidate { release } => macos::candidate_command(root, release),
+        Command::MacosSourceTests { release } => macos::source_tests_command(root, release),
+        Command::MacosReady {
+            release,
+            batch,
+            macos_major,
+            driver,
+        } => macos::ready_command(root, release, batch.as_deref(), *macos_major, driver),
         Command::WorkspaceVersion => {
             println!("{}", crate::repository::workspace_version(root)?);
             Ok(())

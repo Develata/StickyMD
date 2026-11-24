@@ -106,7 +106,8 @@ pub(crate) enum CommandLine {
     MacLogout(crate::mac_gui::logout::Options),
     MacLatency(crate::mac_gui::latency::Options),
     MacResources(crate::mac_resources::Options),
-    MacLedger(crate::mac_ledger::Options),
+    // Boxed: the ledger's options outgrow the other commands' (clippy::large_enum_variant).
+    MacLedger(Box<crate::mac_ledger::Options>),
     PhaseEntryPlan(Vec<String>),
     Release(crate::release::Command),
     Smoke(Options),
@@ -459,7 +460,7 @@ impl CommandLine {
             Some("mac-logout") => crate::mac_gui::logout::parse(&args[1..]).map(Self::MacLogout),
             Some("mac-latency") => crate::mac_gui::latency::parse(&args[1..]).map(Self::MacLatency),
             Some("mac-resources") => crate::mac_resources::parse(&args[1..]).map(Self::MacResources),
-            Some("mac-ledger") => crate::mac_ledger::parse(&args[1..]).map(Self::MacLedger),
+            Some("mac-ledger") => crate::mac_ledger::parse(&args[1..]).map(|options| Self::MacLedger(Box::new(options))),
             Some("timings") => crate::timing_summary::parse(&args[1..]).map(Self::Timings),
             Some("startup-details") => crate::startup_details::parse(&args[1..]).map(Self::StartupDetails),
             Some("acceptance") => match args.get(1).map(String::as_str) {
@@ -1111,7 +1112,7 @@ impl Options {
     }
 
     pub(crate) const fn usage() -> &'static str {
-        "usage: stickymd-smoke phase <00..18|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke dev-check [--plan] [--mode=tests|performance|all]\n       stickymd-smoke timings --input <json-or-log> [--input <path> ...] [--json]\n       stickymd-smoke startup-details --trace <v2-path> --details <sidecar-path> [--json]\n       stickymd-smoke phase-entry[-plan] <00..16|18|11-b|all> [--Parameter=value]\n       stickymd-smoke release <workspace-version|verify-promoted|verify-package|verify-workflow|verify-attachments|verify-release-set|verify-remote-state|platform-inputs|verify-reuse|macos-verify-package|macos-verify-artifact|macos-promote|macos-candidate> [options]; see tools/stickymd-smoke/README.md
+        "usage: stickymd-smoke phase <00..18|11-b> [--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>] [--resource-resume [--resource-plan] [--resource-failure-first]]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke all [--ci [--ci-shard=<tests|performance>]|--performance|--runtime|--resources [--resource-module=<source-preview|math|images|window|zoom>]|--release|--package] [--json] [--evidence-file=<path>]\n       stickymd-smoke modules list | modules run <module[,module...]|all> [--mode=tests|performance|all] [--plan]\n       stickymd-smoke package-path --directory <directory>\n       stickymd-smoke dev-check [--plan] [--mode=tests|performance|all]\n       stickymd-smoke timings --input <json-or-log> [--input <path> ...] [--json]\n       stickymd-smoke startup-details --trace <v2-path> --details <sidecar-path> [--json]\n       stickymd-smoke phase-entry[-plan] <00..16|18|11-b|all> [--Parameter=value]\n       stickymd-smoke release <workspace-version|verify-promoted|verify-package|verify-workflow|verify-attachments|verify-release-set|verify-remote-state|platform-inputs|verify-reuse|macos-verify-package|macos-verify-artifact|macos-promote|macos-candidate|macos-source-tests|macos-ready> [options]; see tools/stickymd-smoke/README.md
        (building release bytes: stickymd-package; see tools/stickymd-package/README.md)"
     }
 }

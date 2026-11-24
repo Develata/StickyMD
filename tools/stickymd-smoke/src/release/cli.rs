@@ -45,6 +45,19 @@ pub(crate) enum Command {
         directory: PathBuf,
         source: String,
     },
+    /// The source tests on the release commit and their receipt (M5).
+    MacosSourceTests {
+        release: String,
+    },
+    /// The macOS readiness check (M5), read-only.
+    MacosReady {
+        release: String,
+        batch: Option<String>,
+        /// The macOS major version the download paths must have run on (decision (b)).
+        macos_major: u32,
+        /// R's `mac-gui` driver, the stickymd-smoke binary the VM runs used.
+        driver: PathBuf,
+    },
     PlatformInputs {
         platform: super::platform::Platform,
         commit: String,
@@ -202,6 +215,18 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
         "macos-verify-artifact" => Command::MacosVerifyArtifact {
             directory: PathBuf::from(tokens.take("--directory")?),
             source: tokens.take("--source-sha")?,
+        },
+        "macos-source-tests" => Command::MacosSourceTests {
+            release: tokens.take("--release-source")?,
+        },
+        "macos-ready" => Command::MacosReady {
+            release: tokens.take("--release-source")?,
+            batch: tokens.optional("--batch"),
+            macos_major: tokens
+                .take("--macos-major")?
+                .parse()
+                .map_err(|_| "invalid --macos-major")?,
+            driver: PathBuf::from(tokens.take("--driver")?),
         },
         "platform-inputs" => Command::PlatformInputs {
             platform: super::platform::Platform::parse(&tokens.take("--platform")?)?,

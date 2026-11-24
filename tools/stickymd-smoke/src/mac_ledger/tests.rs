@@ -45,6 +45,7 @@ fn in_batch(mut record: Record, name: &str) -> Record {
         Record::Automated { batch, .. } | Record::Manual { batch, .. } => {
             *batch = Some(name.into());
         }
+        Record::Release(release) => release.batch = Some(name.into()),
         Record::Revocation { .. } => unreachable!("a revocation has no batch"),
     }
     record

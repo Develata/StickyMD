@@ -24,10 +24,16 @@ fn rows(root: &Path) -> Result<Rows, String> {
 
 pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     let command = options.command.ok_or("mac-ledger needs a command")?;
-    let ledger = options.ledger.clone().unwrap_or_else(|| {
-        root.join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
-            .join("records.jsonl")
-    });
+    // One absolute path, resolved once against the directory the command runs in, for the check,
+    // the lock and the write alike (review round 4, BLOCKER 4).
+    let ledger = match &options.ledger {
+        Some(path) => std::path::absolute(path)
+            .map_err(|e| format!("cannot resolve --ledger {}: {e}", path.display()))?,
+        None => root
+            .join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
+            .join("records.jsonl"),
+    };
+    refuse_links(root, &ledger)?;
     if command == Command::Plan {
         let existing = record::read_all(&read(&ledger)?)?;
         decide::check_system(&existing)?;
@@ -38,8 +44,9 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     let existing = record::read_all(&text)?;
     let new = match command {
         Command::Record => append::recorded(options)?,
-        Command::Receipt => append::receipts(options, &rows(root)?)?,
-        Command::Revoke => append::revocation(options, &existing)?,
+        Command::Receipt => append::receipts(options, &rows(root)?, root)?,
+        Command::Waive => append::waivers(options, root)?,
+        Command::Revoke => append::revocation(options, &existing, root)?,
         Command::Plan => unreachable!("handled above"),
     };
     let mut all: Vec<Record> = existing;
@@ -76,10 +83,80 @@ fn read(ledger: &Path) -> Result<String, String> {
 
 /// Another writer holding the lock refuses this one; the lock is released when the file closes,
 /// at exit too, so a crash leaves nothing to clean up.
-fn lock(ledger: &Path) -> Result<fs::File, String> {
+/// The ledger and its lock are read, locked and replaced by name: through a link the lock would
+/// name the link and a publish would replace the link, not the ledger, and a reader could follow
+/// it to another file. Every entry point refuses them. Nor may the ledger occupy the release
+/// gate's own files.
+fn refuse_links(root: &Path, ledger: &Path) -> Result<(), String> {
+    for path in [ledger.to_path_buf(), lock_path(ledger)] {
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "{} is a symbolic link; name the ledger itself",
+                    path.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            // Anything but absence leaves the path unproven; nothing is read or written.
+            Err(e) => return Err(format!("cannot inspect {}: {e}", path.display())),
+        }
+        // The repository the command runs for, not one guessed from the path (review round 3, B6).
+        if crate::qualification::reserved_paths::is_macos_source_test_path(root, &path) {
+            return Err(format!(
+                "{} would occupy the macOS source-test receipt or its lock",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The ledger's text for a reader that must see it whole: links refused, read under a shared
+/// hold of the writers' lock (opened read-only, never created), `None` when nothing was ever
+/// recorded. A writer at work makes this an error rather than a half-seen ledger. The returned
+/// lock keeps writers out until the caller drops it.
+pub(crate) fn read_whole(
+    root: &Path,
+    ledger: &Path,
+) -> Result<(Option<String>, Option<fs::File>), String> {
+    refuse_links(root, ledger)?;
+    let lock = match fs::File::open(lock_path(ledger)) {
+        Ok(file) => Some(file),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("{}: {e}", lock_path(ledger).display())),
+    };
+    // Every append creates the lock first; a ledger without it was not written under it (copied,
+    // or a writer starting), so it is not read unlocked, not even its bytes (review round 3, B5;
+    // review round 4).
+    let Some(lock) = lock else {
+        return match fs::symlink_metadata(ledger) {
+            Ok(_) => Err(format!(
+                "{} has no lock beside it; create the empty file {} (or record through mac-ledger) and check again",
+                ledger.display(),
+                lock_path(ledger).display()
+            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, None)),
+            Err(e) => Err(format!("cannot inspect {}: {e}", ledger.display())),
+        };
+    };
+    lock.try_lock_shared()
+        .map_err(|e| format!("a mac-ledger writer holds the ledger: {e}"))?;
+    match fs::read_to_string(ledger) {
+        Ok(text) => Ok((Some(text), Some(lock))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, Some(lock))),
+        Err(e) => Err(format!("{}: {e}", ledger.display())),
+    }
+}
+
+fn lock_path(ledger: &Path) -> PathBuf {
     let mut path = ledger.as_os_str().to_owned();
     path.push(".lock");
-    let path = PathBuf::from(path);
+    PathBuf::from(path)
+}
+
+fn lock(ledger: &Path) -> Result<fs::File, String> {
+    let path = lock_path(ledger);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
@@ -234,5 +311,69 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+    }
+}
+
+#[cfg(test)]
+mod reading_tests {
+    use super::{lock_path, read_whole, refuse_links};
+
+    /// Review round 3, B5: a ledger without its lock is not read; with the lock it is; absent
+    /// both, nothing was recorded.
+    #[test]
+    fn a_ledger_is_read_only_with_its_lock() {
+        let scratch = stickymd_package::temporary::TemporaryDirectory::new("ledger-lock").unwrap();
+        let root = scratch.path();
+        let ledger = root.join("records.jsonl");
+        assert!(matches!(read_whole(root, &ledger), Ok((None, None))));
+        std::fs::write(&ledger, "").unwrap();
+        let error = read_whole(root, &ledger).unwrap_err();
+        assert!(error.contains("has no lock"), "{error}");
+        std::fs::write(lock_path(&ledger), "").unwrap();
+        assert!(matches!(read_whole(root, &ledger), Ok((Some(_), Some(_)))));
+    }
+
+    /// Review round 3, B6: the destination is checked against the command's own root, and any
+    /// error but absence stops it.
+    #[test]
+    fn a_ledger_cannot_take_the_source_test_lock_or_an_unreadable_path() {
+        let scratch =
+            stickymd_package::temporary::TemporaryDirectory::new("ledger-reserved").unwrap();
+        let root = scratch.path();
+        let reserved = root.join(crate::qualification::reserved_paths::MACOS_SOURCE_TEST_LOCK);
+        std::fs::create_dir_all(reserved.parent().unwrap()).unwrap();
+        let error = refuse_links(root, &reserved).unwrap_err();
+        assert!(error.contains("source-test receipt or its lock"), "{error}");
+        // A path through a regular file is ENOTDIR on Unix, an error other than absence.
+        #[cfg(unix)]
+        {
+            std::fs::write(root.join("a-file"), "").unwrap();
+            let error = refuse_links(root, &root.join("a-file/records.jsonl")).unwrap_err();
+            assert!(error.contains("cannot inspect"), "{error}");
+        }
+        assert!(refuse_links(root, &root.join("records.jsonl")).is_ok());
+    }
+
+    /// Review round 4, BLOCKER 4: on macOS a spelling that differs only in case names the same
+    /// reserved file on the default volume, even before it exists; the run record is reserved
+    /// as well.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_reserved_name_in_another_case_or_the_run_record_is_refused() {
+        let scratch = stickymd_package::temporary::TemporaryDirectory::new("ledger-case").unwrap();
+        let root = scratch.path();
+        for reserved in [
+            "dist/EVIDENCE/Release-Source-Tests-MacOS.json",
+            "dist/evidence/.RELEASE-source-tests-macos.lock",
+            crate::qualification::reserved_paths::MACOS_SOURCE_TEST_RUN,
+        ] {
+            let error = refuse_links(root, &root.join(reserved)).unwrap_err();
+            assert!(error.contains("source-test receipt or its lock"), "{error}");
+        }
+        // Fix round, SHOULD_FIX 7: a reserved name in another case as an ancestor, before it
+        // exists: creating the ledger's parents would make it a directory.
+        let through = root.join("dist/evidence/Release-Source-Tests-MacOS.json/records.jsonl");
+        let error = refuse_links(root, &through).unwrap_err();
+        assert!(error.contains("source-test receipt or its lock"), "{error}");
     }
 }

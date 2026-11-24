@@ -217,17 +217,17 @@ mod tests {
             .err()
             .map(|error| unwritable_advice(&note_root, error));
         drop(note_root);
-        let left_behind = fs::read_dir(&mount)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".stickymd-write-test")
-            })
-            .count();
+        // Every entry read, or the count proves nothing (review round 4); judged after detaching.
+        // Only the names are kept: a `DirEntry` holds the directory open, and the volume would
+        // then be busy and refuse to detach.
+        let names: std::io::Result<Vec<std::ffi::OsString>> = fs::read_dir(&mount)
+            .and_then(|entries| entries.map(|entry| entry.map(|e| e.file_name())).collect());
         hdiutil("detach", &[mount.as_os_str()]);
+        let left_behind = names
+            .expect("every entry of the volume is read")
+            .iter()
+            .filter(|name| name.to_string_lossy().starts_with(".stickymd-write-test"))
+            .count();
         fs::remove_dir_all(&root).unwrap();
         assert!(
             matches!(result, Err(RuntimePathsError::VolumeUnsupported(_))),
