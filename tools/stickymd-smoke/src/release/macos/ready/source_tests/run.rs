@@ -37,18 +37,6 @@ fn runner_entries() -> Vec<String> {
         .collect()
 }
 
-/// P18-L08's default-set test checks a name differing only in case on the temporary volume and
-/// skips that check on a case-sensitive one, so the temporary volume must be case-insensitive.
-/// The probe uses a directory it creates exclusively and removes it, reporting a failed removal.
-fn temporary_volume_is_case_insensitive() -> Result<bool, String> {
-    let directory = crate::release::temporary::TemporaryDirectory::new("case-probe")?;
-    let insensitive = std::fs::write(directory.path().join("case-probe"), b"")
-        .map(|()| directory.path().join("CASE-PROBE").exists())
-        .map_err(|error| error.to_string());
-    directory.close()?;
-    insensitive
-}
-
 /// The trimmed stdout of a short query that must succeed.
 fn query(root: &Path, program: &str, arguments: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
@@ -89,7 +77,11 @@ fn host(root: &Path) -> Result<Host, String> {
 /// stderr; returns the exit code (`None` for a signal) and the output. A read that fails for any
 /// reason but an interruption ends the child before waiting for it, so the pipe cannot fill
 /// while this process waits.
-fn run_merged(root: &Path, argv: &[String]) -> Result<(Option<i32>, String), String> {
+fn run_merged(
+    root: &Path,
+    argv: &[String],
+    report: Option<&Path>,
+) -> Result<(Option<i32>, String), String> {
     let (mut reader, writer) =
         std::io::pipe().map_err(|error| format!("cannot open a pipe: {error}"))?;
     let mut command = Command::new(&argv[0]);
@@ -105,6 +97,9 @@ fn run_merged(root: &Path, argv: &[String]) -> Result<(Option<i32>, String), Str
                 .map_err(|error| format!("cannot share the pipe: {error}"))?,
         )
         .stderr(writer);
+    if let Some(report) = report {
+        command.env("STICKYMD_VOLUME_REPORT", report);
+    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("cannot start {argv:?}: {error}"))?;
@@ -221,14 +216,40 @@ fn listings(
     Ok(out)
 }
 
-/// One explicit run: one section, of stickymd-mac's binary, with its printed tests named.
+/// The volumes P18-L08's tests reported (`<volume> <case behaviour>` lines): exactly one line for
+/// each of `temporary` and `image`, or what is wrong.
+fn volumes(report: &str) -> Result<(String, String), String> {
+    let mut temporary = None;
+    let mut image = None;
+    for line in report.lines() {
+        let (volume, kind) = line
+            .split_once(' ')
+            .filter(|(_, kind)| matches!(*kind, "case-insensitive" | "case-sensitive"))
+            .ok_or_else(|| format!("unreadable volume report line {line:?}"))?;
+        let slot = match volume {
+            "temporary" => &mut temporary,
+            "image" => &mut image,
+            _ => return Err(format!("unknown volume in {line:?}")),
+        };
+        if slot.replace(kind.to_owned()).is_some() {
+            return Err(format!("the {volume} volume was reported twice"));
+        }
+    }
+    Ok((
+        temporary.ok_or("the temporary volume was not reported")?,
+        image.ok_or("the image volume was not reported")?,
+    ))
+}
+
+/// One explicit run: one section, of stickymd-mac's binary, with its printed tests named. With
+/// `report`, the tests write the volumes they measured to that file.
 fn explicit(
     root: &Path,
     item: &str,
     tests: &[&str],
     executables: &[Executable],
     listings: &[Listed],
-    temporary_volume: Option<&str>,
+    report: Option<&Path>,
     problems: &mut Vec<String>,
 ) -> Explicit {
     let argv = explicit_command(tests);
@@ -240,9 +261,10 @@ fn explicit(
         counts: None,
         cases: Vec::new(),
         exit_code: None,
-        temporary_volume: temporary_volume.map(str::to_owned),
+        temporary_volume: None,
+        image_volume: None,
     };
-    let (exit, text) = match run_merged(root, &argv) {
+    let (exit, text) = match run_merged(root, &argv, report) {
         Ok(found) => found,
         Err(error) => {
             problems.push(format!("the {item} run: {error}"));
@@ -274,6 +296,18 @@ fn explicit(
         &only.tests,
     );
     entry.cases = cases;
+    if let Some(report) = report {
+        match std::fs::read_to_string(report)
+            .map_err(|error| format!("cannot read the volume report: {error}"))
+            .and_then(|text| volumes(&text))
+        {
+            Ok((temporary, image)) => {
+                entry.temporary_volume = Some(temporary);
+                entry.image_volume = Some(image);
+            }
+            Err(error) => problems.push(format!("the {item} run: {error}")),
+        }
+    }
     entry
 }
 
@@ -316,11 +350,8 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
     let path = root.join(RECEIPT);
     super::refuse_link(&path)?;
     retire(&path)?;
-    if !temporary_volume_is_case_insensitive()? {
-        return Err(
-            "the temporary volume is case-sensitive, so P18-L08's case-insensitive check would be skipped; run with TMPDIR on a case-insensitive volume".to_owned(),
-        );
-    }
+    // No probe of this process's own temporary directory: P18-L08's tests measure the volumes
+    // where their assertions run, and the receipt records that (review round 3, B4).
     let host = host(root)?;
     let mut problems = Vec::new();
     let (executables, doc) = discover(root).unwrap_or_else(|error| {
@@ -332,7 +363,7 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
         Vec::new()
     });
     let argv = command();
-    let (exit_code, binaries) = match run_merged(root, &argv) {
+    let (exit_code, binaries) = match run_merged(root, &argv, None) {
         Ok((exit, text)) => match output::sections(&text) {
             Ok(sections) => {
                 let (runs, more) = output::attribute(&sections, &executables, &doc, &listed);
@@ -349,21 +380,26 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
             (None, Vec::new())
         }
     };
+    // P18-L08's tests report the volumes they measured into a file of this run's own directory.
+    let reports = crate::release::temporary::TemporaryDirectory::new("volume-report")?;
     let explicit = EXPLICIT
         .iter()
         .map(|(item, tests)| {
-            let volume = (*item == "same-key").then_some("case-insensitive");
+            let report = (*item == "same-key").then(|| reports.path().join("volumes.txt"));
             explicit(
                 root,
                 item,
                 tests,
                 &executables,
                 &listed,
-                volume,
+                report.as_deref(),
                 &mut problems,
             )
         })
         .collect();
+    if let Err(error) = reports.close() {
+        problems.push(error);
+    }
     let end = identity::capture(root).unwrap_or(identity::Identity {
         head: "UNKNOWN".to_owned(),
         clean: false,
@@ -392,4 +428,30 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
         PACKAGES.len()
     );
     Ok(receipt)
+}
+
+#[cfg(test)]
+mod tests {
+    /// Review round 3, B4: the volume report holds exactly one line for each volume.
+    #[test]
+    fn the_volume_report_names_each_volume_once() {
+        assert_eq!(
+            super::volumes("temporary case-insensitive\nimage case-sensitive\n").unwrap(),
+            ("case-insensitive".to_owned(), "case-sensitive".to_owned())
+        );
+        assert!(
+            super::volumes("temporary case-insensitive\n")
+                .unwrap_err()
+                .contains("image")
+        );
+        assert!(
+            super::volumes(
+                "temporary case-insensitive\ntemporary case-sensitive\nimage case-sensitive\n"
+            )
+            .unwrap_err()
+            .contains("twice")
+        );
+        assert!(super::volumes("other case-sensitive\n").is_err());
+        assert!(super::volumes("image maybe\n").is_err());
+    }
 }

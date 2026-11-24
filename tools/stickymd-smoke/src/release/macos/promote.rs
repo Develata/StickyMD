@@ -646,6 +646,7 @@ pub(crate) fn resolve(root: &Path, release: &str) -> Result<Resolved, String> {
     crate::release::attachments::check_manifest_names(&manifest, &[&zip_name, sbom_name])?;
     let packaged = super::package::verify(&staging.join(&zip_name), None, &version)?;
     for (what, packaged, key) in [
+        ("archive", packaged.zip_sha256.as_str(), "zip_sha256"),
         (
             "bundle",
             packaged.bundle_sha256.as_str(),

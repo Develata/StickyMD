@@ -98,6 +98,12 @@ pub(super) fn source_tests_command(_: &Path, _: &str) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(super) fn ready_command(_: &Path, _: &str, _: Option<&str>, _: u32) -> Result<(), String> {
+pub(super) fn ready_command(
+    _: &Path,
+    _: &str,
+    _: Option<&str>,
+    _: u32,
+    _: &Path,
+) -> Result<(), String> {
     Err("macOS readiness is checked on macOS".to_owned())
 }

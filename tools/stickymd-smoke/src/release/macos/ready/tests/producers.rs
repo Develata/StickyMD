@@ -1,6 +1,7 @@
-//! The gate on the two producers' evidence (plan 11 #macos-readiness-check): R03 counts only a
-//! PASS that opened the candidate's ZIP, and the resource rows only records on the candidate's
-//! bytes; V03 has no producer. Each sample changes one fact of the good inputs.
+//! The gate on the two producers' evidence (plan 11 #macos-readiness-check): R03 looks only at a
+//! PASS that opened the candidate's ZIP, and counts none until its write watch lands (review #24
+//! B9); the resource rows only records on the candidate's bytes; V03 has no producer. Each
+//! sample changes one fact of the good inputs.
 
 use super::*;
 
@@ -18,10 +19,21 @@ fn repacked(verdict: &str, driver: char, evidence: char) -> Record {
 }
 
 #[test]
-fn r03_counts_a_clean_pass_on_the_candidate_zip_and_any_spoiler_beside_it() {
+fn r03_on_a_clean_candidate_zip_group_is_not_tested_and_a_fail_beside_it_counts() {
     let candidate = candidate();
     let lines = run(Read::Present(&candidate), &ledger(), &receipt());
-    assert_line(&lines, "P16-R03", Verdict::Pass, "candidate ZIP dddd");
+    assert_line(
+        &lines,
+        "P16-R03",
+        Verdict::NotTested,
+        "a ledger PASS on the candidate ZIP dddd",
+    );
+    assert_line(
+        &lines,
+        "P16-R03",
+        Verdict::NotTested,
+        "is not counted while",
+    );
     // A NOT_TESTED through another ZIP in the same identity spoils the group: the ZIP does not
     // split groups.
     let mut records = ledger();
@@ -39,10 +51,35 @@ fn r03_counts_a_clean_pass_on_the_candidate_zip_and_any_spoiler_beside_it() {
     records.push(repacked("FAIL", '1', '8'));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-R03", Verdict::Fail, "a FAIL of P16-R03");
-    // A clean run on the candidate ZIP under another identity still holds.
+    // A clean run on the candidate ZIP under another identity does not hide that FAIL (review
+    // round 3, S1).
     records.push(record("R03", "PASS", '2', &candidate.built, '7'));
     let lines = run(Read::Present(&candidate), &records, &receipt());
-    assert_line(&lines, "P16-R03", Verdict::Pass, "run-7");
+    assert_line(&lines, "P16-R03", Verdict::Fail, "a FAIL of P16-R03");
+}
+
+/// Review round 3, BLOCKER 1: an R03 PASS already in a ledger, written as a line the way an
+/// older importer wrote it (with the candidate ZIP), read back through the ledger reader, does not
+/// make the gate ready while "nothing written" is unproven.
+#[test]
+fn an_r03_pass_already_in_a_ledger_does_not_pass_the_gate() {
+    let candidate = candidate();
+    let text: String = released().iter().map(|r| r.line() + "\n").collect();
+    let r03 = text
+        .lines()
+        .find(|line| line.contains("\"row\":\"R03\""))
+        .unwrap();
+    assert!(r03.contains("\"verdict\":\"PASS\""), "{r03}");
+    assert!(r03.contains("\"zip_sha256\":\"dddd"), "{r03}");
+    let records = crate::mac_ledger::record::read_all(&text).unwrap();
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "P16-R03",
+        Verdict::NotTested,
+        "is not counted while",
+    );
+    assert!(!ready(&lines));
 }
 
 #[test]

@@ -38,6 +38,15 @@ fn identity(driver: char) -> Identity {
     }
 }
 
+/// A record under another VM image than `record`'s, same driver.
+fn record_on_image(row: &str, verdict: &str, image: &str, built: &Built, evidence: char) -> Record {
+    let mut found = record(row, verdict, '1', built, evidence);
+    if let Record::Automated { identity, .. } = &mut found {
+        identity.image = image.to_owned();
+    }
+    found
+}
+
 fn record(row: &str, verdict: &str, driver: char, built: &Built, evidence: char) -> Record {
     // R03 opened the candidate's ZIP (`mac-gui --zip`).
     let zip = (row == "R03").then(|| candidate().zip_sha256);
@@ -97,6 +106,7 @@ fn run(candidate: Read<&Candidate>, records: &[Record], tests: &Receipt) -> Vec<
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
+        driver: &hex('1'),
         candidate,
         ledger: Read::Present(records),
         source_tests: Read::Present(tests),
@@ -118,11 +128,15 @@ fn assert_line(lines: &[Line], item: &str, expected: Verdict, words: &str) {
 }
 
 /// The rows that hold only with a USER record (receipt, waiver, download path); V03 has no
-/// producer and holds only with a waiver.
+/// producer and holds only with a waiver; R03 waits for its write watch (review #24 B9).
 fn awaiting_decision(item: &str) -> bool {
     item == "download-path"
         || ROWS.iter().any(|(row, class, _)| {
-            format!("P16-{row}") == item && matches!(class, Class::Manual | Class::Comparison)
+            format!("P16-{row}") == item
+                && matches!(
+                    class,
+                    Class::Manual | Class::Comparison | Class::Translocation
+                )
         })
 }
 
@@ -175,7 +189,7 @@ fn an_r03_pass_without_the_candidate_zip_is_not_evidence() {
             &lines,
             "P16-R03",
             Verdict::NotTested,
-            "a PASS of P16-R03 on the candidate's bytes exists, but none opened the candidate ZIP dddd",
+            "no clean group of P16-R03 on the candidate's bytes holds a PASS that opened the candidate ZIP dddd",
         );
     }
 }
@@ -225,8 +239,15 @@ fn a_fail_spoils_its_identity_and_another_identity_can_still_hold() {
     records.push(record("W03", "FAIL", '1', &built, '8'));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-W03", Verdict::Fail, "a FAIL of P16-W03");
-    // A clean run under another driver on the same bytes holds, as in the ledger's own rule.
-    records.push(record("W03", "PASS", '2', &built, '7'));
+    // A clean run of R's driver in another VM image on the same bytes holds, as in the ledger's
+    // own rule.
+    records.push(record_on_image(
+        "W03",
+        "PASS",
+        "sha256:other-image",
+        &built,
+        '7',
+    ));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-W03", Verdict::Pass, "run-7");
 }
@@ -268,7 +289,13 @@ fn w12_needs_its_three_logout_cases_in_one_identity() {
         Verdict::NotTested,
         "no PASS of P16-W12-logout-dialog",
     );
-    records.push(record("W12-logout-dialog", "PASS", '2', &built, '6'));
+    records.push(record_on_image(
+        "W12-logout-dialog",
+        "PASS",
+        "sha256:other-image",
+        &built,
+        '6',
+    ));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(
         &lines,
@@ -291,12 +318,18 @@ fn r03_counts_only_this_batch_and_a_fail_on_these_bytes_blocks() {
         *batch = Some("rc0".into());
     }
     let lines = run(Read::Present(&candidate), &records, &receipt());
-    assert_line(&lines, "P16-R03", Verdict::Pass, "candidate ZIP dddd");
+    assert_line(
+        &lines,
+        "P16-R03",
+        Verdict::NotTested,
+        "is not counted while",
+    );
     // Without a batch nothing counts.
     let lines = judge(&Inputs {
         release: R,
         batch: None,
         macos_major: 27,
+        driver: &hex('1'),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&records),
         source_tests: Read::Present(&receipt()),
@@ -348,6 +381,7 @@ fn the_source_rows_follow_the_receipt_on_r() {
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
+        driver: &hex('1'),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Missing("no source-test receipt".into()),
@@ -369,6 +403,7 @@ fn an_unreadable_ledger_leaves_the_ledger_rows_open() {
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
+        driver: &hex('1'),
         candidate: Read::Present(&candidate),
         ledger: Read::Invalid("the ledger is unreadable: line 3".into()),
         source_tests: Read::Present(&receipt),
@@ -429,22 +464,35 @@ fn released() -> Vec<Record> {
 }
 
 #[test]
-fn with_the_user_records_every_row_holds() {
+fn with_the_user_records_every_row_but_r03_holds() {
     let candidate = candidate();
     let lines = run(Read::Present(&candidate), &released(), &receipt());
     for line in &lines {
         let expected = match line.item.as_str() {
             "P16-W15" | "P16-W16" | "P16-V05" => Verdict::Excluded,
             "P16-V03" => Verdict::Waived,
+            // A clean R03 on the candidate ZIP is not counted until its write watch lands.
+            "P16-R03" => Verdict::NotTested,
             _ => Verdict::Pass,
         };
         assert_eq!(line.verdict, expected, "{line:?}");
     }
     assert_line(&lines, "P16-W01", Verdict::Pass, "W01 看过了");
-    assert_line(&lines, "P16-R03", Verdict::Pass, "candidate ZIP dddd");
+    assert_line(
+        &lines,
+        "P16-R03",
+        Verdict::NotTested,
+        "is not counted while",
+    );
     assert_line(&lines, "P16-S06", Verdict::Pass, "explicit run");
-    assert!(ready(&lines));
-    // Without R03's run on the candidate ZIP the gate does not hold.
+    assert!(!ready(&lines), "R03 still waits for its write watch");
+    let held: Vec<Line> = lines
+        .iter()
+        .filter(|line| line.item != "P16-R03")
+        .cloned()
+        .collect();
+    assert!(ready(&held));
+    // Without R03's run on the candidate ZIP the gate does not hold either.
     let mut records = released();
     records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "R03"));
     let lines = run(Read::Present(&candidate), &records, &receipt());
@@ -686,6 +734,7 @@ fn without_r_s_target_list_the_source_rows_stay_open() {
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
+        driver: &hex('1'),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Present(&receipt),
@@ -715,7 +764,13 @@ fn over_every_row_a_recorded_fail_is_never_waived_and_never_hidden_from_a_manual
         for member in &rows {
             records.retain(|r| !matches!(r, Record::Automated { row: rr, .. } if rr == member));
             records.push(record(member, "FAIL", '1', &candidate.built, '8'));
-            records.push(record(member, "PASS", '2', &candidate.built, '7'));
+            records.push(record_on_image(
+                member,
+                "PASS",
+                "sha256:other-image",
+                &candidate.built,
+                '7',
+            ));
         }
         if super::rows::waivable(row) {
             records.push(release(ReleaseKind::Waiver, row, &digest, "rc1"));
@@ -833,6 +888,7 @@ fn the_download_path_needs_its_outcomes_and_the_checked_major_version() {
         release: R,
         batch: Some("rc1"),
         macos_major: 28,
+        driver: &hex('1'),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&records),
         source_tests: Read::Present(&receipt()),
@@ -860,4 +916,92 @@ fn another_executable_alone_does_not_count() {
     records.push(record_on("K02", &other));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-K02", Verdict::NotTested, "no PASS of P16-K02");
+}
+
+/// USER 2026-11-24 (`--driver`): a clean run of an older driver does not count for a
+/// `mac-gui` row; only R's driver's runs can hold a PASS.
+#[test]
+fn a_pass_of_another_driver_does_not_count() {
+    let candidate = candidate();
+    let mut records = ledger();
+    records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "W02"));
+    records.push(record("W02", "PASS", '2', &candidate.built, '7'));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "P16-W02",
+        Verdict::NotTested,
+        "only under another driver",
+    );
+}
+
+/// USER 2026-11-24 (`--driver`): a FAIL counts whatever the driver, and keeps a waiver off.
+#[test]
+fn a_fail_of_another_driver_still_counts() {
+    let candidate = candidate();
+    let digest = candidate.receipt_sha256.clone();
+    let mut records = ledger();
+    records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "W02"));
+    records.push(record("W02", "FAIL", '2', &candidate.built, '7'));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W02", Verdict::Fail, "a FAIL of P16-W02");
+    records.push(release(ReleaseKind::Waiver, "W02", &digest, "rc1"));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W02", Verdict::Fail, "a FAIL of P16-W02");
+}
+
+/// Review round 3, S1: R03's FAIL in this batch stays a FAIL beside another group's clean run, in
+/// either order of import.
+#[test]
+fn an_r03_fail_beside_a_clean_group_is_a_fail_in_either_order() {
+    let candidate = candidate();
+    let fail = record("R03", "FAIL", '1', &candidate.built, '8');
+    let pass = record_on_image("R03", "PASS", "sha256:other-image", &candidate.built, '7');
+    for (first, second) in [(fail.clone(), pass.clone()), (pass, fail)] {
+        let mut records: Vec<Record> = ledger()
+            .into_iter()
+            .filter(|r| !matches!(r, Record::Automated { row, .. } if row == "R03"))
+            .collect();
+        records.push(first);
+        records.push(second);
+        let lines = run(Read::Present(&candidate), &records, &receipt());
+        assert_line(&lines, "P16-R03", Verdict::Fail, "a FAIL of P16-R03");
+    }
+}
+
+/// Review round 3, S2: a failure the receipt records is a FAIL even when R's target list
+/// cannot be read.
+#[test]
+fn a_recorded_failure_beats_a_missing_target_list() {
+    let candidate = candidate();
+    let mut failing = receipt();
+    failing.exit_code = Some(101);
+    let lines = judge(&Inputs {
+        release: R,
+        batch: Some("rc1"),
+        macos_major: 27,
+        driver: &hex('1'),
+        candidate: Read::Present(&candidate),
+        ledger: Read::Present(&ledger()),
+        source_tests: Read::Present(&failing),
+        targets: Read::Invalid("cannot list R's test targets".into()),
+    });
+    assert_line(&lines, "source-tests", Verdict::Fail, "exited");
+}
+
+/// Review round 3, S7: one complete ProductVersion, or no major version at all.
+#[test]
+fn the_major_version_needs_one_complete_product_version() {
+    use super::receipts::major_version;
+    assert_eq!(
+        major_version("ProductName: macOS ProductVersion: 27.2.1"),
+        Some(27)
+    );
+    assert_eq!(major_version("ProductVersion: 27"), Some(27));
+    assert_eq!(major_version("ProductVersion: 27.bad"), None);
+    assert_eq!(
+        major_version("ProductVersion: 27.2 ProductVersion: 28.0"),
+        None
+    );
+    assert_eq!(major_version("ProductVersion:"), None);
 }

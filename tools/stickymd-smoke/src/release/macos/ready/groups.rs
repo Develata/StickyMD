@@ -30,6 +30,9 @@ pub(super) struct Scope<'a> {
     pub built: &'a Built,
     pub batch: Option<&'a str>,
     pub zip: Option<&'a str>,
+    /// The SHA-256 of R's `mac-gui` driver (`macos-ready --driver`): only a group run by it can
+    /// hold a PASS; a FAIL counts whatever the driver (USER 2026-11-24).
+    pub driver: &'a str,
 }
 
 /// One row's standing in one group.
@@ -158,8 +161,8 @@ pub(super) fn joint(scope: &Scope<'_>, rows: &[String]) -> Ledger {
     let mut evidence = String::new();
     let mut failed: Option<&String> = None;
     for key in keys {
-        let all_clean =
-            (0..rows.len()).all(|i| matches!(status(i, key), Some((_, Status::Clean(_)))));
+        let all_clean = key.0 == scope.driver
+            && (0..rows.len()).all(|i| matches!(status(i, key), Some((_, Status::Clean(_)))));
         if all_clean {
             if clean.is_empty()
                 && let Some((_, Status::Clean(found))) = status(0, key)
@@ -184,7 +187,7 @@ pub(super) fn joint(scope: &Scope<'_>, rows: &[String]) -> Ledger {
     let lacking = rows.iter().zip(&per_row).find(|(_, statuses)| {
         !statuses
             .iter()
-            .any(|(_, status)| matches!(status, Status::Clean(_)))
+            .any(|(key, status)| key.0 == scope.driver && matches!(status, Status::Clean(_)))
     });
     Ledger::None(match lacking {
         Some((row, _)) => why_none(scope, row),
@@ -204,12 +207,21 @@ fn why_none(scope: &Scope<'_>, row: &str) -> String {
         matches!(r, Record::Automated { row: rr, built: b, verdict, .. }
             if rr == row && verdict == "PASS" && b.executable == scope.built.executable && b.bundle != scope.built.bundle)
     });
-    let other_zip = statuses(scope, row)
+    let statuses = statuses(scope, row);
+    let other_zip = statuses
         .iter()
-        .any(|(_, status)| matches!(status, Status::OtherZip));
+        .any(|(key, status)| key.0 == scope.driver && matches!(status, Status::OtherZip));
+    let other_driver = statuses.iter().any(|(key, status)| {
+        key.0 != scope.driver && matches!(status, Status::Clean(_) | Status::OtherZip)
+    });
     if let (true, Some(zip)) = (other_zip, scope.zip) {
         format!(
-            "a PASS of P16-{row} on the candidate's bytes exists, but none opened the candidate ZIP {zip} (a ZIP zipped from the .app names none)"
+            "no clean group of P16-{row} on the candidate's bytes holds a PASS that opened the candidate ZIP {zip} (a ZIP zipped from the .app names none)"
+        )
+    } else if other_driver {
+        format!(
+            "a clean run of P16-{row} on the candidate's bytes exists only under another driver than R's ({})",
+            scope.driver
         )
     } else if !scoped(scope, row).is_empty() {
         format!(

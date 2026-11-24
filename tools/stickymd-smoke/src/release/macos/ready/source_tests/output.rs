@@ -12,7 +12,8 @@
 use super::{Case, CaseOutcome, Counts, PACKAGES, Run, Target};
 use crate::release::json::{self, Value};
 
-/// Who printed a section: a test binary (its file name) or a library's doc-tests (its crate).
+/// Who printed a section: a test binary (its path as Cargo printed it) or a library's doc-tests
+/// (its crate).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in super::super) enum Header {
     Binary(String),
@@ -65,6 +66,32 @@ pub(in super::super) fn cases(
     ignored: &[String],
     printed: &[(String, CaseOutcome)],
 ) -> (Vec<Case>, Vec<String>) {
+    // Every name once: a listing, an ignored listing or a run that names a test twice, or an
+    // ignored test the full listing lacks, is a problem, never folded into its first entry
+    // (review round 3, B3).
+    let mut problems = Vec::new();
+    let twice = |names: Vec<&String>, what: &str, problems: &mut Vec<String>| {
+        let mut sorted = names;
+        sorted.sort();
+        for pair in sorted.windows(2) {
+            if pair[0] == pair[1] {
+                problems.push(format!("{} is {what} twice", pair[0]));
+            }
+        }
+    };
+    twice(all.iter().collect(), "listed", &mut problems);
+    twice(ignored.iter().collect(), "listed ignored", &mut problems);
+    twice(
+        printed.iter().map(|(name, _)| name).collect(),
+        "printed",
+        &mut problems,
+    );
+    problems.extend(
+        ignored
+            .iter()
+            .filter(|name| !all.contains(name))
+            .map(|name| format!("{name} is listed ignored but not listed")),
+    );
     let cases = all
         .iter()
         .map(|name| Case {
@@ -76,12 +103,13 @@ pub(in super::super) fn cases(
                 .map_or(CaseOutcome::NotRun, |(_, outcome)| *outcome),
         })
         .collect();
-    let unlisted = printed
-        .iter()
-        .filter(|(name, _)| !all.contains(name))
-        .map(|(name, _)| name.clone())
-        .collect();
-    (cases, unlisted)
+    problems.extend(
+        printed
+            .iter()
+            .filter(|(name, _)| !all.contains(name))
+            .map(|(name, _)| format!("{name} ran but is not listed")),
+    );
+    (cases, problems)
 }
 
 fn header(line: &str) -> Option<Header> {
@@ -89,8 +117,7 @@ fn header(line: &str) -> Option<Header> {
     if let Some(rest) = line.strip_prefix("Running ") {
         // `cargo run` prints "Running `path`", without the parenthesized path: not a test.
         let path = rest.strip_suffix(')')?.rsplit_once(" (")?.1;
-        let file = path.rsplit(['/', '\\']).next()?;
-        return (!file.is_empty()).then(|| Header::Binary(file.to_owned()));
+        return (!path.is_empty()).then(|| Header::Binary(path.to_owned()));
     }
     let name = line.strip_prefix("Doc-tests ")?;
     (!name.is_empty() && !name.contains(char::is_whitespace)).then(|| Header::Doc(name.to_owned()))
@@ -119,7 +146,21 @@ fn result(line: &str, ran: u64) -> Result<Counts, String> {
     let [passed, failed, ignored, measured, filtered, finished] = parts.as_slice() else {
         return Err(format!("unreadable test result {line:?}"));
     };
-    if !finished.starts_with("finished in ") {
+    // The whole trailer, `finished in <seconds>s`: a line cut short is not a result.
+    let complete = finished
+        .strip_prefix("finished in ")
+        .and_then(|rest| rest.strip_suffix('s'))
+        .is_some_and(|seconds| {
+            seconds.split_once('.').is_some_and(|(whole, part)| {
+                !whole.is_empty()
+                    && !part.is_empty()
+                    && whole
+                        .bytes()
+                        .chain(part.bytes())
+                        .all(|b| b.is_ascii_digit())
+            })
+        });
+    if !complete {
         return Err(format!("unreadable test result {line:?}"));
     }
     let number = |part: &str, word: &str| -> Result<u64, String> {
@@ -189,8 +230,8 @@ pub(in super::super) fn sections(output: &str) -> Result<Vec<Section>, String> {
 /// A test executable Cargo built, by package, kinds, target name and file name.
 pub(in super::super) struct Executable {
     pub target: Target,
-    pub file: String,
-    /// Where Cargo built it, to ask it for its own test listing.
+    /// Where Cargo built it: the section's printed path must be its tail, and it is asked for its
+    /// own test listing.
     pub path: std::path::PathBuf,
 }
 
@@ -205,19 +246,12 @@ pub(in super::super) fn executables(stdout: &str) -> Result<Vec<Executable>, Str
                 artifact.package
             ));
         }
-        let file = artifact
-            .executable
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or("a test executable has no file name")?
-            .to_owned();
         found.push(Executable {
             target: Target {
                 package: artifact.package,
                 kind: artifact.kind.join(","),
                 name: artifact.name,
             },
-            file,
             path: artifact.executable,
         });
     }
@@ -304,9 +338,11 @@ pub(in super::super) fn target_of<'a>(
     doc: &'a [Target],
 ) -> Option<&'a Target> {
     let matches: Vec<&Target> = match &section.header {
-        Header::Binary(file) => executables
+        // The printed path, relative to the workspace, must be the tail of the executable Cargo
+        // built, component by component: a file of the same name elsewhere is not it.
+        Header::Binary(path) => executables
             .iter()
-            .filter(|e| &e.file == file)
+            .filter(|e| e.path.ends_with(std::path::Path::new(path)))
             .map(|e| &e.target)
             .collect(),
         Header::Doc(name) => doc.iter().filter(|t| &t.name == name).collect(),
@@ -355,7 +391,7 @@ pub(in super::super) fn attribute(
         problems.extend(
             unlisted
                 .into_iter()
-                .map(|name| format!("{name} ran but {} does not list it", target.name)),
+                .map(|problem| format!("{}: {problem}", target.name)),
         );
         runs.push(Run {
             target: target.clone(),

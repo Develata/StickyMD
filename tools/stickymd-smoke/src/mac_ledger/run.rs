@@ -28,7 +28,7 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
         root.join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
             .join("records.jsonl")
     });
-    refuse_links(&ledger)?;
+    refuse_links(root, &ledger)?;
     if command == Command::Plan {
         let existing = record::read_all(&read(&ledger)?)?;
         decide::check_system(&existing)?;
@@ -82,26 +82,27 @@ fn read(ledger: &Path) -> Result<String, String> {
 /// name the link and a publish would replace the link, not the ledger, and a reader could follow
 /// it to another file. Every entry point refuses them. Nor may the ledger occupy the release
 /// gate's own files.
-fn refuse_links(ledger: &Path) -> Result<(), String> {
+fn refuse_links(root: &Path, ledger: &Path) -> Result<(), String> {
     for path in [ledger.to_path_buf(), lock_path(ledger)] {
-        if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "{} is a symbolic link; name the ledger itself",
+                    path.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            // Anything but absence leaves the path unproven; nothing is read or written.
+            Err(e) => return Err(format!("cannot inspect {}: {e}", path.display())),
+        }
+        // The repository the command runs for, not one guessed from the path (review round 3, B6).
+        if crate::qualification::reserved_paths::is_macos_source_test_path(root, &path) {
             return Err(format!(
-                "{} is a symbolic link; name the ledger itself",
+                "{} would occupy the macOS source-test receipt or its lock",
                 path.display()
             ));
         }
-    }
-    if let Ok(root) = crate::governance::find_repository_root(ledger.parent().unwrap_or(ledger))
-        && [ledger.to_path_buf(), lock_path(ledger)]
-            .iter()
-            .any(|path| {
-                crate::qualification::reserved_paths::is_macos_source_test_path(&root, path)
-            })
-    {
-        return Err(format!(
-            "{} would occupy the macOS source-test receipt or its lock",
-            ledger.display()
-        ));
     }
     Ok(())
 }
@@ -110,8 +111,11 @@ fn refuse_links(ledger: &Path) -> Result<(), String> {
 /// hold of the writers' lock (opened read-only, never created), `None` when nothing was ever
 /// recorded. A writer at work makes this an error rather than a half-seen ledger. The returned
 /// lock keeps writers out until the caller drops it.
-pub(crate) fn read_whole(ledger: &Path) -> Result<(Option<String>, Option<fs::File>), String> {
-    refuse_links(ledger)?;
+pub(crate) fn read_whole(
+    root: &Path,
+    ledger: &Path,
+) -> Result<(Option<String>, Option<fs::File>), String> {
+    refuse_links(root, ledger)?;
     let lock = match fs::File::open(lock_path(ledger)) {
         Ok(file) => Some(file),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -121,10 +125,17 @@ pub(crate) fn read_whole(ledger: &Path) -> Result<(Option<String>, Option<fs::Fi
         file.try_lock_shared()
             .map_err(|e| format!("a mac-ledger writer holds the ledger: {e}"))?;
     }
-    match fs::read_to_string(ledger) {
-        Ok(text) => Ok((Some(text), lock)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, lock)),
-        Err(e) => Err(format!("{}: {e}", ledger.display())),
+    match (fs::read_to_string(ledger), lock) {
+        (Ok(text), Some(lock)) => Ok((Some(text), Some(lock))),
+        // Every append creates the lock first; a ledger without it was not written under it
+        // (copied, or a writer starting), so it is not read unlocked (review round 3, B5).
+        (Ok(_), None) => Err(format!(
+            "{} has no lock beside it; create the empty file {} (or record through mac-ledger) and check again",
+            ledger.display(),
+            lock_path(ledger).display()
+        )),
+        (Err(e), lock) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, lock)),
+        (Err(e), _) => Err(format!("{}: {e}", ledger.display())),
     }
 }
 
@@ -291,5 +302,46 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+    }
+}
+
+#[cfg(test)]
+mod reading_tests {
+    use super::{lock_path, read_whole, refuse_links};
+
+    /// Review round 3, B5: a ledger without its lock is not read; with the lock it is; absent
+    /// both, nothing was recorded.
+    #[test]
+    fn a_ledger_is_read_only_with_its_lock() {
+        let scratch = stickymd_package::temporary::TemporaryDirectory::new("ledger-lock").unwrap();
+        let root = scratch.path();
+        let ledger = root.join("records.jsonl");
+        assert!(matches!(read_whole(root, &ledger), Ok((None, None))));
+        std::fs::write(&ledger, "").unwrap();
+        let error = read_whole(root, &ledger).unwrap_err();
+        assert!(error.contains("has no lock"), "{error}");
+        std::fs::write(lock_path(&ledger), "").unwrap();
+        assert!(matches!(read_whole(root, &ledger), Ok((Some(_), Some(_)))));
+    }
+
+    /// Review round 3, B6: the destination is checked against the command's own root, and any
+    /// error but absence stops it.
+    #[test]
+    fn a_ledger_cannot_take_the_source_test_lock_or_an_unreadable_path() {
+        let scratch =
+            stickymd_package::temporary::TemporaryDirectory::new("ledger-reserved").unwrap();
+        let root = scratch.path();
+        let reserved = root.join(crate::qualification::reserved_paths::MACOS_SOURCE_TEST_LOCK);
+        std::fs::create_dir_all(reserved.parent().unwrap()).unwrap();
+        let error = refuse_links(root, &reserved).unwrap_err();
+        assert!(error.contains("source-test receipt or its lock"), "{error}");
+        // A path through a regular file is ENOTDIR on Unix, an error other than absence.
+        #[cfg(unix)]
+        {
+            std::fs::write(root.join("a-file"), "").unwrap();
+            let error = refuse_links(root, &root.join("a-file/records.jsonl")).unwrap_err();
+            assert!(error.contains("cannot inspect"), "{error}");
+        }
+        assert!(refuse_links(root, &root.join("records.jsonl")).is_ok());
     }
 }

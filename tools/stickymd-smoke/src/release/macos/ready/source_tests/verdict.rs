@@ -120,7 +120,8 @@ fn cases_agree(counts: &Counts, cases: &[Case]) -> Result<(), String> {
         || counts.passed != count(CaseOutcome::Ok)
         || counts.failed != count(CaseOutcome::Failed)
         || counts.ignored != count(CaseOutcome::Ignored)
-        || counts.measured != 0
+        // With the four above, this holds exactly when nothing was measured; it also refuses a
+        // sum that overflows. A separate `measured == 0` would be implied (review round 3).
         || !counts.adds_up()
     {
         return Err(format!(
@@ -205,7 +206,10 @@ fn main(receipt: &Receipt, targets: &[Target]) -> Outcome {
 /// An explicit run: the stickymd-mac binary ran exactly its tests, each named as the main run's
 /// listing of that binary names it, and each ok; P18-L08 also needs the probed temporary volume.
 fn explicit_run(entry: &Explicit, listed: Option<&Run>, needs_volume: bool) -> Outcome {
-    if entry.exit_code != Some(0) || entry.cases.iter().any(|c| c.outcome == CaseOutcome::Failed) {
+    if entry.exit_code != Some(0)
+        || entry.cases.iter().any(|c| c.outcome == CaseOutcome::Failed)
+        || entry.counts.is_some_and(|counts| counts.failed > 0)
+    {
         return Outcome::Fail(format!(
             "the explicit run for {} exited with {:?} or recorded a failure",
             entry.item, entry.exit_code
@@ -229,13 +233,10 @@ fn explicit_run(entry: &Explicit, listed: Option<&Run>, needs_volume: bool) -> O
     wanted.sort_unstable();
     let all_ok = entry.cases.iter().all(|c| c.outcome == CaseOutcome::Ok);
     let both = wanted.len() as u64;
-    if ran != wanted
-        || !all_ok
-        || counts.ran != both
-        || counts.passed != both
-        || counts.ignored != 0
-        || counts.measured != 0
-        || !counts.adds_up()
+    // A failure returned above, so `ran == passed == both` and `adds_up` leave no ignored or
+    // measured test: separate checks of those two would be implied (review round 3), and each
+    // condition here has its own single-fact sample.
+    if ran != wanted || !all_ok || counts.ran != both || counts.passed != both || !counts.adds_up()
     {
         return Outcome::NotTested(format!(
             "the explicit run for {} ran {ran:?} ({counts:?}), not exactly {wanted:?} all ok",
@@ -251,10 +252,15 @@ fn explicit_run(entry: &Explicit, listed: Option<&Run>, needs_volume: bool) -> O
     {
         return Outcome::NotTested(format!("{test} is not a test stickymd-mac's binary lists"));
     }
-    if needs_volume && entry.temporary_volume.as_deref() != Some("case-insensitive") {
+    // P18-L08's two volumes, as the tests measured them where their assertions ran (review
+    // round 3, B4): the temporary one must ignore case, the mounted image must not.
+    if needs_volume
+        && (entry.temporary_volume.as_deref() != Some("case-insensitive")
+            || entry.image_volume.as_deref() != Some("case-sensitive"))
+    {
         return Outcome::NotTested(format!(
-            "the temporary volume was not shown case-insensitive ({:?})",
-            entry.temporary_volume
+            "the tests did not measure a case-insensitive temporary volume and a case-sensitive image (temporary {:?}, image {:?})",
+            entry.temporary_volume, entry.image_volume
         ));
     }
     Outcome::Pass

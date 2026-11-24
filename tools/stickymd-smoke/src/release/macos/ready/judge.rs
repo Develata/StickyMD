@@ -34,6 +34,8 @@ pub(super) struct Inputs<'a> {
     pub batch: Option<&'a str>,
     /// The macOS major version this release's download paths must have run on (decision (b)).
     pub macos_major: u32,
+    /// The SHA-256 of R's `mac-gui` driver, lowercase (USER 2026-11-24, `--driver`).
+    pub driver: &'a str,
     pub candidate: Read<&'a Candidate>,
     pub ledger: Read<&'a [Record]>,
     pub source_tests: Read<&'a source_tests::Receipt>,
@@ -133,8 +135,31 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
                 ),
             )
         }
-        (Read::Missing(reason) | Read::Invalid(reason), _)
-        | (_, Read::Missing(reason) | Read::Invalid(reason)) => (
+        // Without R's target list the receipt cannot be shown complete, but a failure it records
+        // is still a failure (review round 3, S2); the explicit runs do not need the list.
+        (Read::Present(receipt), Read::Missing(reason) | Read::Invalid(reason)) => {
+            let verdicts = source_tests::judge(receipt, inputs.release, &[]);
+            let tests = match verdicts.tests {
+                source_tests::Outcome::Fail(failure) => {
+                    line("source-tests", Verdict::Fail, failure)
+                }
+                _ => line("source-tests", Verdict::NotTested, reason.clone()),
+            };
+            (
+                tests,
+                from_outcome(
+                    "same-key",
+                    verdicts.same_key,
+                    "both same-key tests passed on R: the case-insensitive temporary volume and the case-sensitive image",
+                ),
+                from_outcome(
+                    "P16-S06",
+                    verdicts.s06,
+                    "the exFAT test passed on R in its explicit run",
+                ),
+            )
+        }
+        (Read::Missing(reason) | Read::Invalid(reason), _) => (
             line("source-tests", Verdict::NotTested, reason.clone()),
             line("same-key", Verdict::NotTested, reason.clone()),
             line("P16-S06", Verdict::NotTested, reason.clone()),
@@ -373,6 +398,7 @@ fn scope<'a>(inputs: &'a Inputs<'_>, records: &'a [Record], candidate: &'a Candi
         built: &candidate.built,
         batch: inputs.batch,
         zip: None,
+        driver: inputs.driver,
     }
 }
 
@@ -395,10 +421,16 @@ fn gui(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     }
 }
 
-/// R03 is judged on the release ZIP itself (plan 11 #macos-release-gate): a PASS counts only
-/// when it opened the candidate's ZIP (`mac-gui --zip`); one from a ZIP zipped from the `.app`,
-/// even around the same bundle, does not. It cannot be waived. A FAIL on these bytes with no
-/// clean group is an observed violation and counts, whichever ZIP it came through.
+/// Why a clean R03 group does not hold while #24 is fail closed (review #24 B9; USER 2026-11-24
+/// chose a kqueue write watch, which lands after #24).
+const R03_UNPROVEN: &str = "R03 is not counted while \"nothing written\" is unproven (review #24 B9: the write watch the USER chose lands after #24)";
+
+/// R03 is judged on the release ZIP itself (plan 11 #macos-release-gate): a clean group counts
+/// only when a PASS in it opened the candidate's ZIP (`mac-gui --zip`) under R's driver; one from
+/// a ZIP zipped from the `.app`, even around the same bundle, does not. It cannot be waived. A
+/// FAIL on these bytes in this batch, through any ZIP, is an observed violation and counts
+/// first. Until "nothing written" can be proven, even a clean group is NOT_TESTED, so an R03 PASS
+/// already in a ledger (an older driver's) does not pass the gate (review round 3, BLOCKER 1).
 fn translocation(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     let (records, candidate) = match evidence(inputs, item) {
         Ok(found) => found,
@@ -408,12 +440,17 @@ fn translocation(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
         zip: Some(&candidate.zip_sha256),
         ..scope(inputs, records, candidate)
     };
+    // A FAIL recorded on the candidate's bytes in this batch, under any identity or ZIP, stays a
+    // FAIL, whatever another group shows (review round 3, S1).
+    if let Some(reason) = failure(&scope, row) {
+        return line(item, Verdict::Fail, reason);
+    }
     match joint(&scope, &[row.to_owned()]) {
         Ledger::Clean(evidence) => line(
             item,
-            Verdict::Pass,
+            Verdict::NotTested,
             format!(
-                "ledger PASS on the candidate ZIP {} ({evidence})",
+                "a ledger PASS on the candidate ZIP {} exists ({evidence}), but {R03_UNPROVEN}",
                 candidate.zip_sha256
             ),
         ),
