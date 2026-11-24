@@ -23,6 +23,24 @@ pub(super) struct LaidOutImage {
     pub raster: Option<Arc<DecodedImageRaster>>,
 }
 
+/// What final admission found.
+pub(super) enum Admission {
+    /// Dimensions as probed; the raster is held if the image is in the band.
+    Settled,
+    /// The bytes decode to other dimensions than probed. The raster stays in the cache; only
+    /// its size is kept, so an image that ends off the band holds nothing.
+    Resized { width: u32, height: u32 },
+    /// The bytes cannot be read or decoded: the image falls back to text.
+    Failed,
+}
+
+fn is_local(image: &RenderImage) -> bool {
+    matches!(
+        image.kind,
+        ImageKind::LocalRelative | ImageKind::LocalAbsolute
+    )
+}
+
 impl LaidOutImage {
     pub fn build(
         image: &RenderImage,
@@ -33,24 +51,13 @@ impl LaidOutImage {
         cache: &mut DecodedImageCache,
         band: (f32, f32),
     ) -> Option<Box<Self>> {
-        if !matches!(
-            image.kind,
-            ImageKind::LocalRelative | ImageKind::LocalAbsolute
-        ) {
+        if !is_local(image) {
             return None;
         }
         let source = source?;
         let metadata = source.inspect(&image.destination)?;
         let (width, height) = image_target(&metadata, max_width, max_height);
-        let mut slot = Self {
-            destination: image.destination.clone().into_boxed_str(),
-            max_width,
-            max_height,
-            admission_y,
-            width,
-            height,
-            raster: None,
-        };
+        let mut slot = Self::new(image, max_width, max_height, admission_y, width, height);
         if slot.in_band(band) {
             // The file can change between metadata inspection and byte read.
             // Initial layout must use the dimensions of the actual decoded bytes.
@@ -60,6 +67,89 @@ impl LaidOutImage {
             slot.raster = Some(raster);
         }
         Some(Box::new(slot))
+    }
+
+    /// A slot for an inline image whose line is not placed yet: the size probe only, no byte
+    /// read. The final position then decides the first load (`admit`), since an inline image can
+    /// lie far below the paragraph top.
+    pub fn probe(
+        image: &RenderImage,
+        max_width: u32,
+        max_height: u32,
+        source: Option<&mut ImageRequests<'_>>,
+    ) -> Option<Box<Self>> {
+        if !is_local(image) {
+            return None;
+        }
+        let metadata = source?.inspect(&image.destination)?;
+        let (width, height) = image_target(&metadata, max_width, max_height);
+        Some(Box::new(Self::new(
+            image, max_width, max_height, 0.0, width, height,
+        )))
+    }
+
+    /// A slot of the actual decoded size, found by a previous placement: no raster is held; the
+    /// final position decides whether to load it again (a cache hit while it stays resident).
+    pub fn sized(
+        image: &RenderImage,
+        max_width: u32,
+        max_height: u32,
+        width: u32,
+        height: u32,
+    ) -> Option<Box<Self>> {
+        is_local(image)
+            .then(|| Box::new(Self::new(image, max_width, max_height, 0.0, width, height)))
+    }
+
+    fn new(
+        image: &RenderImage,
+        max_width: u32,
+        max_height: u32,
+        admission_y: f32,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            destination: image.destination.clone().into_boxed_str(),
+            max_width,
+            max_height,
+            admission_y,
+            width,
+            height,
+            raster: None,
+        }
+    }
+
+    /// Admits the image at its final top `y`: reads and decodes only inside the band, and drops
+    /// the raster outside it. Refresh then agrees with this layout.
+    pub fn admit(
+        &mut self,
+        y: f32,
+        band: (f32, f32),
+        source: &mut ImageRequests<'_>,
+        cache: &mut DecodedImageCache,
+    ) -> Admission {
+        self.admission_y = y;
+        if !self.in_band(band) {
+            self.raster = None;
+            return Admission::Settled;
+        }
+        if self.raster.is_some() {
+            return Admission::Settled;
+        }
+        match self.load(source, cache) {
+            Some(raster) if (raster.width, raster.height) == (self.width, self.height) => {
+                self.raster = Some(raster);
+                Admission::Settled
+            }
+            // The file changed between the probe and the read: the layout must use the actual
+            // dimensions, as a first load in the band does.
+            Some(raster) => Admission::Resized {
+                width: raster.width,
+                height: raster.height,
+            },
+            None => Admission::Failed,
+        }
     }
 
     fn in_band(&self, band: (f32, f32)) -> bool {

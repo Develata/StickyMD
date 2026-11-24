@@ -94,7 +94,36 @@ pub(crate) struct SelectionText {
     phase: Phase,
 }
 
+/// The state of a `SelectionText` that a layout pass can return to (`rollback`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SelectionCheckpoint {
+    text: usize,
+    pieces: usize,
+    last_piece: Option<Piece>,
+    formulas: usize,
+}
+
 impl SelectionText {
+    /// O(1) mark of the current end, for a pass that may be laid out again.
+    pub(crate) fn checkpoint(&self) -> SelectionCheckpoint {
+        SelectionCheckpoint {
+            text: self.text.len(),
+            pieces: self.pieces.len(),
+            last_piece: self.pieces.last().copied(),
+            formulas: self.formulas.len(),
+        }
+    }
+
+    /// Drops everything appended since `mark`, including a merge into the piece before it.
+    pub(crate) fn rollback(&mut self, mark: SelectionCheckpoint) {
+        self.text.truncate(mark.text);
+        self.pieces.truncate(mark.pieces);
+        if let (Some(last), Some(saved)) = (self.pieces.last_mut(), mark.last_piece) {
+            *last = saved;
+        }
+        self.formulas.truncate(mark.formulas);
+    }
+
     #[cfg(test)]
     pub(crate) fn as_str(&self) -> &str {
         &self.text

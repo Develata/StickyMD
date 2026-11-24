@@ -553,6 +553,10 @@ mod image_refresh_tests;
 mod text_reuse_tests;
 
 #[cfg(test)]
+#[path = "pipeline/display_math_flow_tests.rs"]
+mod display_math_flow_tests;
+
+#[cfg(test)]
 mod tests {
     use std::cell::Cell;
     use std::sync::Arc;

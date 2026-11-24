@@ -108,6 +108,15 @@ pub(super) fn paint_document(
     let mut visible_boxes = Vec::new();
     for (index, block) in document.blocks[start..end].iter().enumerate() {
         let target = target_of(index, block);
+        // Clip, then clamp: both kinds of atomic box (formula and image objects, and the text
+        // of a failed formula or image placeholder) decide drag endpoints by what is visible.
+        let finish_box = |item| {
+            if target.is_some() {
+                item
+            } else {
+                visible_bounds(item)
+            }
+        };
         let offset = target.map_or(0.0, |target| target.offset());
         let Some(clip) = target.map_or(Some(viewport), |target| {
             intersect(target.content_rect(), viewport)
@@ -119,7 +128,8 @@ pub(super) fn paint_document(
                 .boxes
                 .iter()
                 .cloned()
-                .filter_map(|item| clip_box(item, offset, clip)),
+                .filter_map(|item| clip_box(item, offset, clip))
+                .map(finish_box),
         );
         for chunk in &block.chunks {
             let (offset, clip) = if chunk.scroll_with_block {
@@ -136,7 +146,8 @@ pub(super) fn paint_document(
                         clip,
                     )
                     .into_iter()
-                    .filter_map(|item| clip_box(item, 0.0, clip)),
+                    .filter_map(|item| clip_box(item, 0.0, clip))
+                    .map(finish_box),
                 );
             }
         }
@@ -357,6 +368,18 @@ pub(super) fn paint_document(
         horizontal,
         rails,
     })
+}
+
+/// An atomic object in a block that cannot scroll horizontally, clipped to the frame, decides a
+/// drag endpoint by the part a reader can see: a pointer held inside the pane can reach the
+/// object's visible right edge but never its off-pane right end.
+fn visible_bounds(mut item: super::PreviewTextBox) -> super::PreviewTextBox {
+    if item.atomic {
+        let (left, right) = (item.rect.x, item.rect.right());
+        item.start_x = item.start_x.clamp(left, right);
+        item.end_x = item.end_x.clamp(left, right);
+    }
+    item
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@
 //!
 //! plan_ref: docs/plan/06_markdown_math_rendering.md#ratex-native-math
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use cosmic_text::{Align, FontSystem, Metrics};
@@ -12,13 +13,17 @@ use crate::source::FontSelection;
 
 use super::copy::SelectionText;
 use super::image_requests::ImageRequests;
-use super::image_resources::LaidOutImage;
+use super::image_resources::{Admission, LaidOutImage};
 use super::inline_text_layout::{append_text_pieces, text_piece};
 use super::layout::{
     ChunkBuild, DecorationRole, InlinePiece, LayoutChunk, LayoutContent, LayoutDecoration,
 };
 use super::text_layout::TextLayoutCache;
 use super::{PreviewRect, PreviewTextBox, RenderSpan};
+
+mod line_flow;
+
+use line_flow::LineFlow;
 
 const ATTRIBUTED_TEXT_COALESCE_AFTER_SOURCE_BYTES: usize = 64 * 1024;
 
@@ -33,8 +38,75 @@ pub(super) struct LaidOutMath {
     pub selection: std::ops::Range<usize>,
 }
 
+/// What final admission decided about an image span, fixed for the next layout pass.
+enum ImageFate {
+    /// The bytes decode to these dimensions: lay the image out at them.
+    Sized { width: u32, height: u32 },
+    /// The bytes cannot be read or decoded: the span falls back to text.
+    Failed,
+}
+
+/// Lays the spans out. An inline image is probed for its size while the pieces are built and
+/// admitted (read, decoded) only at its final position, after its line is placed. When that
+/// shows other dimensions or a failure, the chunk is laid out again with the image's fate fixed,
+/// from the same starting selection state. The first image whose admission changes the geometry
+/// ends the pass, since every position after it is stale: later images are decided only on the
+/// re-placed lines. Each pass fixes one more image, so the loop ends.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_mixed_chunk(
+    font_system: &mut FontSystem,
+    fonts: &FontSelection,
+    math_engine: &mut MathEngine,
+    spans: &[RenderSpan],
+    x: f32,
+    y: f32,
+    width: f32,
+    metrics: Metrics,
+    align: Align,
+    selection_text: &mut SelectionText,
+    formula_count: &mut usize,
+    theme: super::PreviewTheme,
+    mut image_source: Option<&mut ImageRequests<'_>>,
+    image_cache: &mut DecodedImageCache,
+    image_band: (f32, f32),
+    text_layout_cache: &mut TextLayoutCache,
+    embedded_math: bool,
+) -> ChunkBuild {
+    let mark = selection_text.checkpoint();
+    let formulas_before = *formula_count;
+    let mut fates: HashMap<usize, ImageFate> = HashMap::new();
+    loop {
+        let (built, pending) = layout_mixed(
+            font_system,
+            fonts,
+            math_engine,
+            spans,
+            x,
+            y,
+            width,
+            metrics,
+            align,
+            selection_text,
+            formula_count,
+            theme,
+            image_source.as_deref_mut(),
+            image_cache,
+            image_band,
+            text_layout_cache,
+            embedded_math,
+            &fates,
+        );
+        if pending.is_empty() {
+            return built;
+        }
+        selection_text.rollback(mark);
+        *formula_count = formulas_before;
+        fates.extend(pending);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_mixed(
     font_system: &mut FontSystem,
     fonts: &FontSelection,
     math_engine: &mut MathEngine,
@@ -51,9 +123,13 @@ pub(super) fn make_mixed_chunk(
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
     text_layout_cache: &mut TextLayoutCache,
-) -> ChunkBuild {
+    embedded_math: bool,
+    fates: &HashMap<usize, ImageFate>,
+) -> (ChunkBuild, Vec<(usize, ImageFate)>) {
+    let mut image_spans = Vec::new();
     let mut pieces = Vec::new();
     let mut line_breaks = Vec::new();
+    let mut own_line_pieces = Vec::new();
     let mut pending_text_start = 0;
     // Coalescing pays for itself in mixed projection runs because it avoids a
     // buffer per short fragment around atomic math/image content. Attributed
@@ -90,10 +166,28 @@ pub(super) fn make_mixed_chunk(
             continue;
         }
         if let Some(math) = &span.math {
+            *formula_count = formula_count.saturating_add(1);
+            let error =
+                (*formula_count > MAX_DOCUMENT_FORMULAS).then_some(MathError::TooManyFormulas);
+            let rendered = error.map_or_else(
+                || math_engine.measure(Arc::clone(&math.source), math.kind, metrics.font_size),
+                Err,
+            );
+            // A display formula in a paragraph owns its line; a formula that failed to measure
+            // stays an inline error text (plan 06 #display-math-in-paragraph).
+            let own_line = math.kind == MathKind::Display && rendered.is_ok();
+            // The soft break next to such a line is a whitespace-only span: it still enters the
+            // copy text, but no piece is laid out for it, like a hard break.
+            let text_end =
+                if own_line && index > pending_text_start && is_soft_break(&spans[index - 1]) {
+                    index - 1
+                } else {
+                    index
+                };
             append_text_pieces(
                 font_system,
                 fonts,
-                &spans[pending_text_start..index],
+                &spans[pending_text_start..text_end],
                 metrics,
                 selection_text,
                 &mut pieces,
@@ -102,13 +196,12 @@ pub(super) fn make_mixed_chunk(
                 max_text_piece_chars,
                 text_layout_cache,
             );
-            *formula_count = formula_count.saturating_add(1);
-            let error =
-                (*formula_count > MAX_DOCUMENT_FORMULAS).then_some(MathError::TooManyFormulas);
-            let rendered = error.map_or_else(
-                || math_engine.measure(Arc::clone(&math.source), math.kind, metrics.font_size),
-                Err,
-            );
+            if text_end < index {
+                selection_text.push_span(&spans[text_end]);
+            }
+            if own_line {
+                own_line_pieces.push(pieces.len());
+            }
             pieces.push(match rendered {
                 Ok(measured) => formula_piece(
                     span,
@@ -132,6 +225,10 @@ pub(super) fn make_mixed_chunk(
                 ),
             });
             pending_text_start = index + 1;
+            if own_line && spans.get(index + 1).is_some_and(is_soft_break) {
+                selection_text.push_span(&spans[index + 1]);
+                pending_text_start = index + 2;
+            }
             continue;
         }
         if span.image.is_some() {
@@ -147,16 +244,16 @@ pub(super) fn make_mixed_chunk(
                 max_text_piece_chars,
                 text_layout_cache,
             );
+            let fate = fates.get(&index);
             if let Some(piece) = image_piece(
                 span,
                 width,
-                y,
                 metrics,
                 selection_text,
                 image_source.as_deref_mut(),
-                image_cache,
-                image_band,
+                fate,
             ) {
+                image_spans.push(index);
                 pieces.push(piece);
                 pending_text_start = index + 1;
             } else {
@@ -177,129 +274,76 @@ pub(super) fn make_mixed_chunk(
         text_layout_cache,
     );
 
-    let mut output = ChunkBuild {
-        chunks: Vec::new(),
-        height: 0.0,
-        boxes: Vec::new(),
-        decorations: Vec::new(),
-    };
-    let mut line = Vec::new();
-    let mut line_width = 0.0;
-    let mut line_y = y;
-    let mut next_break = 0;
+    let mut flow = LineFlow::new(x, y, width, metrics, align, embedded_math);
+    let (mut next_break, mut next_own_line) = (0, 0);
     for (piece_index, piece) in pieces.into_iter().enumerate() {
         while line_breaks.get(next_break).copied() == Some(piece_index) {
-            line_y += flush_or_advance_line(
-                &mut line,
-                &mut line_width,
-                x,
-                line_y,
-                width,
-                metrics,
-                align,
-                &mut output,
-            );
+            flow.hard_break();
             next_break += 1;
         }
-        if !line.is_empty() && line_width + piece.width > width {
-            line_y += flush_line(
-                &mut line,
-                line_width,
-                x,
-                line_y,
-                width,
-                metrics,
-                align,
-                &mut output,
-            );
-            line_width = 0.0;
+        if own_line_pieces.get(next_own_line).copied() == Some(piece_index) {
+            next_own_line += 1;
+            flow.place_own_line(piece);
+        } else {
+            flow.place_inline(piece);
         }
-        line_width += piece.width;
-        line.push(piece);
     }
-    while next_break < line_breaks.len() {
-        line_y += flush_or_advance_line(
-            &mut line,
-            &mut line_width,
-            x,
-            line_y,
-            width,
-            metrics,
-            align,
-            &mut output,
-        );
-        next_break += 1;
+    for _ in next_break..line_breaks.len() {
+        flow.hard_break();
     }
-    if !line.is_empty() {
-        line_y += flush_line(
-            &mut line,
-            line_width,
-            x,
-            line_y,
-            width,
-            metrics,
-            align,
-            &mut output,
-        );
+    let mut built = flow.finish();
+    let mut pending = Vec::new();
+    if let Some(requests) = image_source {
+        let mut spans_of_images = image_spans.iter();
+        for chunk in &mut built.chunks {
+            let LayoutContent::Image(image) = &mut chunk.content else {
+                continue;
+            };
+            let Some(&span_index) = spans_of_images.next() else {
+                break;
+            };
+            // The first change invalidates every position after it: stop admitting at these
+            // coordinates, lay the lines out again, and decide the later images there.
+            match image.admit(chunk.y, image_band, requests, image_cache) {
+                Admission::Settled => {}
+                Admission::Resized { width, height } => {
+                    pending.push((span_index, ImageFate::Sized { width, height }));
+                    break;
+                }
+                Admission::Failed => {
+                    pending.push((span_index, ImageFate::Failed));
+                    break;
+                }
+            }
+        }
     }
-    output.height = (line_y - y).max(metrics.line_height);
-    output
+    (built, pending)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn flush_or_advance_line(
-    line: &mut Vec<InlinePiece>,
-    line_width: &mut f32,
-    x: f32,
-    y: f32,
-    available_width: f32,
-    metrics: Metrics,
-    align: Align,
-    output: &mut ChunkBuild,
-) -> f32 {
-    if line.is_empty() {
-        metrics.line_height
-    } else {
-        let height = flush_line(
-            line,
-            *line_width,
-            x,
-            y,
-            available_width,
-            metrics,
-            align,
-            output,
-        );
-        *line_width = 0.0;
-        height
-    }
+fn is_soft_break(span: &RenderSpan) -> bool {
+    span.soft_break
 }
 
-#[allow(clippy::too_many_arguments)]
 fn image_piece(
     span: &RenderSpan,
     available_width: f32,
-    block_y: f32,
     metrics: Metrics,
     selection_text: &mut SelectionText,
     image_source: Option<&mut ImageRequests<'_>>,
-    image_cache: &mut DecodedImageCache,
-    image_band: (f32, f32),
+    fate: Option<&ImageFate>,
 ) -> Option<InlinePiece> {
     let image = span.image.as_ref()?;
     let max_width = available_width.floor().max(1.0) as u32;
     // An inline image participates in line layout. Cap it to four body lines;
     // standalone image paragraphs retain the larger viewport-oriented cap.
     let max_height = (metrics.line_height * 4.0).floor().max(1.0) as u32;
-    let slot = LaidOutImage::build(
-        image,
-        max_width,
-        max_height,
-        block_y,
-        image_source,
-        image_cache,
-        image_band,
-    )?;
+    let slot = match fate {
+        Some(ImageFate::Failed) => return None,
+        Some(&ImageFate::Sized { width, height }) => {
+            LaidOutImage::sized(image, max_width, max_height, width, height)?
+        }
+        None => LaidOutImage::probe(image, max_width, max_height, image_source)?,
+    };
     let (target_width, target_height) = (slot.width, slot.height);
     let content = LayoutContent::Image(slot);
     let selection = selection_text.push_span(span);
@@ -409,54 +453,6 @@ fn error_piece(
     piece
 }
 
-#[allow(clippy::too_many_arguments)]
-fn flush_line(
-    line: &mut Vec<InlinePiece>,
-    line_width: f32,
-    x: f32,
-    y: f32,
-    available_width: f32,
-    metrics: Metrics,
-    align: Align,
-    output: &mut ChunkBuild,
-) -> f32 {
-    let baseline = line
-        .iter()
-        .map(|piece| piece.baseline)
-        .fold(metrics.font_size, f32::max);
-    let descent = line
-        .iter()
-        .map(|piece| (piece.height - piece.baseline).max(0.0))
-        .fold((metrics.line_height - metrics.font_size).max(0.0), f32::max);
-    let line_height = (baseline + descent).max(metrics.line_height);
-    let align_offset = match align {
-        Align::Center => ((available_width - line_width) * 0.5).max(0.0),
-        Align::Right | Align::End => (available_width - line_width).max(0.0),
-        _ => 0.0,
-    };
-    let mut cursor_x = x + align_offset;
-    for mut piece in line.drain(..) {
-        let offset_y = y + baseline - piece.baseline;
-        piece.chunk.x = cursor_x;
-        piece.chunk.y = offset_y;
-        for text_box in &mut piece.boxes {
-            text_box.rect.x += cursor_x;
-            text_box.rect.y += offset_y;
-            text_box.start_x += cursor_x;
-            text_box.end_x += cursor_x;
-        }
-        for decoration in &mut piece.decorations {
-            decoration.rect.x += cursor_x;
-            decoration.rect.y += offset_y;
-        }
-        cursor_x += piece.width;
-        output.chunks.push(piece.chunk);
-        output.boxes.extend(piece.boxes);
-        output.decorations.extend(piece.decorations);
-    }
-    line_height
-}
-
 #[cfg(test)]
 mod tests {
     use crate::preview::copy::SelectionText;
@@ -482,6 +478,7 @@ mod tests {
             math: None,
             image: None,
             hard_break: false,
+            soft_break: false,
         }
     }
 
@@ -522,6 +519,7 @@ mod tests {
             &mut crate::image::DecodedImageCache::default(),
             (0.0, f32::MAX),
             &mut TextLayoutCache::default(),
+            false,
         );
 
         assert_eq!(built.chunks.len(), 3);
@@ -568,6 +566,7 @@ mod tests {
             &mut crate::image::DecodedImageCache::default(),
             (0.0, f32::MAX),
             &mut TextLayoutCache::default(),
+            false,
         );
 
         assert_eq!(built.chunks.len(), 2);

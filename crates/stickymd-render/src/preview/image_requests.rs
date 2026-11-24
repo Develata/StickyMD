@@ -77,7 +77,9 @@ impl<'a> ImageRequests<'a> {
         let raster = cache.get(&key).or_else(|| {
             cache.insert(
                 key.clone(),
-                decode_scaled_image_owned(bytes, width, height).ok()?,
+                // The original bounds, not the target just computed from them: fitting
+                // twice rounds a stable image to another size.
+                decode_scaled_image_owned(bytes, max_width, max_height).ok()?,
             )
         });
         let mut failed_targets = previous
