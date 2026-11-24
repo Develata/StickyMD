@@ -1407,6 +1407,13 @@ fn translocation_checks_refuse_bad_samples() {
             watch: watched(vec![(".".into(), NOTE_REVOKE), (plist.into(), NOTE_WRITE)]),
             ..good()
         },
+        // Written through the watch while stuck, snapshots equal: the driver ended it.
+        Observed {
+            exited: Some(false),
+            termination: None,
+            watch: watched(vec![(plist.into(), NOTE_WRITE)]),
+            ..good()
+        },
         // Written beside the package and then stuck: the driver ended it (review round 3).
         Observed {
             exited: Some(false),
@@ -1519,6 +1526,15 @@ fn translocation_checks_refuse_bad_samples() {
                 ..good()
             },
             STATUS,
+        ),
+        // No write seen, but the product did not end by itself.
+        (
+            Observed {
+                exited: Some(false),
+                termination: None,
+                ..good()
+            },
+            super::translocation::UNWRITTEN,
         ),
         // No watch read; a watch that did not cover what the snapshot lists; an entry revoked.
         (
