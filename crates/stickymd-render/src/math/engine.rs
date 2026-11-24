@@ -390,11 +390,23 @@ mod tests {
         assert_eq!(engine.counters().raster_hits, 100);
     }
 
-    /// Comrak 1.2 keeps the line endings of dollar math in its literal (0.59 turned them into
-    /// spaces). TeX reads a line ending as a space, and so does RaTeX: the same geometry results.
+    /// Comrak 1.2 keeps the line endings of single-dollar math in its literal (0.59 turned them
+    /// into spaces). Outside a comment RaTeX reads a line ending as a space, so the geometry is
+    /// the same. A line ending ends a `%` comment, so `a%c\nb` shows `b`, which `a%c b` hides:
+    /// such a formula now shows its next line, as TeX does.
     #[test]
     fn a_line_ending_in_a_formula_lays_out_as_a_space() {
         let mut engine = MathEngine::new();
+        for kind in [MathKind::Inline, MathKind::Display] {
+            assert_eq!(
+                engine.measure("a%c\nb", kind, 17.0).unwrap(),
+                engine.measure("ab", kind, 17.0).unwrap()
+            );
+            assert_eq!(
+                engine.measure("a%c b", kind, 17.0).unwrap(),
+                engine.measure("a", kind, 17.0).unwrap()
+            );
+        }
         for (with_newline, with_space) in [
             ("a\nb", "a b"),
             ("\\frac{a}\n{b}\n+ c", "\\frac{a} {b} + c"),

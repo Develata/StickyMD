@@ -1077,6 +1077,10 @@ mod tests {
         }
         // A paragraph of definitions only: Comrak detaches it.
         refuses("[x]: u \"$$a\n=\nb$$\"\n\n[x]");
+        // After a Setext heading the definition is real, though step 1's Setext-off scan reads
+        // it as paragraph text: the Preview's parse of the joined text puts the joined `=`
+        // on a definition line, so step 1 is dropped (cross-model review, 2026-11-24).
+        refuses("[r]: /u\nHeading\n===\n[x]: /v \"$$a\n    =\nb$$\"\n\n[x]");
         // Only Setext parsing makes these definition paragraphs: step 1 still
         // joins the `$$` pair, and step 2 leaves the title alone, with or
         // without text after the formula.

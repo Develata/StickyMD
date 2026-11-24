@@ -7,7 +7,10 @@ use std::ops::Range;
 use stickymd_core::DocumentSnapshot;
 use thiserror::Error;
 
-use super::{BlockNode, InlineNode, MathNode, PreviewParseError, PreviewParser, SourceRange};
+use super::{
+    BlockNode, InlineNode, MathNode, OwnedDocumentTree, PreviewParseError, PreviewParser,
+    SourceRange,
+};
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum SemanticConversionError {
@@ -108,7 +111,16 @@ pub fn convert_latex_math_delimiters(
     scope: Option<Range<usize>>,
 ) -> Result<Option<MathDelimiterConversion>, SemanticConversionError> {
     validate_scope(&snapshot.text, scope.as_ref())?;
-    let tree = PreviewParser.parse(snapshot)?;
+    convert_parsed_latex_math_delimiters(&PreviewParser.parse(snapshot)?, scope)
+}
+
+/// `convert_latex_math_delimiters` on a tree the caller already parsed with
+/// `PreviewParser`, so the `$` action can read the same parse first.
+pub(crate) fn convert_parsed_latex_math_delimiters(
+    tree: &OwnedDocumentTree,
+    scope: Option<Range<usize>>,
+) -> Result<Option<MathDelimiterConversion>, SemanticConversionError> {
+    validate_scope(&tree.source, scope.as_ref())?;
     let mut replacements = Vec::new();
     collect_blocks(&tree.blocks, scope.as_ref(), &mut replacements);
     replacements.sort_unstable_by_key(|replacement| replacement.range.start);
@@ -116,7 +128,7 @@ pub fn convert_latex_math_delimiters(
     if replacements.is_empty() {
         return Ok(None);
     }
-    let text = apply_replacements(&snapshot.text, &replacements)?;
+    let text = apply_replacements(&tree.source, &replacements)?;
     Ok(Some(MathDelimiterConversion { text, replacements }))
 }
 

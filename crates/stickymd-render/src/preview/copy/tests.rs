@@ -354,9 +354,9 @@ fn an_endpoint_on_a_structure_edge_is_outside_it() {
 }
 
 /// P17-C16: a structure whose reported range does not end in its own closer snaps to its block's
-/// lines. Comrak 1.0 and later report every link, image and emphasis with its closer (300,000
-/// fixed-seed cases, 2026-11-24); 0.59 ended a link whose `)` sits on the next line at the end of
-/// its URL. `cut_short` rebuilds that report by ending the link's outline range there.
+/// lines. Comrak 1.2 reports the link below with its `)`; 0.59 ended a link whose `)` sits on the
+/// next line at the end of its URL, and `cut_short` rebuilds that report by ending the link's
+/// outline range there. No Comrak 1.2 input known to StickyMD fails the check.
 #[test]
 fn an_unclosed_expansion_snaps_to_whole_lines() {
     let source = "see [a](http://x\n) end";
@@ -414,6 +414,23 @@ fn normalized_inline_code_rounds_to_its_edges() {
     let long = "`abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ` $x$";
     assert_eq!(copy(long, "bc"), "bc");
     assert_eq!(copy(long, "xyz ABC"), "xyz ABC");
+}
+
+/// P17-C09: an escaped pipe in a table cell rounds to its span like any escape. Comrak 1.2
+/// reports a text that starts with one (at the cell's start, or after emphasis or a link) from
+/// the `|`; the parser widens it by the backslash, so it is kept, and emphasis around it still
+/// finds its own opening run (cross-model review, 2026-11-24).
+#[test]
+fn an_escaped_pipe_in_a_table_cell_keeps_its_backslash() {
+    let table = |row: &str| format!("| a |\n| - |\n| {row} |\n| q |");
+    assert_eq!(copy(&table("\\|x"), "|"), "\\|x");
+    assert_eq!(copy(&table("*x*\\|y"), "|"), "\\|y");
+    assert_eq!(copy(&table("y\\|z"), "y|"), "y\\|z");
+    assert_eq!(copy(&table("a **\\|x** q"), "a |"), "a **\\|x**");
+    assert_eq!(
+        copy(&table("a@b.cd\\|e@f.gh\\|i"), "d|e"),
+        "a@b.cd\\|e@f.gh"
+    );
 }
 
 /// P17-C10: for fixed-seed random selections over documents mixing every construct, slices

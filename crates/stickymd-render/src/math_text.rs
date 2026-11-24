@@ -31,6 +31,20 @@ impl EqualsLineConversion {
         self.removed.len() / 2
     }
 
+    /// The position in `text()` of the `=` of each joined line, in order. Invariant:
+    /// `removed` is sorted and holds each join as two adjacent ranges, the one that ends at its
+    /// `=` and the one that starts after it. So an `=` moves left by every byte removed before
+    /// it: the earlier pairs and its own first range. One pass, O(joins).
+    pub fn joined_equals(&self) -> impl Iterator<Item = usize> + '_ {
+        let mut removed_before = 0;
+        self.removed.chunks_exact(2).map(move |join| {
+            let (before, after) = (&join[0], &join[1]);
+            let equal = before.end - removed_before - before.len();
+            removed_before += before.len() + after.len();
+            equal
+        })
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }

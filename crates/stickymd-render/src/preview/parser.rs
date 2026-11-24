@@ -83,6 +83,7 @@ impl PreviewParser {
                 source: &snapshot.text,
                 source_map: &source_map,
                 node_count: 0,
+                in_table_cell: false,
             };
             let blocks = context.convert_blocks(root, 0)?;
             (blocks, context.node_count)
@@ -108,6 +109,8 @@ struct ConvertContext<'a> {
     source: &'a str,
     source_map: &'a SourceMap,
     node_count: usize,
+    /// Set while a table cell's inlines convert (`escaped_pipe_text_range`).
+    in_table_cell: bool,
 }
 
 impl ConvertContext<'_> {
@@ -134,6 +137,30 @@ impl ConvertContext<'_> {
     fn source_range<'arena>(&self, node: &'arena AstNode<'arena>) -> Option<SourceRange> {
         self.source_map
             .range(self.source, node.data.borrow().sourcepos)
+    }
+
+    /// In a table cell Comrak drops the backslash of `\|` from the text, and a text node that
+    /// starts with such a pipe (at the cell's start, or after emphasis, a link or code) is
+    /// reported from the `|`, leaving the backslash outside every node. The range is widened
+    /// by that one byte, so the text no longer reads as identical to its source and a copy
+    /// that starts there keeps the escape (plan 06 #preview-copy-semantics rule 6). A pipe a
+    /// backslash escapes is always text: `\\|` ends the cell instead. Elsewhere the range is
+    /// Comrak's. O(1).
+    fn escaped_pipe_text_range(
+        &self,
+        literal: &str,
+        range: Option<SourceRange>,
+    ) -> Option<SourceRange> {
+        let range = range?;
+        let widened = range.start.checked_sub(1).and_then(|start| {
+            (self.in_table_cell
+                && literal.starts_with('|')
+                && self.source.as_bytes().get(start) == Some(&b'\\')
+                && self.source.as_bytes().get(range.start) == Some(&b'|'))
+            .then(|| SourceRange::new(start, range.end))
+            .flatten()
+        });
+        Some(widened.unwrap_or(range))
     }
 
     fn convert_blocks<'arena>(
@@ -234,8 +261,11 @@ impl ConvertContext<'_> {
                     let mut cells = Vec::new();
                     for cell in row.children() {
                         self.touch(depth + 2)?;
+                        self.in_table_cell = true;
+                        let content = self.convert_inlines(cell, depth + 2);
+                        self.in_table_cell = false;
                         cells.push(TableCell {
-                            content: self.convert_inlines(cell, depth + 2)?,
+                            content: content?,
                             source_range: self.source_range(cell),
                         });
                     }
@@ -312,8 +342,8 @@ impl ConvertContext<'_> {
         let source_range = self.source_range(node);
         let inline = match value {
             NodeValue::Text(text) => InlineNode::Text {
+                source_range: self.escaped_pipe_text_range(&text, source_range),
                 literal: text.into_owned(),
-                source_range,
             },
             NodeValue::Emph(_) => InlineNode::Emphasis {
                 children: self.convert_inlines(node, depth)?,
@@ -795,16 +825,56 @@ mod tests {
         }
     }
 
-    /// What StickyMD stopped repairing when it moved to Comrak 1.2 (2026-11-24): no node ends at
-    /// column 0 (a list item did in 0.59); a paragraph's or Setext heading's last inline ends on
-    /// its last text line (0.59 shifted the inlines after link reference definitions up); a
-    /// link's range ends in its own closer (0.59 cut short a link whose `)` is on the next line).
-    /// Checked on the three inputs 0.59 got wrong, then on 30,000 fixed-seed inputs.
+    /// What StickyMD stopped repairing when it moved to Comrak 1.2 (2026-11-24), on the three
+    /// inputs 0.59 got wrong: their exact ranges. Then, on 30,000 fixed-seed inputs, three
+    /// necessary conditions: no node below the document ends at column 0 (a list item did in
+    /// 0.59); no paragraph's or Setext heading's inlines all end before its last text line (0.59
+    /// shifted the inlines after link reference definitions up); a link's range ends in `)`,
+    /// `]` or an autolink's `>`, or is exactly its text for a bare autolink (0.59 cut short a
+    /// link whose `)` is on the next line). The conditions do not prove every range exact.
     #[test]
     fn comrak_positions_hold_what_the_removed_repairs_relied_on() {
+        let text_of = |source: &str, find: &dyn Fn(&NodeValue) -> bool| {
+            let arena = Arena::new();
+            let root = parse_document(&arena, source, &markdown_options());
+            let node = root
+                .descendants()
+                .find(|node| find(&node.data.borrow().value))
+                .expect("node");
+            let position = node.data.borrow().sourcepos;
+            SourceMap::new(source)
+                .range(source, position)
+                .and_then(|range| range.text(source))
+                .map(str::to_owned)
+        };
+        let source = "- one\n- two\n  - deep\n\n1. x\n";
+        let arena = Arena::new();
+        let root = parse_document(&arena, source, &markdown_options());
+        let second = root.first_child().unwrap().children().nth(1).unwrap();
+        let second = SourceMap::new(source).range(source, second.data.borrow().sourcepos);
+        assert_eq!(
+            second.and_then(|range| range.text(source)),
+            Some("- two\n  - deep")
+        );
+        assert_eq!(
+            text_of(
+                "[a]: http://x\n[b]: http://y\npara **bold** text",
+                &|value| { matches!(value, NodeValue::Strong(_)) }
+            )
+            .as_deref(),
+            Some("**bold**")
+        );
+        assert_eq!(
+            text_of("see [a](http://x\n) end", &|value| matches!(
+                value,
+                NodeValue::Link(_)
+            ))
+            .as_deref(),
+            Some("[a](http://x\n)")
+        );
         let alphabet = [
             '#', '*', '_', '~', '`', '$', '\\', '[', ']', '(', ')', '<', '>', '|', ':', '\n', '中',
-            'a', ' ', '-', '&', ';', '=', '!', 'h', 't', 'p', '/', '.', '"', '1',
+            'a', ' ', '-', '&', ';', '=', '!', 'h', 't', 'p', '/', '.', '"', '1', '\t', '@',
         ];
         let mut sources = vec![
             "- one\n- two\n  - deep\n\n1. x\n".to_owned(),

@@ -392,3 +392,16 @@ fn phase11b_equals_lines_leave_tables_whole() {
         "| \\(x\\|y\\) | `b\\|c` |\n| --- | --- |\n\n\\[x=y\\]",
     );
 }
+
+/// `joined_equals` names the `=` of every joined line in the joined text.
+#[test]
+fn phase11b_equals_lines_name_each_joined_equals_in_the_result() {
+    let source = "$$\na \n =\n b\n=\nc$$ x \\[d\n=\ne\\]";
+    let conversion = join_math_equals_lines(source, None).unwrap();
+    let text = conversion.text();
+    let equals: Vec<_> = conversion.joined_equals().collect();
+    assert_eq!(text, "$$\na=b=c$$ x \\[d=e\\]");
+    assert_eq!(equals.len(), conversion.joined_lines());
+    assert!(equals.iter().all(|&at| text.as_bytes()[at] == b'='));
+    assert!(equals.windows(2).all(|pair| pair[0] < pair[1]));
+}

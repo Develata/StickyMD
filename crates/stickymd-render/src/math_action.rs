@@ -3,9 +3,10 @@
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#semantic-math-delimiter-conversion
 //!
-//! The two steps stay independent modules; this only composes them and their
-//! position maps. Callers own the generation check, the transaction and the
-//! selection.
+//! The two steps stay independent modules; this only composes them, their
+//! position maps and the check that ties step 1 to the Preview's reading of
+//! its result (`joins_lie_in_text`). Callers own the generation check, the
+//! transaction and the selection.
 
 use std::ops::Range;
 
@@ -13,8 +14,9 @@ use stickymd_core::DocumentSnapshot;
 
 use crate::math_text::{EqualsLineConversion, join_math_equals_lines};
 use crate::preview::{
-    MAX_PREVIEW_SOURCE_BYTES, MathDelimiterConversion, PreviewParseError, SemanticConversionError,
-    convert_latex_math_delimiters,
+    BlockNode, MAX_PREVIEW_SOURCE_BYTES, MathDelimiterConversion, OwnedDocumentTree,
+    PreviewParseError, PreviewParser, SemanticConversionError, SourceRange,
+    convert_parsed_latex_math_delimiters,
 };
 
 /// The result of one pass that changed the text.
@@ -84,21 +86,84 @@ pub fn run_math_action(
     if has_isolated_cr(&snapshot.text) {
         return Ok(None);
     }
-    let joined = join_math_equals_lines(&snapshot.text, scope.clone());
-    let joined_snapshot = joined.as_ref().map(|joined| DocumentSnapshot {
-        text: joined.text().into(),
-        generation: snapshot.generation,
-        line_ending: snapshot.line_ending,
-    });
-    let source = joined_snapshot.as_ref().unwrap_or(snapshot);
+    // Step 2 parses step 1's result with the Preview's dialect; the same tree
+    // first confirms that every joined `=` is text there. Step 1 scans with
+    // Setext off, so it can take a definition title, indented code or an HTML
+    // block that a Setext heading starts in the Preview's reading for formula
+    // text. Then step 1 is dropped whole and step 2 runs on the original text,
+    // which costs one more parse on that path only.
+    let mut joined = join_math_equals_lines(&snapshot.text, scope.clone());
+    let mut tree = None;
+    if let Some(joins) = &joined {
+        let joined_tree = PreviewParser.parse(&DocumentSnapshot {
+            text: joins.text().into(),
+            generation: snapshot.generation,
+            line_ending: snapshot.line_ending,
+        })?;
+        if joins_lie_in_text(&joined_tree, joins) {
+            tree = Some(joined_tree);
+        } else {
+            joined = None;
+        }
+    }
+    let tree = match tree {
+        Some(tree) => tree,
+        None => PreviewParser.parse(snapshot)?,
+    };
     let scope = scope.map(|range| match &joined {
         Some(joined) => joined.map_position(range.start)..joined.map_position(range.end),
         None => range,
     });
-    Ok(match convert_latex_math_delimiters(source, scope)? {
+    Ok(match convert_parsed_latex_math_delimiters(&tree, scope)? {
         Some(converted) => Some(MathActionPass::Converted(joined, converted)),
         None => joined.map(MathActionPass::Joined),
     })
+}
+
+/// Whether every `=` that step 1 joined lies, in `tree` (the Preview's parse
+/// of step 1's result), in a paragraph, a heading or a display formula: not
+/// in code, Raw HTML, a table, or on a line no block holds, such as a link
+/// reference definition. A leaf block without a source range cannot hold a
+/// join, so a join only such a block could hold fails closed. Leaf blocks do
+/// not overlap and `leaf_blocks` yields them in document order, so each join
+/// is one binary search: O(blocks + joins log blocks).
+fn joins_lie_in_text(tree: &OwnedDocumentTree, joins: &EqualsLineConversion) -> bool {
+    let mut leaves = Vec::new();
+    leaf_blocks(&tree.blocks, &mut leaves);
+    joins.joined_equals().all(|equal| {
+        let at = leaves.partition_point(|(range, _)| range.end <= equal);
+        leaves
+            .get(at)
+            .is_some_and(|&(range, text)| text && range.start <= equal)
+    })
+}
+
+/// The leaf blocks under `blocks` that have a source range, in document order,
+/// each with whether it holds text a join may touch.
+fn leaf_blocks(blocks: &[BlockNode], output: &mut Vec<(SourceRange, bool)>) {
+    for block in blocks {
+        let (range, text) = match block {
+            BlockNode::Paragraph { source_range, .. } | BlockNode::Heading { source_range, .. } => {
+                (*source_range, true)
+            }
+            BlockNode::DisplayMath(math) => (math.source_range, true),
+            BlockNode::BlockQuote { blocks, .. } => {
+                leaf_blocks(blocks, output);
+                continue;
+            }
+            BlockNode::List(list) => {
+                for item in &list.items {
+                    leaf_blocks(&item.blocks, output);
+                }
+                continue;
+            }
+            BlockNode::CodeBlock(code) => (code.source_range, false),
+            BlockNode::Table(table) => (table.source_range, false),
+            BlockNode::ThematicBreak { source_range }
+            | BlockNode::HtmlLiteral { source_range, .. } => (*source_range, false),
+        };
+        output.extend(range.map(|range| (range, text)));
+    }
 }
 
 /// Whether `text` holds a `\r` that is not followed by `\n`: one pass over the bytes, no
@@ -131,6 +196,44 @@ mod tests {
         assert_eq!(pass("$$a\n=\nb\n=\nc$$").change_count(), 2);
         assert_eq!(pass("$$a\n=\nb$$\n\n$$c\n=\nd$$").change_count(), 2);
         assert_eq!(pass("\\(x\\) and \\(y\\)").change_count(), 2);
+    }
+
+    /// Step 1 scans with Setext off. After a Setext heading, the Preview's dialect reads the
+    /// lines it joins as a link reference definition, indented code or an HTML block, so the
+    /// joined `=` is not text in the Preview's parse of the result: step 1 is dropped whole and
+    /// step 2 converts the original text (cross-model review, 2026-11-24). A formula after a
+    /// definition still joins (`math_text` tests).
+    #[test]
+    fn phase11b_math_action_drops_joins_the_preview_reads_outside_text() {
+        let pass = |text: &str| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            super::run_math_action(&snapshot, None)
+                .unwrap()
+                .map(|pass| pass.into_text())
+        };
+        for text in [
+            "[r]: /u\nHeading\n===\n[x]: /v \"$$a\n    =\nb$$\"\n\n[x]",
+            "Heading\n===\n[x]: /v \"$$a\n    =\nb$$\"\n\n[x]",
+            "Heading\n===\n    $$a\n    =\n    b$$",
+            "Heading\n===\n<custom-tag>\n$$a\n=\nb$$\n",
+        ] {
+            assert_eq!(pass(text), None, "{text:?}");
+            // Step 2 still converts the original text.
+            assert_eq!(
+                pass(&format!("{text}\n\n\\(x\\)")),
+                Some(format!("{text}\n\n$x$")),
+                "{text:?}"
+            );
+        }
+        // Control: the same lines without the heading join.
+        assert_eq!(
+            pass("[x]: /w\n\n$$a\n    =\nb$$").as_deref(),
+            Some("[x]: /w\n\n$$a=b$$")
+        );
     }
 
     /// Known limit (plan 07): plan 05 keeps an isolated `\r` as an ordinary character and the
