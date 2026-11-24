@@ -1040,12 +1040,31 @@ mod tests {
 
     #[test]
     fn phase11b_math_button_refuses_a_result_it_would_change_again() {
-        // `$$a…\[b\]`: the `$$` step 2 writes pairs with the unclosed one on
-        // the next click. `\( a…\(b\) c\)`: step 2 ends the outer formula at
-        // the inner closer and leaves `\(b$ c\)` for the next click.
-        for source in ["$$a\n=\nc \\[b\\]", "\\( a\n=\n\\(b\\) c\\)"] {
-            refuses(source);
+        // `\( a…\(b\) c\)`: step 2 ends the outer formula at the inner closer
+        // and leaves `\(b$ c\)` for the next click.
+        refuses("\\( a\n=\n\\(b\\) c\\)");
+        // `$$a…\[b\]`: the `$$` step 2 writes would pair with the unclosed one
+        // on the next click, but that join would make the formula `$$b$$`
+        // text, so step 1 drops it (sixth review, 2026-11-25). The result is
+        // final: it commits, and a second click changes nothing.
+        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+        edit(&mut coordinator, "$$a\n=\nc \\[b\\]");
+        let mut effects = Vec::new();
+        for timestamp_ms in [10, 11] {
+            effects.push(
+                coordinator
+                    .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                        expected_generation: coordinator.view().generation,
+                        selection: Selection::caret(0),
+                        scope_to_selection: false,
+                        timestamp_ms,
+                    })
+                    .unwrap(),
+            );
+            assert_eq!(coordinator.view().text, "$$a\n=\nc $$b$$");
         }
+        assert_ne!(effects[0], AppEffect::NoOp);
+        assert_eq!(effects[1], AppEffect::NoOp);
     }
 
     #[test]
@@ -1055,8 +1074,8 @@ mod tests {
         // both steps reach its formulas and neither touches the title.
         for (source, expected) in [
             (
-                "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
-                "[x]: u \"$a\n=\nb$\"\n12345678$a=b$",
+                "[x]: u \"$a$\"\n12345678$a\n=\nb$",
+                "[x]: u \"$a$\"\n12345678$a=b$",
             ),
             (
                 "[x]: u \"\\(a\\)\"\n12345678\\(c\\)",
@@ -1077,6 +1096,12 @@ mod tests {
         }
         // A paragraph of definitions only: Comrak detaches it.
         refuses("[x]: u \"$$a\n=\nb$$\"\n\n[x]");
+        // With an `=` line in the title, the Preview's dialect reads the first
+        // line as a Setext heading, not a definition, and its formula is
+        // `$"\n12345678$`. The `$a…b$` that step 1 reads with Setext off is no
+        // formula in the Preview's parse of the joined text, so the join is
+        // dropped (sixth review, 2026-11-25).
+        refuses("[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$");
         // After a Setext heading the definition is real, though step 1's Setext-off scan reads
         // it as paragraph text: the Preview's parse of the joined text puts the joined `=`
         // on a definition line, so step 1 is dropped (cross-model review, 2026-11-24).

@@ -71,7 +71,7 @@ Plan 10 `preview-resource-assessment` → 功能投影“宽内容/数学公式�
 2026-11-12：plan 07 `semantic-math-delimiter-conversion`（等号行连接改为第一步并扩到
 `\[`、`\(`、`$` 公式）→ 数学 `$` 按钮 →
 [Phase 11-B 先连接等号行](acceptance-cases/phase-11-b.md#math-equals-first) →
-`stickymd-render/src/math_text{,/tests}.rs`、`math_action.rs`、
+`stickymd-render/src/math_text{,/tests}.rs`、`math_action{,/surroundings}.rs`、
 `preview/semantic_conversion.rs`（引用定义位置错位，见
 [RISK 报告](report/RISK-comrak-054-inline-positions.md)；2026-11-24 升级到 Comrak 1.2 后
 位置正确，跳过已删除，见[升级评估](report/2026-11-24-comrak-1.2-upgrade.md)）与
