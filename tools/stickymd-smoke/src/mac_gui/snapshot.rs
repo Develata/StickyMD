@@ -56,53 +56,6 @@ pub(super) fn tree(root: &Path) -> Result<Vec<String>, String> {
     Ok(entries)
 }
 
-/// The name an entry line of [`tree`] lists: `.` for the root. None for a line `tree` does not
-/// write. A name holding the separator that follows it reads short, so it then matches no
-/// registered name (fail closed).
-pub(super) fn name(line: &str) -> Option<&str> {
-    let (kind, rest) = line.split_once(' ')?;
-    match kind {
-        "file" => rest.rsplit_once(" bytes=").map(|(name, _)| name),
-        "dir" => rest.rsplit_once(" mtime=").map(|(name, _)| name),
-        "link" => rest.split_once(" -> ").map(|(name, _)| name),
-        "other" => Some(rest),
-        _ => None,
-    }
-}
-
-/// The `(name, path)` of `root` and every entry under it, in [`tree`]'s order: what R03's write
-/// watch registers before the snapshot is taken.
-pub(super) fn entries(root: &Path) -> Result<Vec<(String, std::path::PathBuf)>, String> {
-    let mut found = Vec::new();
-    collect(root, root, &mut found)?;
-    found.sort();
-    found.insert(0, (".".to_owned(), root.to_path_buf()));
-    Ok(found)
-}
-
-fn collect(
-    root: &Path,
-    directory: &Path,
-    into: &mut Vec<(String, std::path::PathBuf)>,
-) -> Result<(), String> {
-    for entry in fs::read_dir(directory).map_err(|e| format!("{}: {e}", directory.display()))? {
-        let path = entry.map_err(|e| e.to_string())?.path();
-        let name = path
-            .strip_prefix(root)
-            .map_err(|e| e.to_string())?
-            .to_string_lossy()
-            .into_owned();
-        let is_dir = fs::symlink_metadata(&path)
-            .map_err(|e| format!("{}: {e}", path.display()))?
-            .is_dir();
-        into.push((name, path.clone()));
-        if is_dir {
-            collect(root, &path, into)?;
-        }
-    }
-    Ok(())
-}
-
 /// The entries in `before` or `after` but not both: what a run changed.
 pub(super) fn changed(before: &[String], after: &[String]) -> Vec<String> {
     let gone = before

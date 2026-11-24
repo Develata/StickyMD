@@ -33,8 +33,6 @@ struct AppHash {
     driver: String,
     /// The candidate ZIP R03 opens (`--zip`), checked to hold this bundle before any row runs.
     zip: Option<Candidate>,
-    /// R03's write watch calibration (`--r03-write-restore`): its evidence cannot be recorded.
-    write_restore: bool,
 }
 
 impl AppHash {
@@ -88,7 +86,6 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         bundle: bundle_hash(&app)?,
         inputs: crate::mac_common::fixture::app_inputs(&app)?,
         zip: None,
-        write_restore: options.r03_write_restore,
     };
     // A ZIP that does not hold this bundle refuses the run: it is the operator's mistake, not an
     // R03 result (plan 11 #phase-16-macos-host).
@@ -307,12 +304,6 @@ fn save(
     let zip = hash.zip.as_ref().map_or_else(String::new, |zip| {
         format!(",\"zip_sha256\":{}", quote(&zip.sha256))
     });
-    // A calibration run's evidence says so, and mac-ledger refuses it.
-    let zip = if hash.write_restore {
-        format!("{zip},\"calibration\":\"r03-write-restore\"")
-    } else {
-        zip
-    };
     let json = format!(
         "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished}{batch},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{}{zip},\"scenarios\":[{}]}}\n",
         hash.inputs
@@ -354,7 +345,6 @@ fn one(
                 session.path(),
                 &hash.bytes(),
                 hash.zip.as_ref(),
-                hash.write_restore,
                 input.backend.started,
                 row,
             )?;

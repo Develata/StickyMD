@@ -195,9 +195,6 @@ pub(super) struct Row {
     pub id: String,
     pub checks: Vec<Check>,
     pub trace: Vec<Trace>,
-    /// The facts the checks were judged from, as one JSON object, for a row whose checks
-    /// mac-ledger recomputes (R03).
-    pub facts: Option<String>,
 }
 impl Row {
     pub fn new(id: &str) -> Self {
@@ -205,7 +202,6 @@ impl Row {
             id: id.into(),
             checks: Vec::new(),
             trace: Vec::new(),
-            facts: None,
         }
     }
     pub fn check(&mut self, name: &str, pass: bool, observation: impl Into<String>) {
@@ -242,12 +238,8 @@ impl Row {
             .map(|t| format!("{{\"ms\":{},\"event\":{}}}", t.ms, quote(&t.event)))
             .collect::<Vec<_>>()
             .join(",");
-        let facts = self
-            .facts
-            .as_ref()
-            .map_or_else(String::new, |f| format!(",\"facts\":{f}"));
         format!(
-            "{{\"id\":{},\"verdict\":{},\"checks\":[{}],\"timeline\":[{}]{facts}}}",
+            "{{\"id\":{},\"verdict\":{},\"checks\":[{}],\"timeline\":[{}]}}",
             quote(&format!("P16-{}", self.id)),
             quote(aggregate(&self.checks).name()),
             checks,

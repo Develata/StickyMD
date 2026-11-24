@@ -570,13 +570,6 @@ pub(super) fn from_evidence(
     ) {
         return Err("the evidence is not schema 2 of mac-gui (an older driver) nor schema 5 of mac-resources; it cannot be recorded".into());
     }
-    // A calibration run (`mac-gui --r03-write-restore`) is a bad sample of the driver itself.
-    if let Ok(calibration) = value.field("calibration") {
-        return Err(format!(
-            "the evidence is a calibration run ({}); it cannot be recorded",
-            calibration.string().unwrap_or("of an unknown kind")
-        ));
-    }
     // The release ZIP R03 opened, kept with R03 alone.
     let zip = optional_text(&value, "zip_sha256")?;
     if let Some(digest) = zip.as_deref().filter(|d| !is_sha256(d)) {
@@ -638,12 +631,8 @@ pub(super) fn from_evidence(
         }
         let verdict = field(scenario, "verdict")?;
         let checks = scenario.field("checks")?.array()?;
-        if row == "R03" {
-            super::producers::r03(scenario, &verdict, checks, zip.as_deref())?;
-        } else if scenario.field("facts").is_ok() {
-            return Err(format!(
-                "P16-{row} records facts, which only R03 does; it cannot be recorded"
-            ));
+        if row == "R03" && verdict == "PASS" {
+            super::producers::r03_pass(checks, zip.as_deref())?;
         }
         // A row stopped by the run's shared stop, or never started, means the run was cut short;
         // an older driver could still mark such a run finished, so the rows themselves decide.
