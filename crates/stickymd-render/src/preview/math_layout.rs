@@ -6,13 +6,13 @@ use std::sync::Arc;
 
 use cosmic_text::{Align, FontSystem, Metrics};
 
-use crate::image::DecodedImageCache;
+use crate::image::{DecodedImageCache, DecodedImageRaster};
 use crate::math::{MAX_DOCUMENT_FORMULAS, MathEngine, MathError, MathKind, MathMetrics};
 use crate::source::FontSelection;
 
 use super::copy::SelectionText;
 use super::image_requests::ImageRequests;
-use super::image_resources::LaidOutImage;
+use super::image_resources::{Admission, LaidOutImage};
 use super::inline_text_layout::{append_text_pieces, text_piece};
 use super::layout::{
     ChunkBuild, DecorationRole, InlinePiece, LayoutChunk, LayoutContent, LayoutDecoration,
@@ -37,8 +37,74 @@ pub(super) struct LaidOutMath {
     pub selection: std::ops::Range<usize>,
 }
 
+/// What final admission decided about an image span, fixed for the next layout pass.
+enum ImageFate {
+    /// The bytes decode to these dimensions: lay the image out at them.
+    Loaded(Arc<DecodedImageRaster>),
+    /// The bytes cannot be read or decoded: the span falls back to text.
+    Failed,
+}
+
+/// Lays the spans out. An inline image is probed for its size while the pieces are built and
+/// admitted (read, decoded) only at its final position, after its line is placed. When that
+/// shows other dimensions or a failure, the chunk is laid out again with the image's fate fixed,
+/// from the same starting selection state; each pass fixes at least one more image, so the loop
+/// ends.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_mixed_chunk(
+    font_system: &mut FontSystem,
+    fonts: &FontSelection,
+    math_engine: &mut MathEngine,
+    spans: &[RenderSpan],
+    x: f32,
+    y: f32,
+    width: f32,
+    metrics: Metrics,
+    align: Align,
+    selection_text: &mut SelectionText,
+    formula_count: &mut usize,
+    theme: super::PreviewTheme,
+    mut image_source: Option<&mut ImageRequests<'_>>,
+    image_cache: &mut DecodedImageCache,
+    image_band: (f32, f32),
+    text_layout_cache: &mut TextLayoutCache,
+    embedded_math: bool,
+) -> ChunkBuild {
+    let mark = selection_text.checkpoint();
+    let formulas_before = *formula_count;
+    let mut fates: Vec<(usize, ImageFate)> = Vec::new();
+    loop {
+        let (built, pending) = layout_mixed(
+            font_system,
+            fonts,
+            math_engine,
+            spans,
+            x,
+            y,
+            width,
+            metrics,
+            align,
+            selection_text,
+            formula_count,
+            theme,
+            image_source.as_deref_mut(),
+            image_cache,
+            image_band,
+            text_layout_cache,
+            embedded_math,
+            &fates,
+        );
+        if pending.is_empty() {
+            return built;
+        }
+        selection_text.rollback(mark);
+        *formula_count = formulas_before;
+        fates.extend(pending);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_mixed(
     font_system: &mut FontSystem,
     fonts: &FontSelection,
     math_engine: &mut MathEngine,
@@ -56,7 +122,9 @@ pub(super) fn make_mixed_chunk(
     image_band: (f32, f32),
     text_layout_cache: &mut TextLayoutCache,
     embedded_math: bool,
-) -> ChunkBuild {
+    fates: &[(usize, ImageFate)],
+) -> (ChunkBuild, Vec<(usize, ImageFate)>) {
+    let mut image_spans = Vec::new();
     let mut pieces = Vec::new();
     let mut line_breaks = Vec::new();
     let mut own_line_pieces = Vec::new();
@@ -174,16 +242,18 @@ pub(super) fn make_mixed_chunk(
                 max_text_piece_chars,
                 text_layout_cache,
             );
+            let fate = fates
+                .iter()
+                .find_map(|(span_index, fate)| (*span_index == index).then_some(fate));
             if let Some(piece) = image_piece(
                 span,
                 width,
-                y,
                 metrics,
                 selection_text,
                 image_source.as_deref_mut(),
-                image_cache,
-                image_band,
+                fate,
             ) {
+                image_spans.push(index);
                 pieces.push(piece);
                 pending_text_start = index + 1;
             } else {
@@ -222,45 +292,50 @@ pub(super) fn make_mixed_chunk(
         flow.hard_break();
     }
     let mut built = flow.finish();
+    let mut pending = Vec::new();
     if let Some(requests) = image_source {
+        let mut spans_of_images = image_spans.iter();
         for chunk in &mut built.chunks {
-            if let LayoutContent::Image(image) = &mut chunk.content {
-                image.readmit(chunk.y, requests, image_cache, image_band);
+            let LayoutContent::Image(image) = &mut chunk.content else {
+                continue;
+            };
+            let Some(&span_index) = spans_of_images.next() else {
+                break;
+            };
+            match image.admit(chunk.y, image_band, requests, image_cache) {
+                Admission::Settled => {}
+                Admission::Resized(raster) => pending.push((span_index, ImageFate::Loaded(raster))),
+                Admission::Failed => pending.push((span_index, ImageFate::Failed)),
             }
         }
     }
-    built
+    (built, pending)
 }
 
 fn is_soft_break(span: &RenderSpan) -> bool {
     span.soft_break
 }
 
-#[allow(clippy::too_many_arguments)]
 fn image_piece(
     span: &RenderSpan,
     available_width: f32,
-    block_y: f32,
     metrics: Metrics,
     selection_text: &mut SelectionText,
     image_source: Option<&mut ImageRequests<'_>>,
-    image_cache: &mut DecodedImageCache,
-    image_band: (f32, f32),
+    fate: Option<&ImageFate>,
 ) -> Option<InlinePiece> {
     let image = span.image.as_ref()?;
     let max_width = available_width.floor().max(1.0) as u32;
     // An inline image participates in line layout. Cap it to four body lines;
     // standalone image paragraphs retain the larger viewport-oriented cap.
     let max_height = (metrics.line_height * 4.0).floor().max(1.0) as u32;
-    let slot = LaidOutImage::build(
-        image,
-        max_width,
-        max_height,
-        block_y,
-        image_source,
-        image_cache,
-        image_band,
-    )?;
+    let slot = match fate {
+        Some(ImageFate::Failed) => return None,
+        Some(ImageFate::Loaded(raster)) => {
+            LaidOutImage::decoded(image, max_width, max_height, Arc::clone(raster))?
+        }
+        None => LaidOutImage::probe(image, max_width, max_height, image_source)?,
+    };
     let (target_width, target_height) = (slot.width, slot.height);
     let content = LayoutContent::Image(slot);
     let selection = selection_text.push_span(span);

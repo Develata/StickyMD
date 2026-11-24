@@ -412,36 +412,44 @@ fn leading_hard_breaks_keep_the_bullet_box_off_the_blank_lines() {
     );
 }
 
-struct OnePixelImage(Vec<u8>);
+struct CountingImage {
+    bytes: Vec<u8>,
+    inspects: std::cell::Cell<usize>,
+    loads: std::cell::Cell<usize>,
+}
 
 const IMAGE_PIXEL: [u8; 4] = [10, 200, 60, 255];
 
-impl PreviewImageSource for OnePixelImage {
+impl PreviewImageSource for CountingImage {
     fn inspect(&self, _: &str) -> Result<Option<crate::image::ImageMetadata>, String> {
-        crate::image::inspect_encoded_image(&self.0)
+        self.inspects.set(self.inspects.get() + 1);
+        crate::image::inspect_encoded_image(&self.bytes)
             .map(Some)
             .map_err(|error| error.to_string())
     }
 
     fn load(&self, _: &str) -> Result<Option<Vec<u8>>, String> {
-        Ok(Some(self.0.clone()))
+        self.loads.set(self.loads.get() + 1);
+        Ok(Some(self.bytes.clone()))
     }
 }
 
 #[test]
-fn an_image_after_many_own_line_formulas_is_drawn_when_scrolled_to() {
+fn an_image_after_many_own_line_formulas_is_read_only_when_scrolled_to() {
     let rgba: Vec<u8> = IMAGE_PIXEL
         .iter()
         .copied()
         .cycle()
         .take(32 * 32 * 4)
         .collect();
-    let image = OnePixelImage(
-        crate::image::prepare_rgba_image(32, 32, rgba)
+    let image = CountingImage {
+        bytes: crate::image::prepare_rgba_image(32, 32, rgba)
             .unwrap()
             .bytes()
             .to_vec(),
-    );
+        inspects: Default::default(),
+        loads: Default::default(),
+    };
     let source = format!("{}![i](image.png)", "$$x$$\n".repeat(120));
     let mut pipeline = PreviewPipeline::new();
     let first = pipeline
@@ -461,6 +469,8 @@ fn an_image_after_many_own_line_formulas_is_drawn_when_scrolled_to() {
         bottom > 2500.0,
         "the image lies far below the paragraph top"
     );
+    assert!(image.inspects.get() > 0, "the size is probed");
+    assert_eq!(image.loads.get(), 0, "nothing outside the band is read");
     let scrolled = pipeline
         .paint_with_image_source(
             Generation::initial(),
@@ -471,6 +481,7 @@ fn an_image_after_many_own_line_formulas_is_drawn_when_scrolled_to() {
             Some(&image),
         )
         .unwrap();
+    assert!(image.loads.get() > 0, "scrolling into the band reads it");
     let drawn = scrolled
         .rgba()
         .chunks(4)

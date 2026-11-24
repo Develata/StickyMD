@@ -302,6 +302,109 @@ fn phase7_image_band_rechecks_actual_bytes_and_decode_failure_after_inspection()
     }
 }
 
+/// An image at the end of a long paragraph is admitted at its final position, so the file read
+/// after the probe is checked there: other dimensions are used, a failure falls back to text,
+/// and the copy text is that of the source either way.
+#[test]
+fn an_image_placed_at_the_end_of_a_long_paragraph_uses_actual_bytes_or_falls_back() {
+    let source = format!("{}![i](image.png)", "$$x$$\n".repeat(120));
+    let document = DocumentSnapshot {
+        text: Arc::from(source.as_str()),
+        generation: Generation::initial(),
+        line_ending: LineEnding::Lf,
+    };
+    let reference_images = Images::new();
+    let reference = PreviewPipeline::new()
+        .build_with_image_source(
+            &document,
+            400,
+            300,
+            1.0,
+            0.0,
+            PreviewSelection::default(),
+            PreviewTheme::Light,
+            Some(&reference_images),
+        )
+        .unwrap()
+        .text()
+        .to_owned();
+    for loaded in [
+        Some(image_bytes(48, 80, 90)),
+        None,
+        Some(b"bad pixels".to_vec()),
+    ] {
+        let images = Images::new();
+        let changed = ChangedAfterInspection {
+            images: &images,
+            loaded: loaded.clone(),
+        };
+        let mut pipeline = PreviewPipeline::new();
+        let top = pipeline
+            .build_with_image_source(
+                &document,
+                400,
+                300,
+                1.0,
+                0.0,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+                Some(&changed),
+            )
+            .unwrap();
+        let bottom = top.document_height() - 300.0;
+        let frame = pipeline
+            .build_with_image_source(
+                &document,
+                400,
+                300,
+                1.0,
+                bottom,
+                PreviewSelection::default(),
+                PreviewTheme::Light,
+                Some(&changed),
+            )
+            .unwrap();
+        let sizes: Vec<(u32, u32, bool)> = pipeline
+            .layout
+            .as_ref()
+            .unwrap()
+            .blocks
+            .iter()
+            .flat_map(|block| &block.chunks)
+            .filter_map(|chunk| match &chunk.content {
+                super::super::layout::LayoutContent::Image(image) => {
+                    Some((image.width, image.height, image.raster.is_some()))
+                }
+                _ => None,
+            })
+            .collect();
+        if loaded.as_deref().is_some_and(|bytes| bytes.len() > 20)
+            && loaded != Some(b"bad pixels".to_vec())
+        {
+            assert_eq!(
+                sizes,
+                [(48, 80, true)],
+                "the actual decoded size is laid out"
+            );
+        } else {
+            assert!(
+                sizes.is_empty(),
+                "a failed load falls back to text: {sizes:?}"
+            );
+        }
+        assert_eq!(
+            frame.copy_text(frame.select_all()).unwrap(),
+            source,
+            "the copy text survives laying the chunk out again"
+        );
+        assert_eq!(
+            frame.text(),
+            reference,
+            "the display text is not doubled by laying the chunk out again"
+        );
+    }
+}
+
 #[test]
 fn phase7_image_band_drops_old_raster_leases_before_cache_admission() {
     let images = Images::new();
