@@ -6,7 +6,10 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 mod format;
+mod ignored;
 pub(super) mod output;
+#[cfg(target_os = "macos")]
+mod read;
 #[cfg(target_os = "macos")]
 pub(super) mod run;
 #[cfg(test)]
@@ -15,8 +18,10 @@ mod verdict;
 
 pub(super) use format::{parse, render};
 #[cfg(target_os = "macos")]
+pub(super) use read::read_receipt;
+#[cfg(target_os = "macos")]
 pub(super) use verdict::Verdicts;
-pub(super) use verdict::{Outcome, judge};
+pub(super) use verdict::{Outcome, driver_of, judge};
 
 /// Where the receipt lives; the runner replaces it, the gate reads it.
 pub(crate) const RECEIPT: &str = crate::qualification::reserved_paths::MACOS_SOURCE_TEST_RECEIPT;
@@ -26,6 +31,12 @@ pub(crate) const RECEIPT: &str = crate::qualification::reserved_paths::MACOS_SOU
 /// gate never reads a receipt a run is replacing. The operating system releases it when the
 /// holder exits, killed or not.
 pub(crate) const LOCK: &str = crate::qualification::reserved_paths::MACOS_SOURCE_TEST_LOCK;
+
+/// The identity of the last run that started, written atomically under the lock before the old
+/// receipt is retired; a receipt counts only when it names this run (review round 4, BLOCKER 2):
+/// a run interrupted before it published leaves its own identity here, so an older receipt,
+/// restored or left behind, no longer matches.
+pub(crate) const RUN: &str = crate::qualification::reserved_paths::MACOS_SOURCE_TEST_RUN;
 
 /// The run's lock, created if need be, or `None` while another holder keeps it.
 #[cfg(target_os = "macos")]
@@ -92,13 +103,18 @@ pub(super) fn lock_for_reading(root: &std::path::Path) -> Result<Reading, String
     }
 }
 
-/// A lock or receipt reached through a link would be locked or replaced as the link.
+/// Whether `path` exists, refusing a link (it would be locked or replaced as the link) and any
+/// error but absence (review round 4).
 #[cfg(target_os = "macos")]
-pub(super) fn refuse_link(path: &std::path::Path) -> Result<(), String> {
-    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-        return Err(format!("{} is a symbolic link", path.display()));
+pub(super) fn refuse_link(path: &std::path::Path) -> Result<bool, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err(format!("{} is a symbolic link", path.display()))
+        }
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("cannot inspect {}: {error}", path.display())),
     }
-    Ok(())
 }
 
 /// The eight packages the row names, in the order of `release-macos`'s self-check.
@@ -145,6 +161,24 @@ pub(super) fn command() -> Vec<String> {
         argv.push(package.to_owned());
     }
     argv
+}
+
+/// How the release workflow and the README build the `mac-gui` driver; the runner builds it the
+/// same way on R and records the SHA-256 of what Cargo built (review round 4, BLOCKER 1). The
+/// first entry is the environment the build is given.
+pub(super) fn driver_command() -> Vec<String> {
+    [
+        "CARGO_PROFILE_RELEASE_PANIC=unwind",
+        "cargo",
+        "build",
+        "--locked",
+        "--release",
+        "-p",
+        "stickymd-smoke",
+        "--message-format=json",
+    ]
+    .map(str::to_owned)
+    .to_vec()
 }
 
 /// The explicit run of `tests`, ignored ones included, by exact name.
@@ -244,6 +278,24 @@ pub(super) struct Run {
     pub cases: Vec<Case>,
 }
 
+/// How a process ended: its exit code, a signal, never started, or not known (it was started but
+/// could not be followed to its end). Only the first two are results (review round 4).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Exit {
+    Code(i32),
+    Signal,
+    NotStarted,
+    Unknown,
+}
+
+/// The `mac-gui` driver the run built on R: the command, and the SHA-256 of what Cargo built or
+/// why there is none.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Driver {
+    pub command: Vec<String>,
+    pub sha256: Result<String, String>,
+}
+
 /// The source identity at one end of the run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Side {
@@ -273,7 +325,10 @@ pub(super) struct Explicit {
     pub target: Option<Target>,
     pub counts: Option<Counts>,
     pub cases: Vec<Case>,
-    pub exit_code: Option<i32>,
+    /// Of `tests`, those stickymd-mac's binary names in its own listing, taken before any run, so
+    /// the check does not need the main run to have reached that binary (review round 4).
+    pub listed: Vec<String>,
+    pub exit: Exit,
     /// P18-L08's two volumes as its tests measured them on the directories their assertions use
     /// (`case-insensitive` or `case-sensitive`), reported through `STICKYMD_VOLUME_REPORT`;
     /// `None` when not reported, and for P16-S06.
@@ -284,15 +339,17 @@ pub(super) struct Explicit {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Receipt {
     pub release_source: String,
+    /// The identity of this run, as `RUN` holds it while this receipt stands.
+    pub run: String,
     pub host: Host,
     pub start: Side,
     pub end: Side,
     pub command: Vec<String>,
-    /// `None` when the process ended by a signal or never started.
-    pub exit_code: Option<i32>,
+    pub exit: Exit,
     pub expected: Vec<Target>,
     pub binaries: Vec<Run>,
     pub explicit: Vec<Explicit>,
+    pub driver: Driver,
     /// What the runner could not establish (discovery or output it could not read).
     pub problems: Vec<String>,
 }
@@ -356,13 +413,15 @@ pub(super) fn fixture(release: &str, expected: Vec<Target>) -> Receipt {
                     outcome: CaseOutcome::Ok,
                 })
                 .collect(),
-            exit_code: Some(0),
+            listed: tests.iter().map(|t| (*t).to_owned()).collect(),
+            exit: Exit::Code(0),
             temporary_volume: (*item == "same-key").then(|| "case-insensitive".to_owned()),
             image_volume: (*item == "same-key").then(|| "case-sensitive".to_owned()),
         })
         .collect();
     Receipt {
         release_source: release.to_owned(),
+        run: "1764000000000000000-4242".to_owned(),
         host: Host {
             product_name: "macOS".into(),
             product_version: "27.2".into(),
@@ -381,10 +440,14 @@ pub(super) fn fixture(release: &str, expected: Vec<Target>) -> Receipt {
             clean: true,
         },
         command: command(),
-        exit_code: Some(0),
+        exit: Exit::Code(0),
         expected,
         binaries,
         explicit,
+        driver: Driver {
+            command: driver_command(),
+            sha256: Ok("1".repeat(64)),
+        },
         problems: Vec::new(),
     }
 }

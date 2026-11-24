@@ -103,10 +103,11 @@ pub(in super::super) fn ready_command(
     let run_lock = source_tests::lock_for_reading(root)?;
     let receipt = match &run_lock {
         source_tests::Reading::Busy => Read::Missing("a source-test run is in progress".to_owned()),
-        source_tests::Reading::Free { held, .. } => {
-            read_receipt(&root.join(source_tests::RECEIPT), *held)?
-        }
+        source_tests::Reading::Free { held, .. } => source_tests::read_receipt(root, *held)?,
     };
+    // R's driver is the one the run on R built (review round 4, BLOCKER 1): `--driver` must be
+    // that file, or no `mac-gui` run counts as R's; a FAIL still counts whatever the driver.
+    let driver_rule = judge::r_driver(&driver, borrow(&receipt), &release);
     let ledger_path = root
         .join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
         .join("records.jsonl");
@@ -157,7 +158,7 @@ pub(in super::super) fn ready_command(
         release: &release,
         batch,
         macos_major,
-        driver: &driver,
+        driver: driver_rule.as_deref().map_err(String::as_str),
         candidate: borrow(&candidate),
         ledger: match &ledger {
             Read::Present(records) => Read::Present(records.as_slice()),
@@ -241,77 +242,5 @@ fn borrow<T>(read: &judge::Read<T>) -> judge::Read<&T> {
         judge::Read::Present(value) => judge::Read::Present(value),
         judge::Read::Missing(reason) => judge::Read::Missing(reason.clone()),
         judge::Read::Invalid(reason) => judge::Read::Invalid(reason.clone()),
-    }
-}
-
-/// The source-test receipt at `path`, read under the run lock when `held`. A receipt is written
-/// only under that lock, so one without the lock beside it is not read unlocked (review round 3,
-/// B5).
-#[cfg(target_os = "macos")]
-fn read_receipt(path: &Path, held: bool) -> Result<judge::Read<source_tests::Receipt>, String> {
-    use judge::Read;
-    source_tests::refuse_link(path)?;
-    Ok(match std::fs::read_to_string(path) {
-        Ok(_) if !held => Read::Invalid(
-            "the source-test receipt has no run lock beside it; run release macos-source-tests on R again"
-                .to_owned(),
-        ),
-        Ok(text) => match source_tests::parse(&text) {
-            Ok(receipt) => Read::Present(receipt),
-            Err(error) => Read::Invalid(format!("the source-test receipt is invalid: {error}")),
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Read::Missing(
-            "no source-test receipt: run release macos-source-tests on R".to_owned(),
-        ),
-        Err(error) => Read::Invalid(format!("cannot read the source-test receipt: {error}")),
-    })
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod reading_tests {
-    use super::{judge::Read, read_receipt, source_tests};
-
-    /// Review round 3, B5: no lock file means no run ever held it, and then a receipt found
-    /// there is not consumed; a held lock reads it; a lock another holder keeps is busy.
-    #[test]
-    fn a_receipt_is_read_only_under_its_lock() {
-        let scratch = stickymd_package::temporary::TemporaryDirectory::new("receipt-lock").unwrap();
-        let root = scratch.path();
-        let receipt = root.join(source_tests::RECEIPT);
-        std::fs::create_dir_all(receipt.parent().unwrap()).unwrap();
-        assert!(matches!(
-            read_receipt(&receipt, false),
-            Ok(Read::Missing(_))
-        ));
-        std::fs::write(&receipt, "{}").unwrap();
-        assert!(
-            matches!(read_receipt(&receipt, false), Ok(Read::Invalid(reason)) if reason.contains("no run lock"))
-        );
-        assert!(
-            matches!(read_receipt(&receipt, true), Ok(Read::Invalid(reason)) if reason.contains("invalid"))
-        );
-        assert!(matches!(
-            source_tests::lock_for_reading(root),
-            Ok(source_tests::Reading::Free { held: false, .. })
-        ));
-        let run = source_tests::lock_for_run(root).unwrap().unwrap();
-        assert!(matches!(
-            source_tests::lock_for_reading(root),
-            Ok(source_tests::Reading::Busy)
-        ));
-        drop(run);
-        // A child another test forks meanwhile shares the lock until its exec closes it, so the
-        // release may lag briefly (as in the ledger's writer-lock test).
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while !matches!(
-            source_tests::lock_for_reading(root),
-            Ok(source_tests::Reading::Free { held: true, .. })
-        ) {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the run lock was not released"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
     }
 }

@@ -17,6 +17,9 @@ fn hex(digit: char) -> String {
     std::iter::repeat_n(digit, 64).collect()
 }
 
+/// R's driver in these samples: `hex('1')`, the driver the fixture receipt's run built.
+const R_DRIVER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
 fn candidate() -> Candidate {
     Candidate {
         receipt_sha256: hex('c'),
@@ -110,7 +113,7 @@ fn run(candidate: Read<&Candidate>, records: &[Record], tests: &Receipt) -> Vec<
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
-        driver: &hex('1'),
+        driver: Ok(R_DRIVER),
         candidate,
         ledger: Read::Present(records),
         source_tests: Read::Present(tests),
@@ -360,7 +363,7 @@ fn r03_counts_only_this_batch_and_a_fail_on_these_bytes_blocks() {
         release: R,
         batch: None,
         macos_major: 27,
-        driver: &hex('1'),
+        driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&records),
         source_tests: Read::Present(&receipt()),
@@ -405,14 +408,14 @@ fn the_source_rows_follow_the_receipt_on_r() {
     assert_line(&lines, "P16-S01", Verdict::NotTested, "not 1111");
     assert_line(&lines, "same-key", Verdict::NotTested, "not 1111");
     let mut failing = receipt();
-    failing.exit_code = Some(101);
+    failing.exit = super::source_tests::Exit::Code(101);
     let lines = run(Read::Present(&candidate), &ledger(), &failing);
-    assert_line(&lines, "P16-S01", Verdict::Fail, "exited");
+    assert_line(&lines, "P16-S01", Verdict::Fail, "ended with Code(101)");
     let lines = judge(&Inputs {
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
-        driver: &hex('1'),
+        driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Missing("no source-test receipt".into()),
@@ -434,7 +437,7 @@ fn an_unreadable_ledger_leaves_the_ledger_rows_open() {
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
-        driver: &hex('1'),
+        driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
         ledger: Read::Invalid("the ledger is unreadable: line 3".into()),
         source_tests: Read::Present(&receipt),
@@ -575,9 +578,9 @@ fn a_waiver_never_stands_for_a_fail_or_an_unwaivable_row() {
     assert_line(&lines, "P16-W02", Verdict::Waived, "no PASS of P16-W02");
     assert_line(&lines, "P16-R03", Verdict::NotTested, "no PASS of P16-R03");
     let mut failing = receipt();
-    failing.exit_code = Some(101);
+    failing.exit = super::source_tests::Exit::Code(101);
     let lines = run(Read::Present(&candidate), &records, &failing);
-    assert_line(&lines, "P16-S01", Verdict::Fail, "exited");
+    assert_line(&lines, "P16-S01", Verdict::Fail, "ended with Code(101)");
 }
 
 #[test]
@@ -752,7 +755,7 @@ fn without_r_s_target_list_the_source_rows_stay_open() {
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
-        driver: &hex('1'),
+        driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Present(&receipt),
@@ -906,7 +909,7 @@ fn the_download_path_needs_its_outcomes_and_the_checked_major_version() {
         release: R,
         batch: Some("rc1"),
         macos_major: 28,
-        driver: &hex('1'),
+        driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&records),
         source_tests: Read::Present(&receipt()),
@@ -999,18 +1002,23 @@ fn an_r03_fail_beside_a_clean_group_is_a_fail_in_either_order() {
 fn a_recorded_failure_beats_a_missing_target_list() {
     let candidate = candidate();
     let mut failing = receipt();
-    failing.exit_code = Some(101);
+    failing.exit = super::source_tests::Exit::Code(101);
     let lines = judge(&Inputs {
         release: R,
         batch: Some("rc1"),
         macos_major: 27,
-        driver: &hex('1'),
+        driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Present(&failing),
         targets: Read::Invalid("cannot list R's test targets".into()),
     });
-    assert_line(&lines, "source-tests", Verdict::Fail, "exited");
+    assert_line(
+        &lines,
+        "source-tests",
+        Verdict::Fail,
+        "ended with Code(101)",
+    );
 }
 
 /// Review round 3, S7: one complete ProductVersion, or no major version at all.
@@ -1028,4 +1036,51 @@ fn the_major_version_needs_one_complete_product_version() {
         None
     );
     assert_eq!(major_version("ProductVersion:"), None);
+    // Review round 4, BLOCKER 5: a second copy cut off after its label is still a second label.
+    assert_eq!(
+        major_version("ProductVersion: 27.2 BuildVersion: 27C55 ProductVersion:"),
+        None
+    );
+}
+
+/// Review round 4, BLOCKER 1: `--driver` counts only as the driver the run on R built; a file
+/// from an earlier build, or no receipt, gives no `mac-gui` PASS, and a FAIL still counts.
+#[test]
+fn only_the_driver_built_on_r_holds_a_gui_row() {
+    use super::judge::r_driver;
+    let receipt = receipt();
+    assert_eq!(
+        r_driver(R_DRIVER, Read::Present(&receipt), R).unwrap(),
+        R_DRIVER
+    );
+    let stale = r_driver(&hex('2'), Read::Present(&receipt), R).unwrap_err();
+    assert!(
+        stale.contains("not to the driver the run on R built"),
+        "{stale}"
+    );
+    assert!(r_driver(R_DRIVER, Read::Missing("none".into()), R).is_err());
+    let candidate = candidate();
+    let mut failing = ledger();
+    failing.push(record("W03", "FAIL", '2', &candidate.built, '9'));
+    for records in [ledger(), failing] {
+        let lines = judge(&Inputs {
+            release: R,
+            batch: Some("rc1"),
+            macos_major: 27,
+            driver: Err(&stale),
+            candidate: Read::Present(&candidate),
+            ledger: Read::Present(&records),
+            source_tests: Read::Present(&receipt),
+            targets: Read::Present(&receipt.expected),
+        });
+        assert_line(
+            &lines,
+            "P16-W02",
+            Verdict::NotTested,
+            "counts as R's driver's",
+        );
+        if records.len() > ledger().len() {
+            assert_line(&lines, "P16-W03", Verdict::Fail, "a FAIL of P16-W03");
+        }
+    }
 }

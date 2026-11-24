@@ -5,8 +5,8 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 use super::{
-    Case, CaseOutcome, Counts, EXPLICIT, Explicit, PACKAGES, Receipt, Run, Target, command,
-    explicit_command, explicit_target,
+    Case, CaseOutcome, Counts, EXPLICIT, Exit, Explicit, PACKAGES, Receipt, Target, command,
+    driver_command, explicit_command, explicit_target, ignored,
 };
 
 /// A gate verdict from a receipt: not established (`NotTested`), a recorded failure, or PASS.
@@ -33,12 +33,8 @@ pub(in super::super) fn judge(receipt: &Receipt, release: &str, targets: &[Targe
             s06: Outcome::NotTested(reason),
         };
     }
-    let listed = receipt
-        .binaries
-        .iter()
-        .find(|run| run.target == explicit_target());
     let explicit = |item: &str| match receipt.explicit.iter().find(|e| e.item == item) {
-        Some(entry) => explicit_run(entry, listed, item == "same-key"),
+        Some(entry) => explicit_run(entry, item == "same-key"),
         None => Outcome::NotTested(format!("the receipt has no explicit run for {item}")),
     };
     Verdicts {
@@ -46,6 +42,25 @@ pub(in super::super) fn judge(receipt: &Receipt, release: &str, targets: &[Targe
         same_key: explicit("same-key"),
         s06: explicit("P16-S06"),
     }
+}
+
+/// The SHA-256 of the `mac-gui` driver the receipt's run built on R, or why it names none: only a
+/// receipt of R (the same identity the rows need) built with the documented command can say which
+/// driver is R's (review round 4, BLOCKER 1).
+pub(in super::super) fn driver_of(receipt: &Receipt, release: &str) -> Result<String, String> {
+    identity(receipt, release)?;
+    if receipt.driver.command != driver_command() {
+        return Err(format!(
+            "the receipt's driver was built with {:?}, not the documented command",
+            receipt.driver.command
+        ));
+    }
+    receipt
+        .driver
+        .sha256
+        .as_ref()
+        .map(|sha256| sha256.to_ascii_lowercase())
+        .map_err(|error| format!("the run on R built no driver: {error}"))
 }
 
 /// R, both ends clean at R, the commands exactly, a macOS arm64 host.
@@ -137,13 +152,22 @@ fn named(target: &Target) -> String {
 }
 
 fn main(receipt: &Receipt, targets: &[Target]) -> Outcome {
-    if receipt.exit_code != Some(0) {
-        return Outcome::Fail(format!("cargo test exited with {:?}", receipt.exit_code));
-    }
+    // A failure the run printed counts however the process ended; then how it ended: an exit code
+    // or a signal is a result, a process that never started or could not be followed is not
+    // (review round 4).
     if let Some(run) = receipt.binaries.iter().find(|run| {
         run.counts.failed > 0 || run.cases.iter().any(|c| c.outcome == CaseOutcome::Failed)
     }) {
         return Outcome::Fail(format!("{}: a test failed", named(&run.target)));
+    }
+    match receipt.exit {
+        Exit::Code(0) => {}
+        Exit::Code(_) | Exit::Signal => {
+            return Outcome::Fail(format!("cargo test ended with {:?}", receipt.exit));
+        }
+        Exit::NotStarted | Exit::Unknown => {
+            return Outcome::NotTested(format!("cargo test has no result: {:?}", receipt.exit));
+        }
     }
     if let Some(problem) = receipt.problems.first() {
         return Outcome::NotTested(format!("the runner recorded: {problem}"));
@@ -200,19 +224,40 @@ fn main(receipt: &Receipt, targets: &[Target]) -> Outcome {
             return Outcome::NotTested(format!("{}: {reason}", named(&run.target)));
         }
     }
+    // Every test a listing marks ignored is classified, whatever form its `ignore` took in the
+    // source (review round 4, BLOCKER 3).
+    for run in &receipt.binaries {
+        if let Some(case) = run.cases.iter().find(|case| {
+            case.ignored
+                && ignored::role(&run.target.package, &run.target.name, &case.name).is_none()
+        }) {
+            return Outcome::NotTested(format!(
+                "{} is ignored in {} but not classified; classify it first (plan 11)",
+                case.name,
+                named(&run.target)
+            ));
+        }
+    }
     Outcome::Pass
 }
 
-/// An explicit run: the stickymd-mac binary ran exactly its tests, each named as the main run's
-/// listing of that binary names it, and each ok; P18-L08 also needs the probed temporary volume.
-fn explicit_run(entry: &Explicit, listed: Option<&Run>, needs_volume: bool) -> Outcome {
-    if entry.exit_code != Some(0)
+/// An explicit run: the stickymd-mac binary ran exactly its tests, each named in that binary's
+/// own listing, and each ok; P18-L08 also needs both volumes as its tests measured them.
+fn explicit_run(entry: &Explicit, needs_volume: bool) -> Outcome {
+    if matches!(entry.exit, Exit::Code(code) if code != 0)
+        || entry.exit == Exit::Signal
         || entry.cases.iter().any(|c| c.outcome == CaseOutcome::Failed)
         || entry.counts.is_some_and(|counts| counts.failed > 0)
     {
         return Outcome::Fail(format!(
-            "the explicit run for {} exited with {:?} or recorded a failure",
-            entry.item, entry.exit_code
+            "the explicit run for {} ended with {:?} or recorded a failure",
+            entry.item, entry.exit
+        ));
+    }
+    if entry.exit != Exit::Code(0) {
+        return Outcome::NotTested(format!(
+            "the explicit run for {} has no result: {:?}",
+            entry.item, entry.exit
         ));
     }
     if entry.target.as_ref() != Some(&explicit_target()) {
@@ -243,14 +288,14 @@ fn explicit_run(entry: &Explicit, listed: Option<&Run>, needs_volume: bool) -> O
             entry.item
         ));
     }
-    let Some(listed) = listed else {
-        return Outcome::NotTested("stickymd-mac's binary did not run in the main run".to_owned());
-    };
-    if let Some(test) = wanted
-        .iter()
-        .find(|test| !listed.cases.iter().any(|c| c.name == **test))
-    {
-        return Outcome::NotTested(format!("{test} is not a test stickymd-mac's binary lists"));
+    // The binary's own listing, taken before the main run, so a main run that stopped early
+    // (Cargo stops at the first failing binary) does not void this one (review round 4).
+    let mut listed: Vec<&str> = entry.listed.iter().map(String::as_str).collect();
+    listed.sort_unstable();
+    if listed != wanted {
+        return Outcome::NotTested(format!(
+            "stickymd-mac's binary lists {listed:?} of {wanted:?}"
+        ));
     }
     // P18-L08's two volumes, as the tests measured them where their assertions ran (review
     // round 3, B4): the temporary one must ignore case, the mounted image must not.

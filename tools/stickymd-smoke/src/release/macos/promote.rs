@@ -928,7 +928,8 @@ mod tests {
     }
 
     /// Review round 2, finding 1: a ZIP rebuilt from the `.app` with the receipt rewritten to
-    /// name it still fails, because the staged checksum file names the workflow's ZIP.
+    /// name it still fails, because the staged checksum file names the workflow's ZIP. The file
+    /// is made by the real generator, so only the ZIP's digest differs (review round 4).
     #[test]
     fn a_receipt_rewritten_for_a_rebuilt_zip_fails_the_checksum_file() {
         let scratch = TemporaryDirectory::new("macos-resolve-rewritten").unwrap();
@@ -943,12 +944,11 @@ mod tests {
         fs::create_dir_all(&staging).unwrap();
         let digest = |bytes: &[u8]| integrity::sha256_bytes(bytes).unwrap();
         let rebuilt = b"ditto -c -k of the staged .app";
-        let sums = format!(
-            "{}  {zip_name}\n{}  {}\n",
-            digest(b"the workflow's archive"),
-            digest(b"sbom"),
-            Platform::MacOsArm64.sbom_file()
-        );
+        let sums = integrity::render_checksums(&[
+            (zip_name.as_str(), &digest(b"the workflow's archive")),
+            (Platform::MacOsArm64.sbom_file(), &digest(b"sbom")),
+        ])
+        .unwrap();
         fs::write(staging.join(&zip_name), rebuilt).unwrap();
         fs::write(staging.join(Platform::MacOsArm64.checksum_file()), &sums).unwrap();
         fs::write(staging.join(Platform::MacOsArm64.sbom_file()), b"sbom").unwrap();
@@ -964,7 +964,9 @@ mod tests {
         fs::write(root.join(RECEIPT), receipt).unwrap();
         let error = resolve(root, &"1".repeat(40)).err().unwrap();
         assert!(
-            error.contains("does not list the receipt's files"),
+            error.contains(&format!(
+                "does not list the receipt's files: Checksum mismatch for {zip_name}"
+            )),
             "{error}"
         );
     }

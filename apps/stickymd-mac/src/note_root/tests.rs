@@ -77,10 +77,11 @@ impl Drop for World {
     }
 }
 
-/// Whether the volume holding `directory` ignores case.
+/// Whether the volume holding `directory` ignores case; an error asking is a test failure, never
+/// an answer (review round 4, BLOCKER 6).
 fn ignores_case(directory: &Path) -> bool {
     fs::write(directory.join("case-probe"), b"").unwrap();
-    let insensitive = directory.join("CASE-PROBE").exists();
+    let insensitive = directory.join("CASE-PROBE").try_exists().unwrap();
     fs::remove_file(directory.join("case-probe")).unwrap();
     insensitive
 }
@@ -312,10 +313,12 @@ fn one_key_is_exclusive_and_another_key_runs_beside_it() {
         ("root-keys-case", "stickymd"),
     ] {
         let world = World::new(label);
+        // One probe: what is reported is what decides (review round 4, BLOCKER 6).
+        let insensitive = case_insensitive(&world);
         if home_name == "stickymd" {
-            report_volume("temporary", case_insensitive(&world));
+            report_volume("temporary", insensitive);
         }
-        if home_name == "stickymd" && !case_insensitive(&world) {
+        if home_name == "stickymd" && !insensitive {
             // The temporary volume decides; the case-sensitive side has its own image test.
             eprintln!("skipped on a case-sensitive temporary volume");
             continue;

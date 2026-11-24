@@ -221,7 +221,8 @@ fn the_receipt_round_trips_and_is_read_strictly() {
     assert_eq!(parse(&text).unwrap(), receipt);
     let extra = text.replacen("\"problems\":[]", "\"problems\":[],\"passed\":true", 1);
     assert!(parse(&extra).unwrap_err().contains("exactly the fields"));
-    let missing = text.replacen(",\"exit_code\":0,\"expected\"", ",\"expected\"", 1);
+    let missing = text.replacen(",\"exit\":0,\"expected\"", ",\"expected\"", 1);
+    assert_ne!(missing, text);
     assert!(parse(&missing).is_err());
     let mistyped = text.replacen("\"clean\":true", "\"clean\":\"true\"", 1);
     assert!(parse(&mistyped).is_err());
@@ -232,8 +233,16 @@ fn the_receipt_round_trips_and_is_read_strictly() {
     );
     assert!(parse(&duplicated).unwrap_err().contains("duplicate"));
     assert!(parse(&format!("{text}{{}}")).is_err());
-    let older = text.replacen("\"schema_version\":2", "\"schema_version\":1", 1);
-    assert!(parse(&older).is_err());
+    // Schema 2 (no run identity, no driver, no ending) and schema 1 are refused (review round 4).
+    for older in [1, 2] {
+        let older = text.replacen(
+            "\"schema_version\":3",
+            &format!("\"schema_version\":{older}"),
+            1,
+        );
+        assert_ne!(older, text);
+        assert!(parse(&older).unwrap_err().contains("schema 3"));
+    }
 }
 
 #[test]
@@ -314,11 +323,11 @@ fn a_recorded_failure_is_a_fail() {
     failing.binaries[2].counts.ran += 1;
     failed(&verdicts(&failing).0, "a test failed");
     let mut exited = good();
-    exited.exit_code = Some(101);
-    failed(&verdicts(&exited).0, "Some(101)");
+    exited.exit = Exit::Code(101);
+    failed(&verdicts(&exited).0, "Code(101)");
     let mut killed = good();
-    killed.exit_code = None;
-    failed(&verdicts(&killed).0, "None");
+    killed.exit = Exit::Signal;
+    failed(&verdicts(&killed).0, "Signal");
     // Review round 3, NEEDS_VERIFICATION: a failed test alone, the counts left as they are.
     let mut case = good();
     case.binaries[2].cases[0].outcome = CaseOutcome::Failed;
@@ -342,7 +351,7 @@ fn both_same_key_tests_must_pass() {
     not_tested(&verdicts(&skipped).1, "not exactly");
     let mut failing = good();
     failing.explicit[0].cases[1].outcome = CaseOutcome::Failed;
-    failing.explicit[0].exit_code = Some(101);
+    failing.explicit[0].exit = Exit::Code(101);
     failed(&verdicts(&failing).1, "recorded a failure");
     let mut silent = good();
     silent.explicit[0].counts = None;
@@ -358,19 +367,12 @@ fn the_same_key_run_must_be_stickymd_mac_s_two_tests_on_the_probed_volume() {
     let mut elsewhere = good();
     elsewhere.explicit[0].target = Some(target("stickymd-core", "lib", "stickymd_core"));
     not_tested(&verdicts(&elsewhere).1, "not attributed");
+    // The binary's own listing, as the runner took it before any run, lacks one of the two.
     let mut unlisted = good();
-    let mac = unlisted
-        .binaries
-        .iter_mut()
-        .find(|run| run.target == explicit_target())
-        .unwrap();
-    mac.cases.retain(|c| c.name != SAME_KEY_TESTS[1]);
-    mac.counts.ran -= 1;
-    mac.counts.ignored -= 1;
-    not_tested(
-        &verdicts(&unlisted).1,
-        "not a test stickymd-mac's binary lists",
-    );
+    unlisted.explicit[0]
+        .listed
+        .retain(|name| name != SAME_KEY_TESTS[1]);
+    not_tested(&verdicts(&unlisted).1, "stickymd-mac's binary lists");
     let mut volume = good();
     volume.explicit[0].temporary_volume = None;
     not_tested(&verdicts(&volume).1, "did not measure");
@@ -592,413 +594,158 @@ fn the_listed_targets_come_from_cargo_metadata() {
     );
 }
 
-/// Every `#[ignore]` test of the eight packages, by file and name, and what it is for. A Source
-/// row whose test is ignored is not proven by the default run (plan 11 #macos-release-gate): it
-/// needs an explicit run in the receipt (P16-S06, P18-L08). A new or moved ignored test fails this
-/// until it is classified here (review round 2, SHOULD_FIX 9).
+/// The classified ignored tests (review round 4, BLOCKER 3): no test twice, and each explicit
+/// run's ignored tests carry exactly that run's role, in stickymd-mac's binary.
 #[test]
-fn every_ignored_test_of_the_eight_packages_is_classified() {
-    const IGNORED: &[(&str, &str, &str)] = &[
-        (
-            "apps/stickymd-mac/src/assets/transaction.rs",
-            "image_paste_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "apps/stickymd-mac/src/export/mod.rs",
-            "export_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "apps/stickymd-mac/src/note_root/tests.rs",
-            "on_a_case_sensitive_volume_case_makes_another_key",
-            "P18-L08, explicit run",
-        ),
-        (
-            "apps/stickymd-mac/src/paths.rs",
-            "an_exfat_volume_is_refused_and_keeps_no_probe_file",
-            "P16-S06, explicit run",
-        ),
-        (
-            "crates/stickymd-app/src/execution/preview_worker.rs",
-            "phase6_source_edit_during_math_build_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-app/src/flow/window/reducer.rs",
-            "phase8_performance_window_reducer_and_geometry",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-app/src/source_search.rs",
-            "phase14_one_mib_unicode_case_insensitive_search_p95_is_bounded",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-core/src/assets.rs",
-            "phase7_managed_scan_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-desktop/src/controls/tests.rs",
-            "phase8_performance_control_layout_and_hit_test",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-desktop/src/shell/mod.rs",
-            "phase3_source_pipeline_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-posix/src/user.rs",
-            "print_home_directory",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/image.rs",
-            "phase7_image_decode_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/math/engine.rs",
-            "phase6_formula_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/math_action.rs",
-            "phase11b_performance_math_action_one_mib",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/math_action.rs",
-            "phase11b_performance_math_action_stays_linear_in_shifted_paragraphs",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline.rs",
-            "phase10_zoom_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline.rs",
-            "phase5_preview_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline.rs",
-            "phase6_math_document_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline/audit_tests.rs",
-            "phase5_preview_release_baseline_image_adapter_scroll",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline/audit_tests.rs",
-            "phase5_preview_release_baseline_long_code_scroll",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline/horizontal_tests.rs",
-            "phase5_preview_release_baseline_horizontal_long_line",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline/image_refresh_tests.rs",
-            "phase7_image_band_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline/resource_tests.rs",
-            "phase10_preview_resource_cache_retention_diagnostic",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline/resource_tests.rs",
-            "phase10_preview_resource_glyph_growth_diagnostic",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline/resource_tests.rs",
-            "phase6_preview_resource_formula_budget_diagnostic",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/pipeline/text_reuse_tests.rs",
-            "phase5_preview_release_baseline_text_reuse",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/semantic_conversion.rs",
-            "phase11b_performance_one_mib_with_one_thousand_math_nodes",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/preview/text_layout.rs",
-            "phase14_preview_selection_geometry_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/source/projection/startup_tests.rs",
-            "source_initialization_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "crates/stickymd-render/src/source/scrollbar.rs",
-            "scrollbar_release_baseline",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-package/src/sbom_workflow/diagnostics.rs",
-            "compare_in_process_and_legacy_dispatch",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g3.rs",
-            "c2d_crash_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g3.rs",
-            "export_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g3.rs",
-            "fake_asset_safety_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g3.rs",
-            "image_paste_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g3.rs",
-            "user_asset_safety_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g4/preflight.rs",
-            "c2d_dock_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g4/preflight.rs",
-            "c2d_identity_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g4/preflight.rs",
-            "c2d_ime_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g4/preflight.rs",
-            "c2d_search_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g4/preflight.rs",
-            "c2d_tray_failure_restores_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g4/preflight.rs",
-            "c2d_tray_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g4/preflight.rs",
-            "c2d_two_copies_empty_note_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g4/preflight.rs",
-            "c2d_two_copies_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g4/preflight.rs",
-            "math_conversion_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g5/preflight.rs",
-            "acceptance_automation_compact_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g5/preflight.rs",
-            "acceptance_automation_presentation_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g5/preflight.rs",
-            "acceptance_automation_rendering_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/g5/preflight.rs",
-            "acceptance_automation_shell_local_preflight",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/module_ledger/fingerprint/tests.rs",
-            "module_planning_profile",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/module_ledger/reuse_tests.rs",
-            "lookup_all_profile",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/module_ledger/store/tests.rs",
-            "link_scan_profile",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/resource_diagnostics/batch_tests.rs",
-            "native_diagnostic_batch_identity_profile",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/resource_diagnostics/tests.rs",
-            "native_diagnostic_identity_lookup_profile",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/qualification/resource_diagnostics/tests.rs",
-            "native_diagnostic_resource_identity_is_stable",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/release/package_diagnostics.rs",
-            "compare_package_dispatch_paths",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/release/package_diagnostics.rs",
-            "direct_package_runtime_preserves_output_and_cleanup",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/runner/headless/local_build.rs",
-            "actual_locked_local_build_ignores_stale_qualification_receipts",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/runtime/native_diagnostics.rs",
-            "native_startup_cpu_diagnostic",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/runtime/native_diagnostics.rs",
-            "native_window_interaction_diagnostic",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/runtime/resources/native_diagnostics.rs",
-            "native_window_comparison_diagnostic",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/runtime/resources/native_diagnostics.rs",
-            "native_zoom_cpu_diagnostic",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/runtime/resources/native_reuse_tests.rs",
-            "native_resource_alias_and_batch_reuse",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/runtime/resources/probe.rs",
-            "native_resource_desktop_probe",
-            "timing or diagnostic; no gate row",
-        ),
-        (
-            "tools/stickymd-smoke/src/runtime/startup_focus.rs",
-            "native_startup_focus_diagnostic",
-            "timing or diagnostic; no gate row",
-        ),
-    ];
-    let root = root();
-    let mut found = Vec::new();
-    let mut stack: Vec<std::path::PathBuf> = [
-        "crates/stickymd-core",
-        "crates/stickymd-render",
-        "crates/stickymd-app",
-        "crates/stickymd-desktop",
-        "crates/stickymd-posix",
-        "apps/stickymd-mac",
-        "tools/stickymd-package",
-        "tools/stickymd-smoke",
-    ]
-    .iter()
-    .map(|dir| root.join(dir))
-    .collect();
-    while let Some(path) = stack.pop() {
-        if path.is_dir() {
-            for entry in std::fs::read_dir(&path).unwrap() {
-                stack.push(entry.unwrap().path());
-            }
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            let text = std::fs::read_to_string(&path).unwrap();
-            let lines: Vec<&str> = text.lines().collect();
-            let relative = path
-                .strip_prefix(&root)
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/");
-            for (at, line) in lines.iter().enumerate() {
-                // Plain `#[ignore]` and a conditional `#[cfg_attr(…, ignore…)]` (review round 3, S5).
-                let attribute = line.trim_start();
-                let ignores = attribute.starts_with("#[ignore")
-                    || (attribute.starts_with("#[cfg_attr(") && attribute.contains("ignore"));
-                if !ignores {
-                    continue;
-                }
-                let name = lines[at..lines.len().min(at + 6)]
-                    .iter()
-                    .find_map(|line| {
-                        let rest = line.split("fn ").nth(1)?;
-                        Some(rest.split('(').next()?.trim().to_owned())
-                    })
-                    .unwrap_or_default();
-                found.push((relative.clone(), name));
-            }
-        }
-    }
-    found.sort();
-    let mut listed: Vec<(String, String)> = IGNORED
-        .iter()
-        .map(|(file, name, _)| ((*file).to_owned(), (*name).to_owned()))
-        .collect();
-    listed.sort();
-    assert_eq!(
-        found, listed,
-        "classify every ignored test before changing this list"
-    );
-    // Each ignored test an explicit run carries has exactly its role (review round 3, S5).
+fn the_ignored_table_names_each_test_once_and_the_explicit_runs_by_role() {
+    use super::ignored::{IGNORED, Role, role};
+    let mut keys: Vec<(&str, &str, &str)> =
+        IGNORED.iter().map(|(p, t, n, _)| (*p, *t, *n)).collect();
+    keys.sort_unstable();
+    assert!(keys.windows(2).all(|pair| pair[0] != pair[1]));
     for (item, tests) in EXPLICIT {
-        let role = match item {
-            "same-key" => "P18-L08, explicit run",
-            "P16-S06" => "P16-S06, explicit run",
-            other => panic!("no role for {other}"),
-        };
         for test in tests.iter().filter(|test| **test != SAME_KEY_TESTS[0]) {
-            let name = test.rsplit("::").next().unwrap();
-            let found: Vec<&str> = IGNORED
-                .iter()
-                .filter(|(_, n, _)| *n == name)
-                .map(|(_, _, r)| *r)
-                .collect();
-            assert_eq!(found, [role], "{test}");
+            assert_eq!(
+                role("stickymd-mac", "stickymd-mac", test),
+                Some(Role::Explicit(item)),
+                "{test}"
+            );
         }
     }
+    for (_, _, name, role) in IGNORED {
+        if let Role::Explicit(item) = role {
+            assert!(
+                EXPLICIT
+                    .iter()
+                    .any(|(i, tests)| *i == item && tests.contains(&name)),
+                "{name}"
+            );
+        }
+    }
+}
+
+/// Review round 4, BLOCKER 3: a test libtest lists as ignored that the table does not classify
+/// (here as a multi-line `cfg_attr` would leave it) keeps the default tests open, though it was
+/// reported faithfully as ignored.
+#[test]
+fn an_unclassified_ignored_test_leaves_the_default_tests_open() {
+    let mut receipt = good();
+    let run = &mut receipt.binaries[0];
+    run.cases.push(Case {
+        name: "persistence::storage::tests::a_failed_directory_sync_is_reported".into(),
+        ignored: true,
+        outcome: CaseOutcome::Ignored,
+    });
+    run.counts.ran += 1;
+    run.counts.ignored += 1;
+    not_tested(&verdicts(&receipt).0, "not classified");
+}
+
+/// Review round 4, SHOULD_FIX: a process that never started, or whose end could not be followed,
+/// is not a result; a failure it printed still is.
+#[test]
+fn a_run_without_a_result_is_open_and_a_printed_failure_still_fails() {
+    for exit in [Exit::NotStarted, Exit::Unknown] {
+        let mut receipt = good();
+        receipt.exit = exit;
+        not_tested(&verdicts(&receipt).0, "has no result");
+        receipt.binaries[2].cases[0].outcome = CaseOutcome::Failed;
+        failed(&verdicts(&receipt).0, "a test failed");
+        let mut explicit = good();
+        explicit.explicit[1].exit = exit;
+        assert!(matches!(s06(&explicit), Outcome::NotTested(ref r) if r.contains("has no result")));
+    }
+}
+
+/// Review round 4, BLOCKER 1: the driver the run on R built counts as R's only when the receipt
+/// is R's and the build was the documented one.
+#[test]
+fn the_receipt_names_r_s_driver_only_for_r_and_the_documented_build() {
+    use super::driver_of;
+    assert_eq!(driver_of(&good(), R).unwrap(), "1".repeat(64));
+    assert!(driver_of(&good(), &"f".repeat(40)).is_err());
+    let mut other = good();
+    other.driver.command.pop();
+    assert!(driver_of(&other, R).unwrap_err().contains("documented"));
+    let mut none = good();
+    none.driver.sha256 = Err("the driver build failed".into());
+    assert!(driver_of(&none, R).unwrap_err().contains("built no driver"));
+}
+
+/// Review round 4, SHOULD_FIX: libtest's mode suffixes, an ignore reason holding ` ... `, and a
+/// doc-test section with rustdoc's two groups (merged, then standalone), as rustc 1.99 prints
+/// them.
+#[test]
+fn modes_reasons_and_two_doc_test_groups_are_read() {
+    let output = "     Running unittests src/lib.rs (target/debug/deps/doctry-0123456789abcdef)
+
+running 3 tests
+test tests::slow ... ignored, slow ... really
+test tests::plain ... ok
+test tests::panics - should panic ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests doctry
+
+running 3 tests
+test src/lib.rs - (line 17) - compile ... ok
+test src/lib.rs - (line 9) - should panic ... ok
+test src/lib.rs - (line 1) ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test src/lib.rs - (line 21) ... ignored
+test src/lib.rs - (line 5) - compile fail ... ok
+test src/lib.rs - (line 13) ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.45s
+
+all doctests ran in 0.96s; merged doctests compilation took 0.17s
+";
+    let sections = output::sections(output).unwrap();
+    assert_eq!(sections.len(), 2);
+    let names =
+        |i: usize| -> Vec<&str> { sections[i].tests.iter().map(|(n, _)| n.as_str()).collect() };
+    assert_eq!(names(0), ["tests::slow", "tests::plain", "tests::panics"]);
+    assert_eq!(sections[0].tests[0].1, CaseOutcome::Ignored);
+    assert_eq!(
+        names(1),
+        [
+            "src/lib.rs - (line 17)",
+            "src/lib.rs - (line 9)",
+            "src/lib.rs - (line 1)",
+            "src/lib.rs - (line 21)",
+            "src/lib.rs - (line 5)",
+            "src/lib.rs - (line 13)",
+        ]
+    );
+    assert_eq!(
+        sections[1].counts,
+        Some(Counts {
+            ran: 6,
+            passed: 5,
+            ignored: 1,
+            ..Counts::default()
+        })
+    );
+    // A test binary still holds one group only.
+    let doubled = output.replacen("   Doc-tests doctry\n", "", 1);
+    assert!(output::sections(&doubled).is_err());
+}
+
+/// Review round 4: a name printed `ok` and then `FAILED` stays a failure, besides the problem.
+#[test]
+fn a_failure_printed_after_an_ok_is_kept() {
+    let printed = vec![
+        ("a::b".to_owned(), CaseOutcome::Ok),
+        ("a::b".to_owned(), CaseOutcome::Failed),
+    ];
+    let (cases, problems) = output::cases(&["a::b".to_owned()], &[], &printed);
+    assert_eq!(cases[0].outcome, CaseOutcome::Failed);
+    assert_eq!(problems, ["a::b is printed twice"]);
 }
 
 /// The same-key tests exist under these names in `stickymd-mac`, the second one ignored.
@@ -1062,7 +809,7 @@ fn the_same_key_run_needs_both_measured_volumes() {
 #[test]
 fn an_explicit_run_fails_on_each_recorded_failure_alone() {
     let mut exited = good();
-    exited.explicit[1].exit_code = Some(101);
+    exited.explicit[1].exit = Exit::Code(101);
     assert!(matches!(s06(&exited), Outcome::Fail(_)));
     let mut case = good();
     case.explicit[1].cases[0].outcome = CaseOutcome::Failed;

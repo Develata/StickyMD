@@ -67,15 +67,22 @@ fn candidate(
         .ok_or("--release-source missing")?;
     let resolved = crate::release::macos::promote::resolve(root, release)
         .map_err(|e| format!("the macOS candidate for {release} does not resolve: {e}"))?;
-    if let Some(checked) = &options.candidate_sha256
-        && *checked != resolved.receipt_sha256
-    {
-        return Err(format!(
-            "the candidate for {release} is now {}, not {checked}, the one named as checked; record against the candidate actually checked",
-            resolved.receipt_sha256
-        ));
-    }
+    still_checked(
+        release,
+        &resolved.receipt_sha256,
+        options.candidate_sha256.as_deref(),
+    )?;
     Ok(resolved)
+}
+
+/// The candidate resolved now must be the one the USER named as checked, when one is named.
+fn still_checked(release: &str, now: &str, checked: Option<&str>) -> Result<(), String> {
+    match checked {
+        Some(checked) if checked != now => Err(format!(
+            "the candidate for {release} is now {now}, not {checked}, the one named as checked; record against the candidate actually checked"
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn release_record(
@@ -278,4 +285,17 @@ pub(super) fn revocation(
     record.validate()?;
     record::consistent_with(existing, &record)?;
     Ok(vec![record])
+}
+
+#[cfg(test)]
+mod checked_tests {
+    /// Review round 4: the USER checked candidate A; by the time it is recorded the resolver
+    /// gives B, and nothing is recorded.
+    #[test]
+    fn a_candidate_replaced_after_its_check_is_not_recorded() {
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        let error = super::still_checked("R", &b, Some(&a)).unwrap_err();
+        assert!(error.contains(&format!("is now {b}, not {a}")), "{error}");
+        assert!(super::still_checked("R", &a, Some(&a)).is_ok());
+    }
 }

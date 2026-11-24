@@ -4,7 +4,8 @@
 //!
 //! A section opens at Cargo's `Running <description> (<path>)` or `Doc-tests <crate>` line and
 //! holds libtest's `running <n> tests` line, one `test <name> ... <outcome>` line per test, and
-//! its `test result: …` line. Anything else is ignored, so a stray line can only make a section
+//! its `test result: …` line; a doc-test section may hold several such groups (rustdoc runs the
+//! merged doc-tests, then the standalone ones), whose counts add up. Anything else is ignored, so a stray line can only make a section
 //! incomplete, doubled or self-contradictory, which is reported, never a PASS. Each binary's own
 //! `--list` names the tests it holds; a run is checked against that listing test by test.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
@@ -28,11 +29,15 @@ pub(in super::super) struct Section {
     pub tests: Vec<(String, CaseOutcome)>,
 }
 
-/// `test <name> ... ok|FAILED|ignored[, <reason>]`, with libtest's ` - should panic` suffix
-/// taken off the name.
+/// The suffixes libtest prints after a test's name for its mode (rustc 1.99 `test::types`); the
+/// listing names the test without them.
+const MODES: [&str; 3] = [" - compile fail", " - compile", " - should panic"];
+
+/// `test <name> ... ok|FAILED|ignored[, <reason>]`, with libtest's mode suffix taken off the name.
+/// A name holds no ` ... `, a reason may (review round 4), so the line splits at the first one.
 fn test_line(line: &str) -> Option<(String, CaseOutcome)> {
     let rest = line.strip_prefix("test ")?;
-    let (name, outcome) = rest.rsplit_once(" ... ")?;
+    let (name, outcome) = rest.split_once(" ... ")?;
     let outcome = match outcome {
         "ok" => CaseOutcome::Ok,
         "FAILED" => CaseOutcome::Failed,
@@ -40,7 +45,10 @@ fn test_line(line: &str) -> Option<(String, CaseOutcome)> {
         other if other.starts_with("ignored, ") => CaseOutcome::Ignored,
         _ => return None,
     };
-    let name = name.strip_suffix(" - should panic").unwrap_or(name);
+    let name = MODES
+        .iter()
+        .find_map(|mode| name.strip_suffix(mode))
+        .unwrap_or(name);
     (!name.is_empty()).then(|| (name.to_owned(), outcome))
 }
 
@@ -97,10 +105,17 @@ pub(in super::super) fn cases(
         .map(|name| Case {
             name: name.clone(),
             ignored: ignored.contains(name),
-            outcome: printed
-                .iter()
-                .find(|(printed, _)| printed == name)
-                .map_or(CaseOutcome::NotRun, |(_, outcome)| *outcome),
+            // A name printed twice is a problem above; a FAILED among its results is kept, so a
+            // failure is never folded away (review round 4).
+            outcome: {
+                let mut found = printed.iter().filter(|(printed, _)| printed == name);
+                let first = found.next().map(|(_, outcome)| *outcome);
+                if found.any(|(_, outcome)| *outcome == CaseOutcome::Failed) {
+                    CaseOutcome::Failed
+                } else {
+                    first.unwrap_or(CaseOutcome::NotRun)
+                }
+            },
         })
         .collect();
     problems.extend(
@@ -183,46 +198,72 @@ fn result(line: &str, ran: u64) -> Result<Counts, String> {
     Ok(counts)
 }
 
-/// The sections of one `cargo test`, in order; every section must end with exactly one result.
+/// Two groups' counts as one, or `None` when a sum overflows.
+fn add(a: Counts, b: Counts) -> Option<Counts> {
+    Some(Counts {
+        ran: a.ran.checked_add(b.ran)?,
+        passed: a.passed.checked_add(b.passed)?,
+        failed: a.failed.checked_add(b.failed)?,
+        ignored: a.ignored.checked_add(b.ignored)?,
+        measured: a.measured.checked_add(b.measured)?,
+        filtered_out: a.filtered_out.checked_add(b.filtered_out)?,
+    })
+}
+
+/// The sections of one `cargo test`, in order. A section's group opens at its `running` line and
+/// closes at its result; a test binary holds exactly one group, a doc-test section one or more.
 pub(in super::super) fn sections(output: &str) -> Result<Vec<Section>, String> {
     let mut sections: Vec<Section> = Vec::new();
-    let mut ran: Option<u64> = None;
+    // The `running` count of the group open in the last section.
+    let mut open: Option<u64> = None;
     for line in output.lines() {
         if let Some(header) = header(line) {
-            if let Some(open) = sections.last().filter(|s| s.counts.is_none()) {
-                return Err(format!("{:?} printed no test result", open.header));
+            if let Some(last) = sections
+                .last()
+                .filter(|s| s.counts.is_none() || open.is_some())
+            {
+                return Err(format!("{:?} printed no test result", last.header));
             }
             sections.push(Section {
                 header,
                 counts: None,
                 tests: Vec::new(),
             });
-            ran = None;
         } else if let Some(count) = running(line) {
             match sections.last() {
-                Some(open) if open.counts.is_none() && ran.is_none() => ran = Some(count),
+                Some(last)
+                    if open.is_none()
+                        && (last.counts.is_none() || matches!(last.header, Header::Doc(_))) =>
+                {
+                    open = Some(count);
+                }
                 _ => return Err(format!("{line:?} outside a test binary's output")),
             }
         } else if !line.starts_with("test result: ")
             && let Some(test) = test_line(line)
         {
             match sections.last_mut() {
-                Some(open) if open.counts.is_none() && ran.is_some() => open.tests.push(test),
+                Some(last) if open.is_some() => last.tests.push(test),
                 _ => return Err(format!("{line:?} outside a test binary's output")),
             }
         } else if line.starts_with("test result: ") {
-            let open = sections
+            let last = sections
                 .last_mut()
-                .filter(|s| s.counts.is_none())
+                .filter(|_| open.is_some())
                 .ok_or_else(|| format!("{line:?} outside a test binary's output"))?;
-            let count = ran
-                .take()
-                .ok_or_else(|| format!("{line:?} without a running line"))?;
-            open.counts = Some(result(line, count)?);
+            let group = result(line, open.take().expect("an open group"))?;
+            last.counts = Some(match last.counts {
+                None => group,
+                Some(before) => add(before, group)
+                    .ok_or_else(|| format!("{:?}: the counts overflow", last.header))?,
+            });
         }
     }
-    if let Some(open) = sections.last().filter(|s| s.counts.is_none()) {
-        return Err(format!("{:?} printed no test result", open.header));
+    if let Some(last) = sections
+        .last()
+        .filter(|s| s.counts.is_none() || open.is_some())
+    {
+        return Err(format!("{:?} printed no test result", last.header));
     }
     Ok(sections)
 }

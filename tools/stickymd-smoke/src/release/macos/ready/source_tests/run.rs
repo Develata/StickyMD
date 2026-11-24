@@ -1,16 +1,21 @@
 //! Runs the source tests on R on a Mac and writes the receipt (plan 11 #macos-readiness-check).
 //! It starts only on a clean checkout of R (as committed, no index flag hiding a change) with no
 //! obvious Cargo runner or wrapper in the environment (USER 2026-11-24, decision (d)); it then
-//! takes the run lock and retires any old receipt (synced to disk) before anything else can
-//! fail, so a run that fails after its start never leaves an earlier PASS standing. Everything
+//! takes the run lock, records its own identity and retires any old receipt (synced to disk)
+//! before anything else can fail, so a run that fails after its start never leaves an earlier
+//! PASS standing: the receipt the gate accepts names the run the record names (review round 4).
+//! It also builds the `mac-gui` driver on R the documented way and records its SHA-256, so the
+//! gate can tell R's driver from any other (review round 4, BLOCKER 1). Everything
 //! after the start is recorded as it happened; the gate, not this runner, decides what the
 //! receipt proves.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 use super::super::identity;
 use super::output::{self, Executable, Listed, Section};
-use super::{EXPLICIT, Explicit, Host, PACKAGES, RECEIPT, Receipt, Side, Target};
-use super::{command, explicit_command, explicit_target};
+use super::{
+    Driver, EXPLICIT, Exit, Explicit, Host, PACKAGES, RECEIPT, RUN, Receipt, Side, Target,
+};
+use super::{command, driver_command, explicit_command, explicit_target};
 use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -73,17 +78,31 @@ fn host(root: &Path) -> Result<Host, String> {
     })
 }
 
+/// A finished command: how it ended, what it printed, and what could not be established.
+struct Merged {
+    exit: Exit,
+    output: String,
+    problem: Option<String>,
+}
+
 /// Runs `argv` in `root` with stdout and stderr on one pipe, echoing it to this process's
-/// stderr; returns the exit code (`None` for a signal) and the output. A read that fails for any
-/// reason but an interruption ends the child before waiting for it, so the pipe cannot fill
-/// while this process waits.
-fn run_merged(
-    root: &Path,
-    argv: &[String],
-    report: Option<&Path>,
-) -> Result<(Option<i32>, String), String> {
-    let (mut reader, writer) =
-        std::io::pipe().map_err(|error| format!("cannot open a pipe: {error}"))?;
+/// stderr. A command that cannot start ends `NotStarted`; one whose output cannot be read to its
+/// end is stopped and ends `Unknown`, so the pipe cannot fill while this process waits; otherwise
+/// it ends with its exit code or a signal (review round 4).
+fn run_merged(root: &Path, argv: &[String], report: Option<&Path>) -> Merged {
+    let not_started = |problem: String| Merged {
+        exit: Exit::NotStarted,
+        output: String::new(),
+        problem: Some(problem),
+    };
+    let (mut reader, writer) = match std::io::pipe() {
+        Ok(pipe) => pipe,
+        Err(error) => return not_started(format!("cannot open a pipe: {error}")),
+    };
+    let shared = match writer.try_clone() {
+        Ok(shared) => shared,
+        Err(error) => return not_started(format!("cannot share the pipe: {error}")),
+    };
     let mut command = Command::new(&argv[0]);
     command
         .args(&argv[1..])
@@ -91,18 +110,15 @@ fn run_merged(
         // Colour codes would hide Cargo's headers; this changes only how output is drawn.
         .env("CARGO_TERM_COLOR", "never")
         .stdin(Stdio::null())
-        .stdout(
-            writer
-                .try_clone()
-                .map_err(|error| format!("cannot share the pipe: {error}"))?,
-        )
+        .stdout(shared)
         .stderr(writer);
     if let Some(report) = report {
         command.env("STICKYMD_VOLUME_REPORT", report);
     }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("cannot start {argv:?}: {error}"))?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => return not_started(format!("cannot start {argv:?}: {error}")),
+    };
     // The command holds the pipe's write ends; drop them so the read ends with the child.
     drop(command);
     let mut bytes = Vec::new();
@@ -122,19 +138,108 @@ fn run_merged(
             Err(error) => break Err(format!("cannot read {argv:?}: {error}")),
         }
     };
+    let output = String::from_utf8_lossy(&bytes).into_owned();
     if let Err(error) = read {
         drop(reader);
         let killed = child.kill().err();
         let _ = child.wait();
-        return Err(match killed {
-            Some(kill) => format!("{error}; it could not be stopped: {kill}"),
-            None => error,
-        });
+        return Merged {
+            exit: Exit::Unknown,
+            output,
+            problem: Some(match killed {
+                Some(kill) => format!("{error}; it could not be stopped: {kill}"),
+                None => error,
+            }),
+        };
     }
-    let status = child
-        .wait()
-        .map_err(|error| format!("cannot wait for {argv:?}: {error}"))?;
-    Ok((status.code(), String::from_utf8_lossy(&bytes).into_owned()))
+    match child.wait() {
+        Ok(status) => Merged {
+            exit: status.code().map_or(Exit::Signal, Exit::Code),
+            output,
+            problem: None,
+        },
+        Err(error) => Merged {
+            exit: Exit::Unknown,
+            output,
+            problem: Some(format!("cannot wait for {argv:?}: {error}")),
+        },
+    }
+}
+
+/// The path of the `stickymd-smoke` binary a `cargo build --message-format=json` built, from its
+/// messages: exactly one such artifact, and a successful build.
+fn driver_path(stdout: &str) -> Result<std::path::PathBuf, String> {
+    use crate::release::json::{self, Value};
+    let mut found = Vec::new();
+    let mut finished = false;
+    for line in stdout.lines().filter(|line| !line.is_empty()) {
+        let message = json::parse(line).map_err(|error| format!("Cargo message: {error}"))?;
+        match message.field("reason")?.string()? {
+            "build-finished" => finished = message.field("success")? == &Value::Bool(true),
+            "compiler-artifact" => {
+                let target = message.field("target")?;
+                let bin = target
+                    .field("kind")?
+                    .array()?
+                    .iter()
+                    .any(|kind| kind.string() == Ok("bin"));
+                if bin
+                    && target.field("name")?.string()? == "stickymd-smoke"
+                    && let Some(executable) = message.field("executable")?.optional_string()?
+                {
+                    found.push(std::path::PathBuf::from(executable));
+                }
+            }
+            _ => {}
+        }
+    }
+    if !finished {
+        return Err("the driver build did not finish successfully".to_owned());
+    }
+    match <[_; 1]>::try_from(found) {
+        Ok([path]) => Ok(path),
+        Err(found) => Err(format!(
+            "the driver build named {} stickymd-smoke binaries",
+            found.len()
+        )),
+    }
+}
+
+/// Builds the `mac-gui` driver on R as documented and hashes what Cargo built.
+fn driver(root: &Path) -> Driver {
+    let command = driver_command();
+    let sha256 = (|| -> Result<String, String> {
+        let (environment, argv) = command.split_first().ok_or("an empty driver command")?;
+        let (key, value) = environment
+            .split_once('=')
+            .ok_or("the driver command names no environment")?;
+        let output = Command::new(&argv[0])
+            .args(&argv[1..])
+            .env(key, value)
+            .current_dir(root)
+            .stdin(Stdio::null())
+            .stderr(Stdio::inherit())
+            .output()
+            .map_err(|error| format!("cannot run the driver build: {error}"))?;
+        if !output.status.success() {
+            return Err("the driver build failed".to_owned());
+        }
+        let path = driver_path(
+            std::str::from_utf8(&output.stdout).map_err(|_| "Cargo printed non-UTF-8")?,
+        )?;
+        crate::integrity::sha256(&path)
+            .map(|sha256| sha256.to_ascii_lowercase())
+            .map_err(|error| format!("cannot hash {}: {error}", path.display()))
+    })();
+    Driver { command, sha256 }
+}
+
+/// An identity no other run of this checkout shares: the time it started and this process.
+fn run_identity() -> Result<String, String> {
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("the clock is before 1970: {error}"))?;
+    Ok(format!("{}-{}", since.as_nanos(), std::process::id()))
 }
 
 /// What Cargo will run: the test executables of the build and the doc-tested libraries.
@@ -260,19 +365,31 @@ fn explicit(
         target: None,
         counts: None,
         cases: Vec::new(),
-        exit_code: None,
+        // The binary's own listing, taken before any run (review round 4).
+        listed: listings
+            .iter()
+            .find(|l| l.target == explicit_target())
+            .map(|l| {
+                tests
+                    .iter()
+                    .filter(|test| l.all.iter().any(|name| name == *test))
+                    .map(|test| (*test).to_owned())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        exit: Exit::NotStarted,
         temporary_volume: None,
         image_volume: None,
     };
-    let (exit, text) = match run_merged(root, &argv, report) {
-        Ok(found) => found,
-        Err(error) => {
-            problems.push(format!("the {item} run: {error}"));
-            return entry;
-        }
-    };
-    entry.exit_code = exit;
-    let sections: Vec<Section> = match output::sections(&text) {
+    let merged = run_merged(root, &argv, report);
+    entry.exit = merged.exit;
+    if let Some(problem) = merged.problem {
+        problems.push(format!("the {item} run: {problem}"));
+    }
+    if merged.exit == Exit::NotStarted {
+        return entry;
+    }
+    let sections: Vec<Section> = match output::sections(&merged.output) {
         Ok(sections) => sections,
         Err(error) => {
             problems.push(format!("the {item} output: {error}"));
@@ -318,6 +435,30 @@ fn side(identity: &identity::Identity) -> Side {
     }
 }
 
+/// Whether the file at the receipt's path, if any, is a source-test receipt of some schema: an
+/// unrelated file put there by mistake is kept and reported, never removed (review round 4).
+fn recognize(path: &Path) -> Result<(), String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    let receipt = crate::release::json::parse(&text).is_ok_and(|value| {
+        value.field("kind").and_then(|kind| {
+            kind.string()
+                .map(|kind| kind == "macos-release-source-tests")
+        }) == Ok(true)
+    });
+    if receipt {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} is not a source-test receipt; move it away and run again",
+            path.display()
+        ))
+    }
+}
+
 /// Removes the old receipt and syncs its directory, so the removal survives a crash that follows.
 fn retire(path: &Path) -> Result<(), String> {
     match std::fs::remove_file(path) {
@@ -349,6 +490,13 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
     )?;
     let path = root.join(RECEIPT);
     super::refuse_link(&path)?;
+    recognize(&path)?;
+    // This run's identity, before the old receipt goes: from here on only a receipt naming it
+    // counts, so an interrupted run cannot leave an older one standing (review round 4).
+    let run = run_identity()?;
+    let marker = root.join(RUN);
+    super::refuse_link(&marker)?;
+    crate::atomic_evidence::write(&marker, format!("{run}\n").as_bytes())?;
     retire(&path)?;
     // No probe of this process's own temporary directory: P18-L08's tests measure the volumes
     // where their assertions run, and the receipt records that (review round 3, B4).
@@ -363,29 +511,36 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
         Vec::new()
     });
     let argv = command();
-    let (exit_code, binaries) = match run_merged(root, &argv, None) {
-        Ok((exit, text)) => match output::sections(&text) {
+    let merged = run_merged(root, &argv, None);
+    problems.extend(merged.problem);
+    let binaries = if merged.exit == Exit::NotStarted {
+        Vec::new()
+    } else {
+        match output::sections(&merged.output) {
             Ok(sections) => {
                 let (runs, more) = output::attribute(&sections, &executables, &doc, &listed);
                 problems.extend(more);
-                (exit, runs)
+                runs
             }
             Err(error) => {
                 problems.push(format!("the test output: {error}"));
-                (exit, Vec::new())
+                Vec::new()
             }
-        },
-        Err(error) => {
-            problems.push(error);
-            (None, Vec::new())
         }
     };
-    // P18-L08's tests report the volumes they measured into a file of this run's own directory.
-    let reports = crate::release::temporary::TemporaryDirectory::new("volume-report")?;
+    // P18-L08's tests report the volumes they measured into a file of this run's own directory;
+    // without one the explicit run records no volumes, and the results already taken are still
+    // published (review round 4).
+    let reports = crate::release::temporary::TemporaryDirectory::new("volume-report")
+        .map_err(|error| problems.push(format!("the volume report directory: {error}")))
+        .ok();
     let explicit = EXPLICIT
         .iter()
         .map(|(item, tests)| {
-            let report = (*item == "same-key").then(|| reports.path().join("volumes.txt"));
+            let report = reports
+                .as_ref()
+                .filter(|_| *item == "same-key")
+                .map(|reports| reports.path().join("volumes.txt"));
             explicit(
                 root,
                 item,
@@ -397,21 +552,23 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
             )
         })
         .collect();
-    if let Err(error) = reports.close() {
+    if let Some(Err(error)) = reports.map(|reports| reports.close()) {
         problems.push(error);
     }
-    let end = identity::capture(root).unwrap_or(identity::Identity {
+    let driver = driver(root);
+    let end = identity::capture(root).unwrap_or_else(|error| identity::Identity {
         head: "UNKNOWN".to_owned(),
         clean: false,
-        reason: Some("the end identity could not be read".to_owned()),
+        reason: Some(format!("the end identity could not be read: {error}")),
     });
     let receipt = Receipt {
         release_source: release,
+        run,
         host,
         start: side(&start),
         end: side(&end),
         command: argv,
-        exit_code,
+        exit: merged.exit,
         expected: executables
             .into_iter()
             .map(|executable| executable.target)
@@ -419,6 +576,7 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
             .collect(),
         binaries,
         explicit,
+        driver,
         problems,
     };
     crate::atomic_evidence::write(&path, super::render(&receipt).as_bytes())?;
@@ -432,6 +590,62 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
 
 #[cfg(test)]
 mod tests {
+    /// Review round 4: only a file of the receipt's own kind is retired; anything else at its
+    /// path is kept and reported.
+    #[test]
+    fn only_a_receipt_is_retired_from_the_receipt_path() {
+        let scratch = crate::release::temporary::TemporaryDirectory::new("retire").unwrap();
+        let path = scratch.path().join("receipt.json");
+        assert!(super::recognize(&path).is_ok());
+        std::fs::write(
+            &path,
+            "{\"kind\":\"macos-release-source-tests\",\"schema_version\":1}",
+        )
+        .unwrap();
+        assert!(super::recognize(&path).is_ok());
+        for other in [
+            "",
+            "{\"kind\":\"automated\"}\n{\"kind\":\"automated\"}\n",
+            "{}",
+        ] {
+            std::fs::write(&path, other).unwrap();
+            assert!(
+                super::recognize(&path)
+                    .unwrap_err()
+                    .contains("not a source-test receipt")
+            );
+        }
+    }
+
+    /// Review round 4, BLOCKER 1: the driver is the one `stickymd-smoke` binary of a build that
+    /// finished.
+    #[test]
+    fn the_driver_is_the_one_binary_a_finished_build_names() {
+        let artifact = |name: &str, kind: &str| {
+            format!(
+                r#"{{"reason":"compiler-artifact","target":{{"kind":["{kind}"],"name":"{name}"}},"executable":"/r/target/release/{name}"}}"#
+            )
+        };
+        let finished = r#"{"reason":"build-finished","success":true}"#;
+        let built = format!(
+            "{}\n{}\n{finished}\n",
+            artifact("stickymd-package", "lib"),
+            artifact("stickymd-smoke", "bin")
+        );
+        assert_eq!(
+            super::driver_path(&built).unwrap(),
+            std::path::PathBuf::from("/r/target/release/stickymd-smoke")
+        );
+        let failed = built.replace("\"success\":true", "\"success\":false");
+        assert!(super::driver_path(&failed).is_err());
+        let none = format!("{}\n{finished}\n", artifact("stickymd-package", "lib"));
+        assert!(
+            super::driver_path(&none)
+                .unwrap_err()
+                .contains("0 stickymd-smoke")
+        );
+    }
+
     /// Review round 3, B4: the volume report holds exactly one line for each volume.
     #[test]
     fn the_volume_report_names_each_volume_once() {
