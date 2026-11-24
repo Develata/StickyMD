@@ -97,7 +97,7 @@ fn a_median_idle_cpu_above_the_hard_line_fails_r02_and_a_single_spike_does_not()
     let (verdict, detail) = with_ticks(2, &|_| BUSY_TICKS, 60.0);
     assert_eq!(verdict, "FAIL");
     assert!(
-        detail.contains("split median 0.103000% in 60 s windows"),
+        detail.contains("split median at least 0.103000% in the first 60 s window"),
         "{detail}"
     );
     // One run fifty times busier does not move the median.
@@ -488,6 +488,19 @@ fn a_late_sample_cannot_turn_a_hard_failure_into_a_pass() {
     }
     assert_eq!(verdicts(&ends)[1].1, "NOT_TESTED");
     assert_eq!(read(&ends.json()).unwrap()[1].verdict, "NOT_TESTED");
+    // A FAIL names the lower bound it rests on, not the window's whole CPU: 100 ms over each
+    // 60.5 s window, 61 ms of it before the middle sample (review fix round, 7).
+    let mut burst = with(0.1, 60.5);
+    let part = ticks(0.061);
+    for run in &mut burst.scenarios[1] {
+        let start = run.samples[0].clone();
+        run.samples[1].user_ticks = start.user_ticks + part / 2;
+        run.samples[1].system_ticks = start.system_ticks + part - part / 2;
+    }
+    let row = &burst.rows()[1];
+    assert_eq!(row.verdict, "FAIL", "{row:?}");
+    assert!(row.detail.contains("at least 0.101667%"), "{row:?}");
+    assert!(!row.detail.contains("0.166667"), "{row:?}");
     // A middle sample that itself landed after 60 s bounds nothing from below.
     let mut slept = with(0.062, 60.5);
     for run in &mut slept.scenarios[1] {

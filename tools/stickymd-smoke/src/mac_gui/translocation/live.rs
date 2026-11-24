@@ -163,19 +163,15 @@ fn observe(
         }
         shown = windows::all(pid)?.into_iter().find(|w| modal(w));
         o.window = shown.as_ref().map(|w| format!("{w:?}"));
-        match read_stderr() {
-            Ok(text) => o.stderr = text,
-            Err(e) => o.stderr_unreadable = Some(e),
-        }
+        // A stderr that cannot be read is an error of the run, not an unseen prompt (review
+        // fix round, 4).
+        o.stderr = read_stderr()?;
         if prompted(o) {
             break;
         }
         events::wait(200)?;
     }
-    match read_stderr() {
-        Ok(text) => o.stderr = text,
-        Err(e) => o.stderr_unreadable = Some(e),
-    }
+    o.stderr = read_stderr()?;
     note(
         row,
         format!("window {:?}; exited early {}", o.window, o.exited_early),
@@ -183,10 +179,11 @@ fn observe(
     let (true, Some(window)) = (prompted(o), &shown) else {
         return Ok(());
     };
-    match windows::screenshot(window) {
-        Ok(ppm) => crate::atomic_evidence::write(&dir.join("prompt.ppm"), &ppm)?,
-        Err(e) => note(row, format!("prompt image not captured: {e}")),
-    }
+    // The prompt's image is kept with the evidence; failing to take or keep it is an error of
+    // the run, which stops it unfinished (plan 11 #phase-16-macos-host; review fix round, B2).
+    let ppm = windows::screenshot(window)
+        .map_err(|e| format!("the prompt image could not be captured: {e}"))?;
+    crate::atomic_evidence::write(&dir.join("prompt.ppm"), &ppm)?;
     // Activate the running instance as the manual procedure does, then answer it, but only
     // while that same process still shows that same window.
     command("/usr/bin/open", &[&text(copy)])?;
@@ -389,29 +386,24 @@ fn attempt(
             .map(|(q, _)| q)
             .collect())
     };
-    // Cleanup waits do not end on a cancelled run: the run is stopping anyway.
-    for signal in ["-TERM", "-KILL"] {
-        for q in own()? {
-            let _ = command("/bin/kill", &[signal, &q.to_string()]);
+    // Cleanup waits do not end on a cancelled run: the run is stopping anyway. A failed process
+    // query is kept, not returned, so the mount is still waited for (review fix round, 5).
+    let ended = (|| -> Result<Vec<u32>, String> {
+        for signal in ["-TERM", "-KILL"] {
+            for q in own()? {
+                let _ = command("/bin/kill", &[signal, &q.to_string()]);
+            }
+            let start = Instant::now();
+            while !own()?.is_empty() && start.elapsed().as_secs() < 3 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
         }
-        let start = Instant::now();
-        while !own()?.is_empty() && start.elapsed().as_secs() < 3 {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    }
-    let left = own()?;
-    if !left.is_empty() {
-        return Ok(Some(format!(
-            "this run's StickyMD processes did not end: {left:?}"
-        )));
-    }
-    // Every process of this run has ended: read the watch before anything else touches the
-    // folder; the second snapshot follows.
+        own()
+    })();
+    // Read the watch before anything else touches the folder; its error, too, waits until the
+    // mount is checked.
     let registered = watch.names().to_vec();
-    o.watch = Some(Watched {
-        entries: registered,
-        events: watch.drain()?,
-    });
+    let drained = watch.drain();
     // macOS detaches the translocation after the process ends; wait for it before anything
     // returns, so a failed observation leaves no mount behind for the next run either.
     let start = Instant::now();
@@ -423,8 +415,18 @@ fn attempt(
             "this copy's translocation was still mounted 10 s after its process ended".into(),
         ));
     }
+    let left = ended?;
+    if !left.is_empty() {
+        return Ok(Some(format!(
+            "this run's StickyMD processes did not end: {left:?}"
+        )));
+    }
     remount?;
     observed?;
+    o.watch = Some(Watched {
+        entries: registered,
+        events: drained?,
+    });
     o.after = snapshot::tree(&watched)?;
     // The bundle opened by path is still the bytes under test (a change undone between the
     // two checks is not seen; the VM runs nothing else).

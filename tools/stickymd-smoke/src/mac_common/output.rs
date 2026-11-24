@@ -104,7 +104,10 @@ pub(crate) fn prepare(
     inputs: &[&Path],
 ) -> Result<(), String> {
     for input in inputs {
-        if within(&resolve(input)?, out) {
+        // An input exists: resolved in full, `..` and links included, where it lands.
+        let input_at =
+            std::fs::canonicalize(input).map_err(|e| format!("{}: {e}", input.display()))?;
+        if within(&input_at, out) {
             return Err(format!(
                 "{} lies inside the evidence directory {}; give each run an --out of its own",
                 input.display(),
@@ -138,7 +141,7 @@ mod tests {
         let session = crate::mac_common::session::Session::new().unwrap();
         let root = session.path();
         let gui = crate::mac_gui::written_here;
-        let logout = |name: &str| name == "mac-gui.json" || name.starts_with("w12-logout-");
+        let logout = crate::mac_gui::logout::written_here;
         for (name, taken) in [
             ("F01.ppm", &gui as &dyn Fn(&str) -> bool),
             ("W02-stderr.log", &gui),
@@ -164,6 +167,18 @@ mod tests {
             "{error}"
         );
         assert_eq!(std::fs::read(&zip).unwrap(), b"zip");
+        // Reached through `..`: inside is still inside, outside still allowed (review fix
+        // round, 8).
+        std::fs::create_dir(root.join("elsewhere")).unwrap();
+        let through = root.join("elsewhere/../with-input/candidate.zip");
+        let error = prepare(&out, &gui, &[&through]).unwrap_err();
+        assert!(
+            error.contains("lies inside the evidence directory"),
+            "{error}"
+        );
+        std::fs::write(root.join("outside.zip"), b"zip").unwrap();
+        let fresh_out = root.join("separate");
+        prepare(&fresh_out, &gui, &[&root.join("elsewhere/../outside.zip")]).unwrap();
         // A first run: the directory does not exist yet, and is made.
         let fresh = root.join("first/run");
         prepare(&fresh, &gui, &[]).unwrap();

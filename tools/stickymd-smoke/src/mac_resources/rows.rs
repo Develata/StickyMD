@@ -260,7 +260,10 @@ pub(super) fn judge(
         name: &'static str,
         over: bool,
         within: bool,
+        /// The median CPU time over the whole window, as a percent of the 60 s budget.
         shown: f64,
+        /// The median of what the first 60 s window is shown to hold at least, the same way.
+        proven: f64,
     }
     let cpu: Vec<Cpu> = scenarios
         .iter()
@@ -276,13 +279,23 @@ pub(super) fn judge(
                 over: median_over(runs.iter().map(Reading::proven_scaled).collect(), denom),
                 within: !median_over(runs.iter().map(|r| r.cpu_scaled).collect(), denom),
                 shown: model::summarize(runs.iter().map(Reading::budget_percent))?.median,
+                proven: model::summarize(runs.iter().map(|r| {
+                    r.proven_scaled() as f64 / r.denom as f64 / (CPU_SECONDS as f64 * 1e7)
+                }))?
+                .median,
             })
         })
         .collect();
     let above: Vec<String> = cpu
         .iter()
         .filter(|c| c.over)
-        .map(|c| format!("{} median {:.6}% in 60 s windows", c.name, c.shown))
+        // The bound the FAIL rests on, not the window's whole CPU (review fix round, 7).
+        .map(|c| {
+            format!(
+                "{} median at least {:.6}% in the first 60 s window (lower bound)",
+                c.name, c.proven
+            )
+        })
         .collect();
     let undecided: Vec<String> = cpu
         .iter()

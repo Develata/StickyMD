@@ -284,11 +284,7 @@ fn coordinate(options: &Options) -> Result<(), String> {
     });
     let out = crate::mac_common::output::guarded(&out, &app)?;
     // Review round 3, B2: nothing in --out is replaced but this run's own checkpoint.
-    crate::mac_common::output::prepare(
-        &out,
-        &|name| name == "mac-gui.json" || name.starts_with("w12-logout-"),
-        &[],
-    )?;
+    crate::mac_common::output::prepare(&out, &super::written_here, &[])?;
     let mut session = Session::new()?;
     fixture::copy_fixture(&mut session, &app, NOTE, CONFIG, &exe_hash)?;
     let dir = session.path().to_path_buf();

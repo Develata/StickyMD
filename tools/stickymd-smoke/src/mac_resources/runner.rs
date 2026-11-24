@@ -107,6 +107,8 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
 #[derive(Debug, PartialEq)]
 struct Screen {
     dimensions: [f64; 4],
+    /// The main display's mode identifier and refresh rate.
+    mode: (i32, f64),
     main: u32,
     active: Vec<u32>,
 }
@@ -116,6 +118,7 @@ impl Screen {
         let (main, active) = native::displays()?;
         Ok(Self {
             dimensions: native::display()?,
+            mode: native::main_mode()?,
             main,
             active,
         })
@@ -418,6 +421,7 @@ mod tests {
         let mut run = super::Run::new(1);
         let screen = super::Screen {
             dimensions: [1.0; 4],
+            mode: (1, 60.0),
             main: 1,
             active: vec![1],
         };

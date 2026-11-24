@@ -85,6 +85,8 @@ unsafe extern "C" {
     fn CGDisplayCopyDisplayMode(display: u32) -> Cf;
     fn CGDisplayModeGetPixelWidth(mode: Cf) -> usize;
     fn CGDisplayModeGetPixelHeight(mode: Cf) -> usize;
+    fn CGDisplayModeGetIODisplayModeID(mode: Cf) -> i32;
+    fn CGDisplayModeGetRefreshRate(mode: Cf) -> f64;
     fn CGDisplayModeRelease(mode: Cf);
 }
 
@@ -168,20 +170,43 @@ pub(super) fn display_count() -> Result<u32, String> {
 /// The main display's ID and the active displays' IDs, sorted: what every sample checks is still
 /// the campaign's (review round 3: a second display, or another main one of the same size).
 pub(super) fn displays() -> Result<(u32, Vec<u32>), String> {
-    let count = display_count()?;
-    let mut ids = vec![0_u32; count as usize];
+    // Room for displays attached since they were counted: a list that fills it may be cut short
+    // and is not taken (review fix round, 6).
+    let capacity = display_count()? + 4;
+    let mut ids = vec![0_u32; capacity as usize];
     let mut written = 0_u32;
-    // SAFETY: `ids` holds `count` elements; the call writes at most `count` IDs into it and how
-    // many it wrote into `written`.
-    let error = unsafe { CGGetActiveDisplayList(count, ids.as_mut_ptr(), &mut written) };
+    // SAFETY: `ids` holds `capacity` elements; the call writes at most `capacity` IDs into it
+    // and how many it wrote into `written`.
+    let error = unsafe { CGGetActiveDisplayList(capacity, ids.as_mut_ptr(), &mut written) };
     if error != 0 {
         return Err(format!("CGGetActiveDisplayList failed: {error}"));
     }
-    ids.truncate(written.min(count) as usize);
+    if written >= capacity {
+        return Err("the active display list may be cut short".into());
+    }
+    ids.truncate(written as usize);
     ids.sort_unstable();
     // SAFETY: a getter with no arguments.
     let main = unsafe { CGMainDisplayID() };
     Ok((main, ids))
+}
+
+/// The main display's mode identifier and refresh rate: a mode of the same size at another
+/// refresh rate is another mode (review fix round, 6).
+pub(super) fn main_mode() -> Result<(i32, f64), String> {
+    // SAFETY: getters borrow the main display; the copied mode is released exactly once.
+    unsafe {
+        let mode = CGDisplayCopyDisplayMode(CGMainDisplayID());
+        if mode.is_null() {
+            return Err("No main display mode".into());
+        }
+        let identity = (
+            CGDisplayModeGetIODisplayModeID(mode),
+            CGDisplayModeGetRefreshRate(mode),
+        );
+        CGDisplayModeRelease(mode);
+        Ok(identity)
+    }
 }
 
 pub(super) fn display() -> Result<[f64; 4], String> {

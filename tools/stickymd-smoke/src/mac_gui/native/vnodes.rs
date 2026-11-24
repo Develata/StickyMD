@@ -225,8 +225,12 @@ mod tests {
     };
 
     #[test]
-    fn the_kevent_layout_is_the_sdk_s() {
+    fn the_kevent_size_offsets_and_array_stride_are_the_sdk_s() {
+        // What the calls rely on: each field where the SDK's `struct kevent` has it, and arrays
+        // of 32-byte elements (review fix round, 12: the SDK packs to 4, this type aligns to 8
+        // on arm64; the layout passed is the same).
         assert_eq!(std::mem::size_of::<KEvent>(), 32);
+        assert_eq!(std::mem::size_of::<[KEvent; 2]>(), 64);
         assert_eq!(std::mem::offset_of!(KEvent, ident), 0);
         assert_eq!(std::mem::offset_of!(KEvent, filter), 8);
         assert_eq!(std::mem::offset_of!(KEvent, flags), 10);
@@ -252,6 +256,11 @@ mod tests {
     /// A tree like a small release layout, watched as R03 watches it; `change` runs between
     /// registration and drain, and the result is each entry's flags.
     fn observe(change: &dyn Fn(&Path)) -> Vec<(String, u32)> {
+        observe_with_snapshots(change).0
+    }
+
+    /// [`observe`], and whether R03's snapshot of the tree is the same after `change` as before.
+    fn observe_with_snapshots(change: &dyn Fn(&Path)) -> (Vec<(String, u32)>, bool) {
         let root = tempdir();
         fs::create_dir(root.join("sub")).unwrap();
         fs::write(root.join("f"), b"hello world").unwrap();
@@ -262,16 +271,21 @@ mod tests {
             .collect();
         let watch = watch(&entries, REGISTERED).unwrap();
         assert_eq!(watch.names(), [".", "f", "sub", "sub/g"]);
+        let before = crate::mac_gui::snapshot::tree(&root).unwrap();
         change(&root);
         let flags = watch.drain().unwrap();
+        let unchanged = crate::mac_gui::snapshot::tree(&root).unwrap() == before;
         fs::remove_dir_all(&root).unwrap();
-        flags
+        (flags, unchanged)
     }
 
     fn tempdir() -> PathBuf {
+        // A counter as well as the time: tests run in parallel within one process.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "stickymd-vnodes-{}-{}",
+            "stickymd-vnodes-{}-{}-{}",
             std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -404,6 +418,8 @@ mod tests {
                 &|r| {
                     let time = mtime(r);
                     fs::write(r.join("f.tmp"), b"hello world").unwrap();
+                    // The replacement carries the original's time, so no snapshot sees it.
+                    set_mtime(&r.join("f.tmp"), mtime(&r.join("f")));
                     fs::rename(r.join("f.tmp"), r.join("f")).unwrap();
                     set_mtime(r, time);
                 },
@@ -412,7 +428,9 @@ mod tests {
             ),
         ];
         for (name, change, touched, flag) in cases {
-            let flags = observe(change);
+            let (flags, unchanged) = observe_with_snapshots(change);
+            // R03's snapshots cannot see any of these (review fix round, 10).
+            assert!(unchanged, "{name}: the snapshot saw it");
             assert_eq!(written(&flags), touched, "{name}: {flags:?}");
             assert!(
                 flags.iter().any(|(_, f)| f & flag != 0),

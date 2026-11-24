@@ -315,6 +315,12 @@ fn an_r03_pass_is_recomputed_from_its_facts() {
     ))
     .unwrap();
     assert!(!unwatched[0].line().contains("write_watch"));
+    // Facts present but without a watch (review fix round, 11): no marker either.
+    let start = good.find("\"watch\":{").unwrap();
+    let no_watch = format!("{}\"watch\":null}}", &good[..start]);
+    let records = record(&with_scenarios(&[r03_row(&no_watch, &keep)], &top)).unwrap();
+    assert!(matches!(&records[0], Record::Automated { verdict, .. } if verdict == "NOT_TESTED"));
+    assert!(!records[0].line().contains("write_watch"));
     // A run zipped from the .app names no ZIP, in its facts or at the top.
     let unzipped = crate::mac_gui::r03_sample_facts(None, &[]);
     assert!(record(&with_scenarios(&[r03_row(&unzipped, &keep)], "")).is_ok());
@@ -449,6 +455,14 @@ fn a_calibration_run_is_not_recorded() {
         error.contains("calibration run (r03-write-restore)"),
         "{error}"
     );
+    // The driver writes calibration evidence unfinished (review fix round, B1), so a reader that
+    // does not know the `calibration` member refuses it as well: here, this reader with that
+    // member taken away.
+    let as_written = evidence.replacen("\"finished\":true", "\"finished\":false", 1);
+    let unaware = as_written.replacen(",\"calibration\":\"r03-write-restore\"", "", 1);
+    assert_ne!(unaware, as_written);
+    let error = record(&unaware).unwrap_err();
+    assert!(error.contains("not finished"), "{error}");
 }
 
 /// Review A5/F3: each producer writes only its own rows.
@@ -554,6 +568,8 @@ fn one_image_digest_is_one_identity_whatever_its_name() {
         ("mac-test:latest".to_owned(), None),
         (format!("garbage {digest}"), None),
         (format!("tag:{digest}"), None),
+        // Two digests in one reference: neither is the identity (review fix round, B3).
+        (format!("repo@sha256:{}@{digest}", hex('a')), None),
         ("sha256:image".to_owned(), None),
     ] {
         let found = super::record::image_key(&written);
@@ -583,6 +599,7 @@ fn image_digests_are_validated_and_kept_in_one_spelling() {
         format!("@{digest}"),
         format!("name@sha256:{}", "a".repeat(63)),
         format!("name @{digest}"),
+        format!("repo@sha256:{}@{digest}", "b".repeat(64)),
         format!("name@sha512:{}", "a".repeat(64)),
     ] {
         assert!(image_digest(&bad).is_err(), "{bad}");

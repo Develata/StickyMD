@@ -14,13 +14,13 @@ pub(crate) fn is_batch(s: &str) -> bool {
 /// (an OCI reference), in lower case so one image is always spelled one way in the ledger.
 pub(crate) fn image_digest(value: &str) -> Result<String, String> {
     let lower = value.to_ascii_lowercase();
-    let digest =
-        lower.rsplit_once('@').map_or(
-            lower.as_str(),
-            |(name, digest)| {
-                if name.is_empty() { "" } else { digest }
-            },
-        );
+    // One reference, one digest (review fix round, B3): `name@digest` splits at its only `@`;
+    // a second `@` (`repo@sha256:A@sha256:B`) names two digests and is no reference.
+    let digest = match lower.split_once('@') {
+        None => lower.as_str(),
+        Some((name, digest)) if !name.is_empty() && !digest.contains('@') => digest,
+        Some(_) => "",
+    };
     let valid = digest
         .strip_prefix("sha256:")
         .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))

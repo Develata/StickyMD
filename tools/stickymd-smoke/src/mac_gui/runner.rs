@@ -102,7 +102,9 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     let out = crate::mac_common::output::guarded(&options.out, &app)?;
     // Review B7 and round 3 B2: nothing of an earlier run, nor a file named like one, nor the
     // --zip input, is replaced; every file below is created exclusively.
-    let inputs: Vec<&Path> = options.zip.iter().map(|z| z.as_path()).collect();
+    // The ZIP as staging resolved it, so a relative path through `..` is compared where it
+    // lands (review fix round, 8).
+    let inputs: Vec<&Path> = hash.zip.iter().map(|z| z.path.as_path()).collect();
     crate::mac_common::output::prepare(&out, &written_here, &inputs)?;
     let environment = format!(
         "{{\"os\":{},\"architecture\":{},\"hv_vmm_present\":{},\"allow_host\":{},\"permissions\":{{\"accessibility\":{},\"post_event\":{},\"screen_recording\":{}}},\"unix_seconds\":{},\"fixture_config\":{},\"main_display\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}},\"coordinate_space\":\"main-display global CG points (DIP)\",\"keyboard_precondition\":\"ABC/US; not automatically verified\"}}",
@@ -162,7 +164,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
                 // Review round 3, B4: an error around R03 (its session directory, attachments,
                 // cleanup) is the machine's, not the product's: untested, and the run unfinished.
                 Ok(Err(error)) if id == "R03" => {
-                    row.skip("execution", &error);
+                    untested_after_error(&mut row, &error);
                     input.stopped = Some(format!("R03 could not complete: {error}"));
                 }
                 Ok(Err(error)) => row.check("execution", false, error),
@@ -302,6 +304,52 @@ fn save(
     batch: Option<&str>,
     first: bool,
 ) -> Result<(), String> {
+    let json = evidence_json(environment, hash, rows, finished, batch);
+    let path = out.join("mac-gui.json");
+    if first {
+        crate::atomic_evidence::write_new(&path, json.as_bytes())
+    } else {
+        crate::atomic_evidence::write(&path, json.as_bytes())
+    }
+}
+
+/// R03's row after an error of the machine (review round 3 B4, fix round 4): untested, whatever
+/// its checks said before, which stay in its trace for diagnosis.
+fn untested_after_error(row: &mut Row, error: &str) {
+    for check in std::mem::take(&mut row.checks) {
+        row.trace.push(Trace {
+            ms: 0,
+            event: format!(
+                "before the error: {}: {}: {}",
+                check.name,
+                check.verdict.name(),
+                check.observation
+            ),
+        });
+    }
+    row.skip("execution", error);
+}
+
+/// Whether an attachment must exist: R03's prompt image, once its prompt check passed.
+fn required(id: &str, name: &str, row: &Row) -> bool {
+    id == "R03"
+        && name == "prompt.ppm"
+        && row.checks.iter().any(|c| {
+            c.name == super::translocation::PROMPTED && c.verdict == super::model::Verdict::Pass
+        })
+}
+
+/// The evidence as written. A calibration run (`--r03-write-restore`) is never marked finished,
+/// so a `mac-ledger` that does not know the `calibration` member refuses it too (review fix
+/// round, B1): its R03 FAIL is the driver's bad sample, not the product's.
+fn evidence_json(
+    environment: &str,
+    hash: &AppHash,
+    rows: &[Row],
+    finished: bool,
+    batch: Option<&str>,
+) -> String {
+    let finished = finished && !hash.write_restore;
     let batch = batch.map_or_else(String::new, |b| format!(",\"batch\":{}", quote(b)));
     // The candidate ZIP R03 opened; mac-ledger records it with R03 alone.
     let zip = hash.zip.as_ref().map_or_else(String::new, |zip| {
@@ -313,7 +361,7 @@ fn save(
     } else {
         zip
     };
-    let json = format!(
+    format!(
         "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished}{batch},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{}{zip},\"scenarios\":[{}]}}\n",
         hash.inputs
             .as_ref()
@@ -325,13 +373,7 @@ fn save(
         quote(&hash.bundle),
         quote(&hash.driver),
         rows.iter().map(Row::json).collect::<Vec<_>>().join(",")
-    );
-    let path = out.join("mac-gui.json");
-    if first {
-        crate::atomic_evidence::write_new(&path, json.as_bytes())
-    } else {
-        crate::atomic_evidence::write(&path, json.as_bytes())
-    }
+    )
 }
 fn one(
     app: &Path,
@@ -360,7 +402,7 @@ fn one(
             )?;
             // Not a product result: the row stays untested and the run is not finished.
             if let Some(reason) = stopped {
-                row.skip("execution", &reason);
+                untested_after_error(row, &reason);
                 input.stopped = Some(format!("R03 stopped the run: {reason}"));
             }
             return Ok(());
@@ -430,6 +472,10 @@ fn one(
                 });
                 Ok(())
             }
+            // The prompt's image must exist once the prompt was seen (review fix round, B2).
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && required(id, name, row) => {
+                Err(format!("{name} is missing though R03 saw its prompt"))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 if target.exists() {
                     row.trace.push(Trace {
@@ -458,5 +504,65 @@ fn one(
         Ok(())
     } else {
         Err(errors.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppHash, Row, evidence_json, required, untested_after_error};
+    use crate::mac_gui::{
+        model::{Verdict, aggregate},
+        translocation::{CHECKS, PROMPTED, UNWRITTEN},
+    };
+
+    /// Review fix round, B2 and 4: every R03 check passing but the prompt image missing is an
+    /// error, and an error after any result leaves the row untested, its checks kept in the
+    /// trace.
+    #[test]
+    fn r03_errors_leave_the_row_untested_and_the_prompt_image_is_required() {
+        let mut row = Row::new("R03");
+        for name in CHECKS {
+            row.check(name, true, "seen");
+        }
+        assert!(required("R03", "prompt.ppm", &row));
+        assert!(!required("R03", "stderr.log", &row));
+        assert!(!required("W02", "prompt.ppm", &row));
+        assert!(!required("R03", "prompt.ppm", &Row::new("R03")));
+        // A write observed, then an attachment that could not be kept.
+        let mut failed = Row::new("R03");
+        failed.check(UNWRITTEN, false, "written");
+        untested_after_error(&mut failed, "R03-stderr.log: Permission denied");
+        assert_eq!(aggregate(&failed.checks), Verdict::NotTested);
+        assert_eq!(failed.checks.len(), 1);
+        assert!(
+            failed
+                .trace
+                .iter()
+                .any(|t| t.event.contains(UNWRITTEN) && t.event.contains("FAIL"))
+        );
+        untested_after_error(&mut row, "prompt.ppm is missing");
+        assert_eq!(aggregate(&row.checks), Verdict::NotTested);
+        assert!(row.trace.iter().any(|t| t.event.contains(PROMPTED)));
+    }
+
+    /// Review fix round, B1: a calibration run's evidence is never marked finished, so a reader
+    /// that ignores `calibration` (the mac-ledger of 916a0f1) refuses it as unfinished too.
+    #[test]
+    fn calibration_evidence_is_never_finished() {
+        let hash = |write_restore| AppHash {
+            executable: "a".repeat(64),
+            bundle: "b".repeat(64),
+            inputs: None,
+            driver: "d".repeat(64),
+            zip: None,
+            write_restore,
+        };
+        let rows = [Row::new("R03")];
+        let ordinary = evidence_json("{}", &hash(false), &rows, true, Some("rc1"));
+        assert!(ordinary.contains("\"finished\":true"), "{ordinary}");
+        assert!(!ordinary.contains("calibration"));
+        let calibration = evidence_json("{}", &hash(true), &rows, true, Some("rc1"));
+        assert!(calibration.contains("\"finished\":false"), "{calibration}");
+        assert!(calibration.contains("\"calibration\":\"r03-write-restore\""));
     }
 }
