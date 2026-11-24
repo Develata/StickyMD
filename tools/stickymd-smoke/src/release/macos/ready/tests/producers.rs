@@ -1,7 +1,7 @@
-//! The gate on the two producers' evidence (plan 11 #macos-readiness-check): R03 looks only at a
-//! PASS that opened the candidate's ZIP, and counts none until its write watch lands (review #24
-//! B9); the resource rows only records on the candidate's bytes; V03 has no producer. Each
-//! sample changes one fact of the good inputs.
+//! The gate on the two producers' evidence (plan 11 #macos-readiness-check): R03 counts only a
+//! PASS that opened the candidate's ZIP with "nothing written" read through the write watch
+//! (review #24 B9, round 3 B1); the resource rows only records on the candidate's bytes; V03 has
+//! no producer. Each sample changes one fact of the good inputs.
 
 use super::*;
 
@@ -19,21 +19,16 @@ fn repacked(verdict: &str, driver: char, evidence: char) -> Record {
 }
 
 #[test]
-fn r03_on_a_clean_candidate_zip_group_is_not_tested_and_a_fail_beside_it_counts() {
+fn r03_counts_a_watched_pass_on_the_candidate_zip_and_a_fail_beside_it_counts_first() {
     let candidate = candidate();
     let lines = run(Read::Present(&candidate), &ledger(), &receipt());
     assert_line(
         &lines,
         "P16-R03",
-        Verdict::NotTested,
-        "a ledger PASS on the candidate ZIP dddd",
+        Verdict::Pass,
+        "ledger PASS on the candidate ZIP dddd",
     );
-    assert_line(
-        &lines,
-        "P16-R03",
-        Verdict::NotTested,
-        "is not counted while",
-    );
+    assert_line(&lines, "P16-R03", Verdict::Pass, "under the write watch");
     // A NOT_TESTED through another ZIP in the same identity spoils the group: the ZIP does not
     // split groups.
     let mut records = ledger();
@@ -65,8 +60,9 @@ fn r03_on_a_clean_candidate_zip_group_is_not_tested_and_a_fail_beside_it_counts(
 }
 
 /// Review round 3, BLOCKER 1: an R03 PASS already in a ledger, written as a line the way an
-/// older importer wrote it (with the candidate ZIP), read back through the ledger reader, does not
-/// make the gate ready while "nothing written" is unproven.
+/// older importer wrote it (the candidate ZIP but no write watch: a driver that compared
+/// snapshots only), read back through the ledger reader, does not make the gate ready; the same
+/// line with the watch the current importer records does.
 #[test]
 fn an_r03_pass_already_in_a_ledger_does_not_pass_the_gate() {
     let candidate = candidate();
@@ -76,16 +72,34 @@ fn an_r03_pass_already_in_a_ledger_does_not_pass_the_gate() {
         .find(|line| line.contains("\"row\":\"R03\""))
         .unwrap();
     assert!(r03.contains("\"verdict\":\"PASS\""), "{r03}");
-    assert!(r03.contains("\"zip_sha256\":\"dddd"), "{r03}");
-    let records = crate::mac_ledger::record::read_all(&text).unwrap();
+    assert!(
+        r03.contains("\"zip_sha256\":\"dddd") && r03.contains(",\"write_watch\":true"),
+        "{r03}"
+    );
+    let watched = crate::mac_ledger::record::read_all(&text).unwrap();
+    let lines = run(Read::Present(&candidate), &watched, &receipt());
+    assert_line(&lines, "P16-R03", Verdict::Pass, "under the write watch");
+    let older = text.replace(",\"write_watch\":true", "");
+    let records = crate::mac_ledger::record::read_all(&older).unwrap();
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(
         &lines,
         "P16-R03",
         Verdict::NotTested,
-        "is not counted while",
+        "a PASS recorded without the watch",
     );
     assert!(!ready(&lines));
+    // The marker is only ever written as true, and only beside the ZIP R03 opened.
+    for bad in [
+        text.replace(",\"write_watch\":true", ",\"write_watch\":false"),
+        older.replace(
+            "\"row\":\"W02\",\"verdict\":\"PASS\"",
+            "\"row\":\"W02\",\"verdict\":\"PASS\",\"write_watch\":true",
+        ),
+    ] {
+        assert_ne!(bad, text);
+        assert!(crate::mac_ledger::record::read_all(&bad).is_err());
+    }
 }
 
 #[test]

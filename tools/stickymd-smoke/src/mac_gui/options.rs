@@ -7,7 +7,7 @@ pub(crate) const IDS: &[&str] = &[
     "K02", "I01", "I02", "I03", "E01", "F01", "R03",
 ];
 pub(super) const HELP: &str =
-    "usage: stickymd-smoke mac-gui --app <StickyMD.app> [--zip <release ZIP>] [--out <dir>] [--only <ids>] [--batch <name>] [--allow-host]
+    "usage: stickymd-smoke mac-gui --app <StickyMD.app> [--zip <release ZIP>] [--r03-write-restore] [--out <dir>] [--only <ids>] [--batch <name>] [--allow-host]
 VM ONLY by default: kern.hv_vmm_present must be 1, checked before app/output access.
 --allow-host bypasses only the VM interlock; NEVER use on the owner's desktop.
 --only comma-separated W01..W12,W15,K02,I01,I02,I03,E01,F01,R03 (P16- prefix accepted).
@@ -18,6 +18,10 @@ VM ONLY by default: kern.hv_vmm_present must be 1, checked before app/output acc
         runs, its StickyMD/StickyMD.app must have the bundle manifest and executable SHA-256 of
         --app, or the run is refused; its SHA-256 is written into mac-gui.json (zip_sha256), and
         the macOS release gate counts R03 only from the candidate's ZIP. Refused unless R03 runs.
+--r03-write-restore  calibration: between R03's first snapshot and the open, rewrite the
+        bundle's Contents/Info.plist with its own bytes and restore its time, which the snapshots
+        cannot see and the write watch must report (R03 FAIL). The evidence names the
+        calibration, and mac-ledger refuses it. Refused unless R03 runs.
 Permissions (preflight only, no prompts):
   W01: Accessibility (Dock tree). R03: PostEvent (Return posted to the product alone).
   W02/W03/W04/W06/W07/W08/W09/W11/W12/K02/E01/F01: Accessibility + PostEvent.
@@ -36,6 +40,8 @@ pub(crate) struct Options {
     pub batch: Option<String>,
     /// The release ZIP R03 opens (plan 11 #macos-release-gate); without it R03 zips `app`.
     pub zip: Option<PathBuf>,
+    /// The calibration of R03's write watch (`--r03-write-restore`); its evidence is refused.
+    pub r03_write_restore: bool,
     pub allow_host: bool,
     pub help: bool,
 }
@@ -46,6 +52,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
         only: Vec::new(),
         batch: None,
         zip: None,
+        r03_write_restore: false,
         allow_host: false,
         help: false,
     };
@@ -58,6 +65,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
         match key.as_str() {
             "--help" | "-h" => result.help = true,
             "--allow-host" => result.allow_host = true,
+            "--r03-write-restore" => result.r03_write_restore = true,
             "--app" | "--out" | "--only" | "--batch" | "--zip" => {
                 let value = iter
                     .next()
@@ -91,9 +99,12 @@ pub(crate) fn parse(args: &[String]) -> Result<Options, String> {
         return Err(HELP.into());
     }
     // Only R03 opens the ZIP; a ZIP beside a run without R03 would name a package nothing used.
-    if result.zip.is_some() && !result.only.is_empty() && !result.only.iter().any(|id| id == "R03")
-    {
+    let without_r03 = !result.only.is_empty() && !result.only.iter().any(|id| id == "R03");
+    if result.zip.is_some() && without_r03 {
         return Err("--zip is only for R03, which this run does not include".into());
+    }
+    if result.r03_write_restore && without_r03 {
+        return Err("--r03-write-restore is only for R03, which this run does not include".into());
     }
     Ok(result)
 }

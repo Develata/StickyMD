@@ -62,9 +62,9 @@ pub(crate) enum Record {
         run_unix: Option<u64>,
         /// The acceptance batch, for the never-reused rows (plan 11 #phase-16-macos-host).
         batch: Option<String>,
-        /// The SHA-256 of the release ZIP R03 opened (`mac-gui --zip`); only R03 records carry it,
-        /// and only when a ZIP was given (plan 11 #phase-16-macos-host).
-        zip: Option<String>,
+        /// The release ZIP R03 opened (`mac-gui --zip`); only R03 records carry it, and only when
+        /// a ZIP was given (plan 11 #phase-16-macos-host).
+        zip: Option<OpenedZip>,
         recorded_unix: u64,
     },
     Manual {
@@ -128,9 +128,23 @@ fn quote(s: &str) -> String {
     format!("\"{}\"", crate::evidence::escape_json(s))
 }
 
+/// The release ZIP an R03 run opened, and whether its "nothing written" was read through the write
+/// watch: the importer sets `write_watch` only from evidence whose R03 facts carry the watch, so
+/// a record an older importer wrote, or of a driver that only compared snapshots, has none, and
+/// the release gate does not count its PASS (review round 3, B1).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OpenedZip {
+    pub sha256: String,
+    pub write_watch: bool,
+}
+
 /// Optional trailing members, each with its leading comma; absent values write nothing, so a
 /// record without them is written as before.
-fn optional_members(run_unix: Option<u64>, batch: Option<&String>, zip: Option<&String>) -> String {
+fn optional_members(
+    run_unix: Option<u64>,
+    batch: Option<&String>,
+    zip: Option<&OpenedZip>,
+) -> String {
     let mut out = String::new();
     if let Some(run_unix) = run_unix {
         out.push_str(&format!(",\"run_unix\":{run_unix}"));
@@ -139,7 +153,10 @@ fn optional_members(run_unix: Option<u64>, batch: Option<&String>, zip: Option<&
         out.push_str(&format!(",\"batch\":{}", quote(batch)));
     }
     if let Some(zip) = zip {
-        out.push_str(&format!(",\"zip_sha256\":{}", quote(zip)));
+        out.push_str(&format!(",\"zip_sha256\":{}", quote(&zip.sha256)));
+        if zip.write_watch {
+            out.push_str(",\"write_watch\":true");
+        }
     }
     out
 }
@@ -259,7 +276,7 @@ impl Record {
                     if row != "R03" {
                         return Err(format!("only R03 opens a ZIP; P16-{row} names one"));
                     }
-                    hash("zip_sha256", zip)?;
+                    hash("zip_sha256", &zip.sha256)?;
                 }
                 if !VERDICTS.contains(&verdict.as_str()) {
                     return Err(format!("unknown verdict {verdict:?}"));
@@ -332,7 +349,24 @@ impl Record {
                 evidence_sha256: text("evidence_sha256")?,
                 run_unix: optional_unsigned(&value, "run_unix")?,
                 batch: optional_text(&value, "batch")?,
-                zip: optional_text(&value, "zip_sha256")?,
+                zip: match (
+                    optional_text(&value, "zip_sha256")?,
+                    value.field("write_watch").ok(),
+                ) {
+                    (sha256, None) => sha256.map(|sha256| OpenedZip {
+                        sha256,
+                        write_watch: false,
+                    }),
+                    (Some(sha256), Some(Value::Bool(true))) => Some(OpenedZip {
+                        sha256,
+                        write_watch: true,
+                    }),
+                    _ => {
+                        return Err(
+                            "write_watch is written only as true, beside the ZIP R03 opened".into(),
+                        );
+                    }
+                },
                 recorded_unix,
             },
             "manual" if text("verdict")? == "MANUAL PASS" => Self::Manual {
@@ -419,7 +453,9 @@ impl Record {
                 // One image, one key (review B4): its content digest, whatever name or case a
                 // record spelled it with; the ledger's bytes keep the spelling.
                 identity.image = image_key(&identity.image);
-                zip.as_mut().map(lower);
+                if let Some(zip) = zip.as_mut() {
+                    lower(&mut zip.sha256);
+                }
                 lower(&mut identity.driver);
                 lower(&mut built.executable);
                 lower(&mut built.bundle);
@@ -577,6 +613,13 @@ pub(super) fn from_evidence(
     ) {
         return Err("the evidence is not schema 2 of mac-gui (an older driver) nor schema 5 of mac-resources; it cannot be recorded".into());
     }
+    // A calibration run (`mac-gui --r03-write-restore`) is a bad sample of the driver itself.
+    if let Ok(calibration) = value.field("calibration") {
+        return Err(format!(
+            "the evidence is a calibration run ({}); it cannot be recorded",
+            calibration.string().unwrap_or("of an unknown kind")
+        ));
+    }
     // The release ZIP R03 opened, kept with R03 alone.
     let zip = optional_text(&value, "zip_sha256")?;
     if let Some(digest) = zip.as_deref().filter(|d| !is_sha256(d)) {
@@ -638,8 +681,14 @@ pub(super) fn from_evidence(
         }
         let verdict = field(scenario, "verdict")?;
         let checks = scenario.field("checks")?.array()?;
+        // Whether R03's "nothing written" was read through the write watch (its facts say so).
+        let mut write_watch = false;
         if row == "R03" {
-            super::producers::r03(checks, &verdict, zip.as_deref())?;
+            write_watch = super::producers::r03(scenario, &verdict, checks, zip.as_deref())?;
+        } else if scenario.field("facts").is_ok() {
+            return Err(format!(
+                "P16-{row} records facts, which only R03 does; it cannot be recorded"
+            ));
         }
         // A row stopped by the run's shared stop, or never started, means the run was cut short;
         // an older driver could still mark such a run finished, so the rows themselves decide.
@@ -679,7 +728,13 @@ pub(super) fn from_evidence(
             ));
         }
         let record = Record::Automated {
-            zip: zip.clone().filter(|_| row == "R03"),
+            zip: zip
+                .clone()
+                .filter(|_| row == "R03")
+                .map(|sha256| OpenedZip {
+                    sha256,
+                    write_watch,
+                }),
             row,
             verdict,
             identity: identity.clone(),

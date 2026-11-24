@@ -421,16 +421,12 @@ fn gui(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     }
 }
 
-/// Why a clean R03 group does not hold while #24 is fail closed (review #24 B9; USER 2026-11-24
-/// chose a kqueue write watch, which lands after #24).
-const R03_UNPROVEN: &str = "R03 is not counted while \"nothing written\" is unproven (review #24 B9: the write watch the USER chose lands after #24)";
-
 /// R03 is judged on the release ZIP itself (plan 11 #macos-release-gate): a clean group counts
-/// only when a PASS in it opened the candidate's ZIP (`mac-gui --zip`) under R's driver; one from
-/// a ZIP zipped from the `.app`, even around the same bundle, does not. It cannot be waived. A
-/// FAIL on these bytes in this batch, through any ZIP, is an observed violation and counts
-/// first. Until "nothing written" can be proven, even a clean group is NOT_TESTED, so an R03 PASS
-/// already in a ledger (an older driver's) does not pass the gate (review round 3, BLOCKER 1).
+/// only when a PASS in it opened the candidate's ZIP (`mac-gui --zip`) under R's driver, with
+/// "nothing written" read through the write watch; one from a ZIP zipped from the `.app`, even
+/// around the same bundle, or recorded without the watch (an older driver's), does not. It cannot
+/// be waived. A FAIL on these bytes in this batch, through any ZIP, is an observed violation and
+/// counts first (review round 3, B1 and S1).
 fn translocation(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     let (records, candidate) = match evidence(inputs, item) {
         Ok(found) => found,
@@ -448,9 +444,9 @@ fn translocation(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
     match joint(&scope, &[row.to_owned()]) {
         Ledger::Clean(evidence) => line(
             item,
-            Verdict::NotTested,
+            Verdict::Pass,
             format!(
-                "a ledger PASS on the candidate ZIP {} exists ({evidence}), but {R03_UNPROVEN}",
+                "ledger PASS on the candidate ZIP {} under the write watch ({evidence})",
                 candidate.zip_sha256
             ),
         ),

@@ -76,10 +76,14 @@ pub(crate) use options::{Options, parse};
 /// The names `mac-gui` may write into --out, for the shared --out rule's tests.
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) use runner::written_here;
-/// R03's checks, which mac-ledger requires of an R03 PASS.
+/// A run's R03 facts for mac-ledger's tests.
+#[cfg(test)]
+pub(crate) use translocation::facts::sample as r03_sample_facts;
+/// R03's checks, which mac-ledger requires of an R03 row and recomputes from its facts.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) use translocation::{
-    CHECKS as R03_CHECKS, WRITE_UNPROVEN as R03_WRITE_UNPROVEN, ZIP_CHECK as R03_ZIP_CHECK,
+    CHECKS as R03_CHECKS, SNAPSHOT_ONLY_UNWRITTEN as R03_SNAPSHOT_ONLY_UNWRITTEN,
+    UNWRITTEN as R03_UNWRITTEN, ZIP_CHECK as R03_ZIP_CHECK, facts::rejudge as r03_rejudge,
 };
 /// Chooses `label` in the product's menu-bar menu through Accessibility, as the GUI scenarios
 /// do. `mac-resources` uses it to reach the hidden state. Returns how long the status item took

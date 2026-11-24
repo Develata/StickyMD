@@ -9,7 +9,9 @@
   （运行前核对 `--zip`、证据的 `zip_sha256`）、`mac_ledger/record.rs`（R03 记录的可选字段）、`mac_ledger/resources.rs`（资源证据的登记）、
   `mac_resources/rows.rs`（R01、R02 从各次运行判定，写证据与登记共用）、`release/macos/ready/judge.rs`（R03 只认候选 ZIP；资源行同 `mac-gui` 行；
   V03 一类 `Comparison`）。跨模型审查的修复（[审查修复报告](report/2026-11-24-m5-producers-review-fixes.md)）另加 `mac_gui/snapshot.rs`
-  （R03 的递归快照）、`mac_common/output.rs`（`--out` 守卫）与 `mac_ledger/producers.rs`（各生产者可写的行、R03 的检查表）。
+  （R03 的递归快照）、`mac_common/output.rs`（`--out` 守卫）与 `mac_ledger/producers.rs`（各生产者可写的行、R03 的检查表）。B9 按 USER 选定的 A
+  另加 `mac_gui/native/vnodes.rs`（kqueue 写入观测，原生适配）、`mac_gui/translocation.rs`（“不写文件”的判定）、`mac_gui/translocation/facts.rs`
+  （R03 的事实，导入器据此重算检查）与 `mac_gui/translocation/live.rs`（R03 的实际运行，从 `translocation.rs` 移出）。
   第三次复审另把三个工具的输出规则（已有的文件名、`--zip` 在其中、首次运行创建目录）收进 `mac_common/output.rs` 的 `prepare`。
 
 2026-11-24 M5 macOS 就绪核对（[M5 报告](report/2026-11-24-m5-macos-readiness-check.md)）：

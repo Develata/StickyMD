@@ -48,9 +48,9 @@ fn scenario(row: &str, verdict: &str, checks: &[(String, String)]) -> String {
     format!("{{\"id\":\"P16-{row}\",\"verdict\":\"{verdict}\",\"checks\":[{checks}]}}")
 }
 
-/// A finished `mac-gui` run in the VM with these passing rows (R03 with all its checks, naming
-/// the ZIP when `extra` names one, NOT_TESTED as the driver writes it while "nothing written" is
-/// unproven, review #24 B9) and these extra top-level members.
+/// A finished `mac-gui` run in the VM with these passing rows (R03 NOT_TESTED with all its
+/// checks, naming the ZIP when `extra` names one, and no facts, as an older driver wrote it) and
+/// these extra top-level members.
 fn gui_evidence(rows: &[&str], extra: &str) -> String {
     let zip = extra
         .split_once("\"zip_sha256\":\"")
@@ -91,7 +91,7 @@ fn record(bytes: &str) -> Result<Vec<Record>, String> {
 
 fn zip_of(record: &Record) -> Option<&str> {
     match record {
-        Record::Automated { zip, .. } => zip.as_deref(),
+        Record::Automated { zip, .. } => zip.as_ref().map(|z| z.sha256.as_str()),
         _ => None,
     }
 }
@@ -252,81 +252,195 @@ fn resources_evidence_outside_the_vm_unfinished_old_or_inconsistent_is_refused()
     }
 }
 
-/// Review A5/F3: an R03 PASS counts only with every observation R03 makes, and a ZIP only when
-/// R03 names the same one; one passing check of any name is no R03.
+/// R03's checks as `(name, verdict, observation)`.
+type Checks = Vec<(String, String, String)>;
+
+/// An R03 row as the driver writes it: its facts, and the checks judged from them, which
+/// `tamper` may change before they are written.
+fn r03_row(facts: &str, tamper: &dyn Fn(&mut Checks)) -> String {
+    let mut checks = crate::mac_gui::r03_rejudge(&crate::release::json::parse(facts).unwrap())
+        .unwrap()
+        .checks;
+    tamper(&mut checks);
+    let verdicts: Vec<&str> = checks.iter().map(|(_, v, _)| v.as_str()).collect();
+    let verdict = if verdicts.contains(&"FAIL") {
+        "FAIL"
+    } else if verdicts.contains(&"NOT_TESTED") {
+        "NOT_TESTED"
+    } else {
+        "PASS"
+    };
+    let checks = checks
+        .iter()
+        .map(|(name, verdict, observation)| {
+            format!(
+                "{{\"name\":{},\"verdict\":{},\"observation\":{}}}",
+                q(name),
+                q(verdict),
+                q(observation)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"id\":\"P16-R03\",\"verdict\":\"{verdict}\",\"checks\":[{checks}],\"facts\":{facts}}}"
+    )
+}
+
+/// Review #24 B9 and S4 (USER 2026-11-24, option A): an R03 PASS is recorded only when its
+/// checks follow from the facts the run recorded, write watch included, and name the ZIP the
+/// evidence names; one passing check of any name, or the snapshot-only checks of an older
+/// driver, is no R03.
 #[test]
-fn an_r03_pass_needs_every_r03_check_and_the_zip_it_names() {
+fn an_r03_pass_is_recomputed_from_its_facts() {
     let zip = hex('f');
     let top = format!(",\"zip_sha256\":\"{zip}\"");
-    let pass = |checks: &[(String, String)], extra: &str| {
-        record(&with_scenarios(&[scenario("R03", "PASS", checks)], extra))
-    };
-    // Fail closed (review #24 B9): even the full check set naming the ZIP is not recorded as PASS.
-    let error = pass(&r03_checks(Some(&zip)), &top).unwrap_err();
-    assert!(error.contains("review #24 B9"), "{error}");
-    let error = pass(&[("a".into(), "seen".into())], &top).unwrap_err();
-    assert!(error.contains("exactly the checks"), "{error}");
-    // One observation missing: here, that nothing was written.
-    let mut missing = r03_checks(Some(&zip));
-    missing.pop();
-    assert!(
-        pass(&missing, &top)
-            .unwrap_err()
-            .contains("exactly the checks")
-    );
-    // The ZIP given, but R03 does not say it opened it; or says it opened another.
-    assert!(
-        pass(&r03_checks(None), &top)
-            .unwrap_err()
-            .contains("exactly the checks")
-    );
-    let other = r03_checks(Some(&hex('e')));
-    assert!(
-        pass(&other, &top)
-            .unwrap_err()
-            .contains("names the ZIP it opened")
-    );
-    // R03 claims a ZIP the evidence does not name.
-    assert!(
-        pass(&r03_checks(Some(&zip)), "")
-            .unwrap_err()
-            .contains("exactly the checks")
-    );
-    // Nor a run zipped from the .app with its six checks.
-    assert!(
-        pass(&r03_checks(None), "")
-            .unwrap_err()
-            .contains("review #24 B9")
-    );
-    // A FAIL of R03's own checks is recorded; one that only says its execution failed (the
-    // session directory could not be made, an attachment could not be written) is the machine's,
-    // not the product's, and is not (review round 3, B4).
-    let failed = |checks: &[(String, String)]| {
-        record(&with_scenarios(&[scenario("R03", "FAIL", checks)], &top))
-    };
-    assert!(failed(&r03_checks(Some(&zip))).is_ok());
-    for error in [
-        "stickymd-mac-session: No space left on device (os error 28)",
-        "R03-stderr.log: Permission denied (os error 13)",
-    ] {
-        let error = failed(&[("execution".into(), error.into())]).unwrap_err();
-        assert!(
-            error.contains("an R03 row needs exactly the checks"),
-            "{error}"
-        );
-    }
-    // Nor a NOT_TESTED that holds other checks than R03's.
-    let error = record(&with_scenarios(
-        &[scenario(
-            "R03",
-            "NOT_TESTED",
-            &[("execution".into(), "stopped".into())],
-        )],
+    let good = crate::mac_gui::r03_sample_facts(Some(&zip), &[("StickyMD.app", 0x08)]);
+    let keep = |_: &mut Checks| {};
+    let records = record(&with_scenarios(&[r03_row(&good, &keep)], &top)).unwrap();
+    assert!(matches!(&records[0], Record::Automated { verdict, .. } if verdict == "PASS"));
+    assert_eq!(zip_of(&records[0]), Some(zip.as_str()));
+    // Its facts carry the write watch, so the record says so for the gate (review round 3, B1);
+    // a row without facts never does.
+    assert!(records[0].line().contains(",\"write_watch\":true"));
+    let unwatched = record(&with_scenarios(
+        &[scenario("R03", "NOT_TESTED", &r03_checks(Some(&zip)))],
         &top,
     ))
-    .unwrap_err();
+    .unwrap();
+    assert!(!unwatched[0].line().contains("write_watch"));
+    // A run zipped from the .app names no ZIP, in its facts or at the top.
+    let unzipped = crate::mac_gui::r03_sample_facts(None, &[]);
+    assert!(record(&with_scenarios(&[r03_row(&unzipped, &keep)], "")).is_ok());
+    let refused = |row: String, extra: &str| record(&with_scenarios(&[row], extra)).unwrap_err();
+    // An older driver's PASS: every check, snapshot-only "nothing written", no facts (m5p-2).
+    let mut old = r03_checks(Some(&zip));
+    old.last_mut().unwrap().0 = crate::mac_gui::R03_SNAPSHOT_ONLY_UNWRITTEN.into();
+    let error = refused(scenario("R03", "PASS", &old), &top);
+    assert!(error.contains("without its facts"), "{error}");
+    let error = refused(scenario("R03", "PASS", &r03_checks(Some(&zip))), &top);
+    assert!(error.contains("without its facts"), "{error}");
+    // Facts with a write the snapshots missed, stated as a PASS.
+    let written =
+        crate::mac_gui::r03_sample_facts(Some(&zip), &[("StickyMD.app/Info.plist", 0x02)]);
+    let as_pass = |checks: &mut Checks| {
+        for check in checks {
+            check.1 = "PASS".into();
+        }
+    };
+    let error = refused(r03_row(&written, &as_pass), &top);
+    assert!(error.contains("do not follow from its facts"), "{error}");
+    // As the driver judged it, it is a FAIL, and recorded.
+    let records = record(&with_scenarios(&[r03_row(&written, &keep)], &top)).unwrap();
+    assert!(matches!(&records[0], Record::Automated { verdict, .. } if verdict == "FAIL"));
+    // An observation rewritten, a check dropped, a check added.
+    let rewritten = |checks: &mut Checks| checks[1].2.push('!');
+    let dropped = |checks: &mut Checks| {
+        checks.pop();
+    };
+    let added = |checks: &mut Checks| {
+        checks.push(("a".into(), "PASS".into(), "seen".into()));
+    };
+    for tamper in [&rewritten as &dyn Fn(&mut Checks), &dropped, &added] {
+        let error = refused(r03_row(&good, tamper), &top);
+        assert!(error.contains("do not follow from its facts"), "{error}");
+    }
+    // The row's verdict not its checks'.
+    let error = refused(
+        r03_row(&good, &keep).replace(
+            "\"verdict\":\"PASS\",\"checks\"",
+            "\"verdict\":\"NOT_TESTED\",\"checks\"",
+        ),
+        &top,
+    );
+    assert!(error.contains("but its checks make it PASS"), "{error}");
+    // Facts naming another ZIP than the evidence, or one the evidence does not name.
+    let other = crate::mac_gui::r03_sample_facts(Some(&hex('e')), &[]);
+    let error = refused(r03_row(&other, &keep), &top);
+    assert!(error.contains("R03's facts name the ZIP"), "{error}");
+    let error = refused(r03_row(&good, &keep), "");
+    assert!(error.contains("R03's facts name the ZIP"), "{error}");
+    // Facts read strictly: a member added, or of another type.
+    let extra = good.replacen('{', "{\"extra\":1,", 1);
+    let error = refused(r03_row(&good, &keep).replace(&good, &extra), &top);
+    assert!(error.contains("R03 facts has the members"), "{error}");
+    let typed = good.replace("\"exited_early\":false", "\"exited_early\":\"no\"");
+    let error = refused(r03_row(&good, &keep).replace(&good, &typed), &top);
+    assert!(error.contains("exited_early is not a boolean"), "{error}");
+    // Facts belong to R03 alone.
+    let error = refused(r03_row(&good, &keep).replace("P16-R03", "P16-W02"), &top);
     assert!(
-        error.contains("an R03 row needs exactly the checks"),
+        error.contains("records facts, which only R03 does"),
+        "{error}"
+    );
+}
+
+/// An R03 row without facts (a driver older than the write watch) never records a PASS, and its
+/// FAIL or NOT_TESTED only with R03's own checks — today's names or the snapshot-only driver's —
+/// naming the ZIP the evidence names. A row that only says its execution failed (the session
+/// directory could not be made, an attachment could not be written) is the machine's, not the
+/// product's, and is not recorded (review round 3, B4).
+#[test]
+fn an_r03_row_without_facts_holds_r03_checks_and_never_passes() {
+    let zip = hex('f');
+    let top = format!(",\"zip_sha256\":\"{zip}\"");
+    let row = |verdict: &str, checks: &[(String, String)], extra: &str| {
+        record(&with_scenarios(&[scenario("R03", verdict, checks)], extra))
+    };
+    let mut older = r03_checks(Some(&zip));
+    older.last_mut().unwrap().0 = crate::mac_gui::R03_SNAPSHOT_ONLY_UNWRITTEN.into();
+    for verdict in ["FAIL", "NOT_TESTED"] {
+        assert!(
+            row(verdict, &r03_checks(Some(&zip)), &top).is_ok(),
+            "{verdict}"
+        );
+        assert!(
+            row(verdict, &older, &top).is_ok(),
+            "{verdict} of the older driver"
+        );
+        assert!(
+            row(verdict, &r03_checks(None), "").is_ok(),
+            "{verdict} without a ZIP"
+        );
+        for error in [
+            "stickymd-mac-session: No space left on device (os error 28)",
+            "R03-stderr.log: Permission denied (os error 13)",
+        ] {
+            let error = row(verdict, &[("execution".into(), error.into())], &top).unwrap_err();
+            assert!(
+                error.contains("an R03 row needs exactly the checks"),
+                "{verdict}: {error}"
+            );
+        }
+        // One check missing, or the ZIP not named first, or another ZIP named.
+        let mut missing = r03_checks(Some(&zip));
+        missing.pop();
+        assert!(
+            row(verdict, &missing, &top)
+                .unwrap_err()
+                .contains("exactly the checks")
+        );
+        assert!(
+            row(verdict, &r03_checks(None), &top)
+                .unwrap_err()
+                .contains("exactly the checks")
+        );
+        let error = row(verdict, &r03_checks(Some(&hex('e'))), &top).unwrap_err();
+        assert!(error.contains("names the ZIP it opened"), "{error}");
+    }
+}
+
+/// A calibration of R03's write watch is a bad sample of the driver, never acceptance evidence.
+#[test]
+fn a_calibration_run_is_not_recorded() {
+    let written = crate::mac_gui::r03_sample_facts(None, &[("StickyMD.app/Info.plist", 0x02)]);
+    let evidence = with_scenarios(
+        &[r03_row(&written, &|_| {})],
+        ",\"calibration\":\"r03-write-restore\"",
+    );
+    let error = record(&evidence).unwrap_err();
+    assert!(
+        error.contains("calibration run (r03-write-restore)"),
         "{error}"
     );
 }

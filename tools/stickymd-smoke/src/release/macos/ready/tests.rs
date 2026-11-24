@@ -8,7 +8,7 @@ mod producers;
 use super::judge::{Candidate, Inputs, Line, Read, Verdict, judge, ready};
 use super::rows::{Class, ROWS};
 use super::source_tests::{self, Receipt, Target};
-use crate::mac_ledger::record::{Built, Identity, Record, Revoked};
+use crate::mac_ledger::record::{Built, Identity, OpenedZip, Record, Revoked};
 use crate::mac_ledger::release::{DOWNLOAD_ROWS, ReleaseKind, ReleaseRecord};
 
 const R: &str = "1111111111111111111111111111111111111111";
@@ -48,8 +48,12 @@ fn record_on_image(row: &str, verdict: &str, image: &str, built: &Built, evidenc
 }
 
 fn record(row: &str, verdict: &str, driver: char, built: &Built, evidence: char) -> Record {
-    // R03 opened the candidate's ZIP (`mac-gui --zip`).
-    let zip = (row == "R03").then(|| candidate().zip_sha256);
+    // R03 opened the candidate's ZIP (`mac-gui --zip`), "nothing written" read through the
+    // write watch.
+    let zip = (row == "R03").then(|| OpenedZip {
+        sha256: candidate().zip_sha256,
+        write_watch: true,
+    });
     Record::Automated {
         zip,
         row: row.to_owned(),
@@ -128,15 +132,11 @@ fn assert_line(lines: &[Line], item: &str, expected: Verdict, words: &str) {
 }
 
 /// The rows that hold only with a USER record (receipt, waiver, download path); V03 has no
-/// producer and holds only with a waiver; R03 waits for its write watch (review #24 B9).
+/// producer and holds only with a waiver.
 fn awaiting_decision(item: &str) -> bool {
     item == "download-path"
         || ROWS.iter().any(|(row, class, _)| {
-            format!("P16-{row}") == item
-                && matches!(
-                    class,
-                    Class::Manual | Class::Comparison | Class::Translocation
-                )
+            format!("P16-{row}") == item && matches!(class, Class::Manual | Class::Comparison)
         })
 }
 
@@ -179,7 +179,10 @@ fn an_r03_pass_without_the_candidate_zip_is_not_evidence() {
                 if let Record::Automated { row, zip, .. } = &mut record
                     && row == "R03"
                 {
-                    *zip = repacked.clone();
+                    *zip = repacked.clone().map(|sha256| OpenedZip {
+                        sha256,
+                        write_watch: true,
+                    });
                 }
                 record
             })
@@ -351,12 +354,7 @@ fn r03_counts_only_this_batch_and_a_fail_on_these_bytes_blocks() {
         *batch = Some("rc0".into());
     }
     let lines = run(Read::Present(&candidate), &records, &receipt());
-    assert_line(
-        &lines,
-        "P16-R03",
-        Verdict::NotTested,
-        "is not counted while",
-    );
+    assert_line(&lines, "P16-R03", Verdict::Pass, "candidate ZIP dddd");
     // Without a batch nothing counts.
     let lines = judge(&Inputs {
         release: R,
@@ -497,35 +495,22 @@ fn released() -> Vec<Record> {
 }
 
 #[test]
-fn with_the_user_records_every_row_but_r03_holds() {
+fn with_the_user_records_every_row_holds() {
     let candidate = candidate();
     let lines = run(Read::Present(&candidate), &released(), &receipt());
     for line in &lines {
         let expected = match line.item.as_str() {
             "P16-W15" | "P16-W16" | "P16-V05" => Verdict::Excluded,
             "P16-V03" => Verdict::Waived,
-            // A clean R03 on the candidate ZIP is not counted until its write watch lands.
-            "P16-R03" => Verdict::NotTested,
             _ => Verdict::Pass,
         };
         assert_eq!(line.verdict, expected, "{line:?}");
     }
     assert_line(&lines, "P16-W01", Verdict::Pass, "W01 看过了");
-    assert_line(
-        &lines,
-        "P16-R03",
-        Verdict::NotTested,
-        "is not counted while",
-    );
+    assert_line(&lines, "P16-R03", Verdict::Pass, "under the write watch");
     assert_line(&lines, "P16-S06", Verdict::Pass, "explicit run");
-    assert!(!ready(&lines), "R03 still waits for its write watch");
-    let held: Vec<Line> = lines
-        .iter()
-        .filter(|line| line.item != "P16-R03")
-        .cloned()
-        .collect();
-    assert!(ready(&held));
-    // Without R03's run on the candidate ZIP the gate does not hold either.
+    assert!(ready(&lines));
+    // Without R03's run on the candidate ZIP the gate does not hold.
     let mut records = released();
     records.retain(|r| !matches!(r, Record::Automated { row, .. } if row == "R03"));
     let lines = run(Read::Present(&candidate), &records, &receipt());

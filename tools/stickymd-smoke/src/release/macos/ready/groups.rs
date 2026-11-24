@@ -116,10 +116,13 @@ fn statuses(scope: &Scope<'_>, row: &str) -> Vec<(Group, Status)> {
             Status::Incomplete
         } else {
             let counted = group.iter().rev().find_map(|r| match **r {
+                // For R03, a PASS that opened the candidate ZIP with "nothing written" read
+                // through the write watch (review round 3, B1).
                 Record::Automated { evidence, zip, .. }
-                    if scope
-                        .zip
-                        .is_none_or(|wanted| zip.as_deref() == Some(wanted)) =>
+                    if scope.zip.is_none_or(|wanted| {
+                        zip.as_ref()
+                            .is_some_and(|z| z.sha256 == wanted && z.write_watch)
+                    }) =>
                 {
                     Some(evidence.clone())
                 }
@@ -234,7 +237,7 @@ fn why_none(scope: &Scope<'_>, row: &str) -> String {
     });
     if let (true, Some(zip)) = (other_zip, scope.zip) {
         format!(
-            "no clean group of P16-{row} on the candidate's bytes holds a PASS that opened the candidate ZIP {zip} (a ZIP zipped from the .app names none)"
+            "no clean group of P16-{row} on the candidate's bytes holds a PASS that opened the candidate ZIP {zip} under the write watch (a ZIP zipped from the .app names none; a PASS recorded without the watch, as an older driver's, does not count)"
         )
     } else if other_driver {
         format!(

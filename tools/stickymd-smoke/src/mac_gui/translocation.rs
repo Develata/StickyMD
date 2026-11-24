@@ -19,6 +19,10 @@
 //! exit status comes from runningboard's termination record for the PID.
 //! A system that does not translocate, a prompt window not seen while the process runs, or a
 //! prompt that could not be answered is NOT_TESTED; a FAIL needs an observed violation.
+//! "Nothing written" (USER 2026-11-24, option A) reads a kqueue watch over the folder holding
+//! the bundle (`native::vnodes`) as well as two snapshots of it (`snapshot`): a write undone
+//! before the end is still a write. The rule here is pure, and mac-ledger recomputes the checks
+//! from the facts the run records (`facts`).
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::model::{Row, Verdict};
 
@@ -53,16 +57,66 @@ pub(crate) const TRANSLOCATED: &str = "started under App Translocation";
 pub(crate) const PROMPTED: &str = "prompt asks to move the translocated app";
 pub(crate) const EXITS: &str = "exits after the prompt is answered";
 pub(crate) const STATUS: &str = "exit status 1";
-pub(crate) const UNWRITTEN: &str = "nothing written beside the package";
+/// Renamed with the kqueue watch: a check list from a driver that compared snapshots only
+/// (review #24 B9) cannot be recorded as an R03 PASS.
+pub(crate) const UNWRITTEN: &str =
+    "nothing written in the folder holding the package (kqueue and snapshots)";
+/// The same check as a driver that compared snapshots only named it: a row of such a driver
+/// without facts may still record a FAIL or NOT_TESTED, never a PASS.
+pub(crate) const SNAPSHOT_ONLY_UNWRITTEN: &str = "nothing written beside the package";
 pub(crate) const CHECKS: [&str; 6] = [PRESET, TRANSLOCATED, PROMPTED, EXITS, STATUS, UNWRITTEN];
-/// Why equal snapshots are not yet "nothing written" (review #24 B9): they show the listed
-/// attributes unchanged at the end, not that no write happened and was undone in between.
-pub(crate) const WRITE_UNPROVEN: &str = "a write undone between the two snapshots, or a change to permissions or extended attributes, is not excluded (review #24 B9; awaiting Develata's decision)";
+
+/// `EVFILT_VNODE` flags (`sys/event.h`).
+pub(super) const NOTE_DELETE: u32 = 0x01;
+pub(super) const NOTE_WRITE: u32 = 0x02;
+pub(super) const NOTE_EXTEND: u32 = 0x04;
+pub(super) const NOTE_ATTRIB: u32 = 0x08;
+pub(super) const NOTE_LINK: u32 = 0x10;
+pub(super) const NOTE_RENAME: u32 = 0x20;
+pub(super) const NOTE_REVOKE: u32 = 0x40;
+/// What the watch registers for each entry.
+pub(super) const REGISTERED: u32 =
+    NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME | NOTE_REVOKE;
+/// The flags that are a write: an entry's bytes, its folder's names or a link count changed.
+/// Attributes (`NOTE_ATTRIB`: permissions, extended attributes, times) are not, since Gatekeeper
+/// itself changes the bundle's quarantine attribute; a revoked entry ended the watch early.
+pub(super) const WRITTEN: u32 = NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_LINK | NOTE_RENAME;
+const NAMES: [(u32, &str); 7] = [
+    (NOTE_DELETE, "DELETE"),
+    (NOTE_WRITE, "WRITE"),
+    (NOTE_EXTEND, "EXTEND"),
+    (NOTE_ATTRIB, "ATTRIB"),
+    (NOTE_LINK, "LINK"),
+    (NOTE_RENAME, "RENAME"),
+    (NOTE_REVOKE, "REVOKE"),
+];
+
+/// `flags` as `WRITE|ATTRIB`; bits outside [`REGISTERED`] as hexadecimal.
+pub(super) fn flag_names(flags: u32) -> String {
+    let mut out: Vec<String> = NAMES
+        .iter()
+        .filter(|(bit, _)| flags & bit != 0)
+        .map(|(_, name)| (*name).to_owned())
+        .collect();
+    if flags & !REGISTERED != 0 {
+        out.push(format!("{:#x}", flags & !REGISTERED));
+    }
+    out.join("|")
+}
+
+/// The kqueue watch over the folder holding the bundle: the entries registered before the
+/// start, as the snapshot names them, and the raw flags each reported by the end (entries that
+/// reported nothing left out).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct Watched {
+    pub entries: Vec<String>,
+    pub events: Vec<(String, u32)>,
+}
 /// The release ZIP R03 opened as given (`mac-gui --zip`); its observation is `sha256=<digest>`.
 pub(crate) const ZIP_CHECK: &str = "opened the candidate ZIP as given";
 
 /// What the live run observed.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub(super) struct Observed {
     /// The SHA-256 of the candidate ZIP the download directory was laid out from, when `--zip`
     /// gave one and staging matched it.
@@ -91,6 +145,8 @@ pub(super) struct Observed {
     /// written) before the start and after the exit.
     pub before: Vec<String>,
     pub after: Vec<String>,
+    /// The write watch over the same folder, when it ran to the end.
+    pub watch: Option<Watched>,
 }
 
 fn record(row: &mut Row, name: &str, verdict: Verdict, detail: String) {
@@ -224,417 +280,84 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
         },
         format!("termination record {:?}", o.termination),
     );
-    record(
-        row,
-        UNWRITTEN,
-        // A difference is an observed write, whether the product ended by itself or was ended
-        // by the driver (review round 3); equal snapshots do not prove that nothing was written
-        // while it ran (fail closed, review #24 B9).
-        if o.before == o.after {
-            Verdict::NotTested
-        } else {
-            Verdict::Fail
-        },
-        if o.before == o.after {
-            format!(
-                "{} entries under the folder holding the bundle unchanged (sizes, SHA-256, times), but {WRITE_UNPROVEN}",
-                o.before.len()
-            )
-        } else {
+    let ended = o.exited_early || o.exited == Some(true);
+    let (verdict, detail) = unwritten(o, ended);
+    record(row, UNWRITTEN, verdict, detail);
+}
+
+/// "Nothing written": both snapshots equal and no entry of the watch written, extended,
+/// linked, renamed or deleted (plan 11 #phase-16-macos-host). kqueue does not say who wrote;
+/// in the VM nothing else runs, and the driver only reads between the two snapshots. An observed
+/// write is a FAIL whether the product ended by itself or was ended by the driver (review
+/// round 3); only a run with no write seen needs the product to have ended by itself.
+fn unwritten(o: &Observed, ended: bool) -> (Verdict, String) {
+    if o.before != o.after {
+        return (
+            Verdict::Fail,
             format!(
                 "changed: {:?}",
                 super::snapshot::changed(&o.before, &o.after)
-            )
-        },
-    );
+            ),
+        );
+    }
+    let Some(watch) = &o.watch else {
+        return (Verdict::NotTested, "no write watch was read".into());
+    };
+    let with = |mask: u32| -> Vec<String> {
+        watch
+            .events
+            .iter()
+            .filter(|(_, flags)| flags & mask != 0)
+            .map(|(entry, flags)| format!("{entry}: {}", flag_names(*flags)))
+            .collect()
+    };
+    let written = with(WRITTEN);
+    if !written.is_empty() {
+        return (
+            Verdict::Fail,
+            format!("written while the product ran (kqueue), snapshots equal: {written:?}"),
+        );
+    }
+    // The same entries, whatever their order: the snapshot sorts its lines by kind.
+    let mut listed: Vec<&str> = o
+        .before
+        .iter()
+        .map(|line| super::snapshot::name(line).unwrap_or(line))
+        .collect();
+    listed.sort_unstable();
+    let mut registered: Vec<&str> = watch.entries.iter().map(String::as_str).collect();
+    registered.sort_unstable();
+    if listed != registered {
+        return (
+            Verdict::NotTested,
+            format!("the watch registered {registered:?}, the snapshot lists {listed:?}"),
+        );
+    }
+    if !ended {
+        return (
+            Verdict::NotTested,
+            "no write was seen, but the product did not end after the prompt".into(),
+        );
+    }
+    let revoked = with(NOTE_REVOKE);
+    if !revoked.is_empty() {
+        return (
+            Verdict::NotTested,
+            format!("the watch was revoked: {revoked:?}"),
+        );
+    }
+    (
+        Verdict::Pass,
+        format!(
+            "{} entries under the folder holding the bundle unchanged (sizes, SHA-256, times) and none written, extended, linked, renamed or deleted (kqueue); attributes changed: {:?}",
+            o.before.len(),
+            with(NOTE_ATTRIB)
+        ),
+    )
 }
 
+pub(crate) mod facts;
+#[cfg(target_os = "macos")]
+mod live;
 #[cfg(target_os = "macos")]
 pub(super) use live::run;
-
-#[cfg(target_os = "macos")]
-mod live {
-    use super::{MODAL_LEVEL, Observed, QUARANTINE_FLAGS, judge, mount_point, prompted};
-    use crate::mac_gui::{
-        live::{command, command_within, output},
-        model::{Row, Trace, Window},
-        native::{events, windows},
-        staging::{self, Bytes, Candidate},
-    };
-    use std::{
-        fs,
-        path::Path,
-        time::{Instant, SystemTime, UNIX_EPOCH},
-    };
-
-    /// The virtual key code of Return.
-    const RETURN: u16 = 36;
-
-    /// Whether `pid` is gone, as `kill -0` answers it; any other answer is a failure of the
-    /// query, not a finding about the process.
-    fn gone(pid: u32) -> Result<bool, String> {
-        match output("/bin/kill", &["-0", &pid.to_string()])? {
-            (Some(0), _, _) => Ok(false),
-            (Some(_), _, error) if error.contains("No such process") => Ok(true),
-            (code, _, error) => Err(format!("kill -0 {pid}: exit {code:?}: {error}")),
-        }
-    }
-
-    /// The PIDs of processes named StickyMD with their executable paths. An answer is told from
-    /// a failure of the query (review #24 S1, round 3): `pgrep` exits 1 with nothing printed
-    /// when nothing matches; `ps` must print a path and nothing on stderr; a PID `ps` gives
-    /// no path for counts as gone only when `kill -0` says it is.
-    fn products() -> Result<Vec<(u32, String)>, String> {
-        let found = match output("/usr/bin/pgrep", &["-x", "StickyMD"])? {
-            (Some(0), text, error) if error.trim().is_empty() => text,
-            (Some(1), text, error) if text.trim().is_empty() && error.trim().is_empty() => {
-                return Ok(Vec::new());
-            }
-            (code, _, error) => return Err(format!("pgrep: exit {code:?}: {error}")),
-        };
-        let mut out = Vec::new();
-        for pid in found.split_whitespace() {
-            let pid: u32 = pid.parse().map_err(|_| format!("pgrep printed {pid:?}"))?;
-            match output("/bin/ps", &["-o", "comm=", "-p", &pid.to_string()])? {
-                (Some(0), path, error) if error.trim().is_empty() && !path.trim().is_empty() => {
-                    out.push((pid, path.trim().to_owned()));
-                }
-                _ if gone(pid)? => {}
-                (code, _, error) => {
-                    return Err(format!("ps for PID {pid}: exit {code:?}: {error}"));
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    /// runningboard's termination record for `pid` (e.g. `(0, 0, 0)`), from the system log; the
-    /// log is kept beside the stderr. The record can trail the exit, so the log is read up to
-    /// three times.
-    fn termination(pid: u32, dir: &Path) -> Result<Option<String>, String> {
-        let marker = format!(":{pid}] termination reported by launchd ");
-        for _ in 0..3 {
-            events::wait(1000)?;
-            let log = command_within(
-                "/usr/bin/log",
-                &[
-                    "show",
-                    "--last",
-                    "1m",
-                    "--style",
-                    "syslog",
-                    "--predicate",
-                    "process == \"runningboardd\" AND eventMessage CONTAINS \"termination reported by launchd\"",
-                ],
-                std::time::Duration::from_secs(60),
-            )?;
-            if let Some(record) = log
-                .lines()
-                .find_map(|l| l.split(&marker).nth(1).map(|r| r.trim().to_owned()))
-            {
-                crate::atomic_evidence::write(&dir.join("system.log"), log.as_bytes())?;
-                return Ok(Some(record));
-            }
-        }
-        Ok(None)
-    }
-
-    /// From `open` to the answered prompt: finds the one process started from `copy`, waits for
-    /// its prompt, keeps its image, and answers it. Errors here still leave the caller's cleanup
-    /// to run.
-    fn observe(
-        o: &mut Observed,
-        copy: &Path,
-        dir: &Path,
-        read_stderr: &dyn Fn() -> Result<String, String>,
-        row: &mut Row,
-        note: &dyn Fn(&mut Row, String),
-    ) -> Result<(), String> {
-        let text = |p: &Path| p.to_string_lossy().into_owned();
-        // The process started from this copy: up to 20 s for LaunchServices, AMFI and TCC. Only
-        // a process whose executable lies in this copy or in its translocated mount is it; any
-        // other StickyMD is left alone.
-        let start = Instant::now();
-        let mut pid = None;
-        while start.elapsed().as_secs() < 20 {
-            let mounts = command("/sbin/mount", &[])?;
-            o.mount = mounts
-                .lines()
-                .find(|l| l.starts_with(&format!("{} on ", copy.display())))
-                .map(str::to_owned);
-            let point = o.mount.as_deref().and_then(mount_point).map(str::to_owned);
-            let found: Vec<_> = products()?
-                .into_iter()
-                .filter(|(_, path)| {
-                    path.starts_with(&format!("{}/", text(copy)))
-                        || point
-                            .as_deref()
-                            .is_some_and(|p| path.starts_with(&format!("{p}/")))
-                })
-                .collect();
-            if let [(p, path)] = found.as_slice() {
-                pid = Some(*p);
-                o.path = Some(path.clone());
-                break;
-            }
-            if found.len() > 1 {
-                note(
-                    row,
-                    format!("more than one process from this copy: {found:?}"),
-                );
-                return Ok(());
-            }
-            events::wait(100)?;
-        }
-        let Some(pid) = pid else {
-            note(row, "no StickyMD process from this copy within 20s".into());
-            return Ok(());
-        };
-        note(row, format!("PID {pid} at {:?}", o.path));
-        let alive = || products().map(|p| p.iter().any(|(q, _)| *q == pid));
-        // The prompt: up to 15 s for its window and its message.
-        let modal = |w: &Window| {
-            // A fully shown alert, not one still fading or scaling in.
-            w.onscreen
-                && w.layer >= MODAL_LEVEL
-                && w.alpha >= 0.9
-                && w.bounds.size.width >= 200.0
-                && w.bounds.size.height >= 150.0
-        };
-        let start = Instant::now();
-        let mut shown = None;
-        while start.elapsed().as_secs() < 15 {
-            if !alive()? {
-                o.exited_early = true;
-                break;
-            }
-            shown = windows::all(pid)?.into_iter().find(|w| modal(w));
-            o.window = shown.as_ref().map(|w| format!("{w:?}"));
-            match read_stderr() {
-                Ok(text) => o.stderr = text,
-                Err(e) => o.stderr_unreadable = Some(e),
-            }
-            if prompted(o) {
-                break;
-            }
-            events::wait(200)?;
-        }
-        match read_stderr() {
-            Ok(text) => o.stderr = text,
-            Err(e) => o.stderr_unreadable = Some(e),
-        }
-        note(
-            row,
-            format!("window {:?}; exited early {}", o.window, o.exited_early),
-        );
-        let (true, Some(window)) = (prompted(o), &shown) else {
-            return Ok(());
-        };
-        match windows::screenshot(window) {
-            Ok(ppm) => crate::atomic_evidence::write(&dir.join("prompt.ppm"), &ppm)?,
-            Err(e) => note(row, format!("prompt image not captured: {e}")),
-        }
-        // Activate the running instance as the manual procedure does, then answer it, but only
-        // while that same process still shows that same window.
-        command("/usr/bin/open", &[&text(copy)])?;
-        events::wait(1500)?;
-        let others: Vec<_> = products()?.into_iter().filter(|(q, _)| *q != pid).collect();
-        let same = windows::all(pid)?
-            .iter()
-            .any(|w| w.id == window.id && modal(w));
-        o.unanswered = if !others.is_empty() {
-            Some(format!("reopening started another process: {others:?}"))
-        } else if !alive()? {
-            Some("the process ended before Return was posted".into())
-        } else if !same {
-            Some(format!("window {} was gone before Return", window.id))
-        } else {
-            None
-        };
-        if o.unanswered.is_some() {
-            return Ok(());
-        }
-        events::key_to_pid(pid, RETURN)?;
-        let start = Instant::now();
-        let mut ended = false;
-        while start.elapsed().as_secs() < 5 {
-            if !alive()? {
-                ended = true;
-                break;
-            }
-            events::wait(100)?;
-        }
-        o.exited = Some(ended);
-        if ended {
-            // A log read and searched without the record leaves the exit status untested; a log
-            // that cannot be read or kept stops the run (review round 3).
-            o.termination = termination(pid, dir)?;
-        }
-        Ok(())
-    }
-
-    /// Runs R03 in `dir` (the scenario's session directory) for the app under test, whose byte
-    /// identities must be `expected`, from the candidate ZIP `zip` when one was given. Leaves no
-    /// process of its own running. `Ok(Some(reason))` stops the whole run unfinished: R03 could
-    /// not run on the bytes under test (staging, or another StickyMD running), the bytes changed
-    /// while it ran, or its processes or translocation outlived it. None of these is a product
-    /// result, so none is recorded as a FAIL (review F9, F11).
-    pub(in crate::mac_gui) fn run(
-        app: &Path,
-        dir: &Path,
-        expected: &Bytes,
-        zip: Option<&Candidate>,
-        started: Instant,
-        row: &mut Row,
-    ) -> Result<Option<String>, String> {
-        // Every error of R03 is the infrastructure's (opening, observing, cleaning up); a product
-        // result is only ever a check. So any error stops the run unfinished, never a FAIL
-        // (review #24 S1).
-        Ok(attempt(app, dir, expected, zip, started, row)
-            .unwrap_or_else(|error| Some(format!("R03 could not complete: {error}"))))
-    }
-
-    fn attempt(
-        app: &Path,
-        dir: &Path,
-        expected: &Bytes,
-        zip: Option<&Candidate>,
-        started: Instant,
-        row: &mut Row,
-    ) -> Result<Option<String>, String> {
-        let note = |row: &mut Row, event: String| {
-            row.trace.push(Trace {
-                ms: started.elapsed().as_millis() as u64,
-                event,
-            });
-        };
-        if !products()?.is_empty() {
-            return Ok(Some(
-                "a StickyMD process is already running; R03 was not started".into(),
-            ));
-        }
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_secs();
-        let value = format!("{QUARANTINE_FLAGS};{stamp:x};Safari;");
-        let staged = match staging::stage(&dir.join("download"), app, expected, zip, &value) {
-            Ok(staged) => staged,
-            Err(e) => {
-                return Ok(Some(format!(
-                    "the download directory was not laid out from the bytes under test: {e}"
-                )));
-            }
-        };
-        note(
-            row,
-            match &staged.zip_sha256 {
-                Some(digest) => format!("candidate ZIP sha256={digest}"),
-                None => "no --zip: the app under test was zipped here; no ZIP is named".into(),
-            },
-        );
-        let copy = staged.copy;
-        // The folder holding the bundle: a portable note/ would be written there.
-        let watched = staged.watched;
-        let text = |p: &Path| p.to_string_lossy().into_owned();
-        // The attribute absent is an observation (the preset row is untested); xattr failing
-        // otherwise is an error of the run (review round 3).
-        let quarantine = match output(
-            "/usr/bin/xattr",
-            &["-p", "com.apple.quarantine", &text(&copy)],
-        )? {
-            (Some(0), value, _) => Some(value.trim().to_owned()),
-            (Some(1), _, error) if error.contains("No such xattr") => None,
-            (code, _, error) => return Err(format!("xattr: exit {code:?}: {error}")),
-        };
-        let mut o = Observed {
-            zip: staged.zip_sha256.clone(),
-            quarantine,
-            before: super::super::snapshot::tree(&watched)?,
-            ..Observed::default()
-        };
-        let stderr = dir.join("stderr.log");
-        // Not yet written is empty; other read errors are kept. Bytes that are not UTF-8 are kept
-        // (lossily), so a garbled message compares unequal rather than vanishing.
-        let read_stderr = || match fs::read(&stderr) {
-            Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-            Err(e) => Err(format!("{}: {e}", stderr.display())),
-        };
-        note(
-            row,
-            format!("open {} (quarantine {:?})", copy.display(), o.quarantine),
-        );
-        command("/usr/bin/open", &[&text(&copy), "--stderr", &text(&stderr)])?;
-        let observed = observe(&mut o, &copy, dir, &read_stderr, row, &note);
-        // Leave nothing of this run running, on every path: only processes started from this
-        // copy (the copy itself or its translocated mount), never another StickyMD. The mount
-        // is read again here: the first read may have failed after the product started
-        // (review round 3).
-        let mounted_line = || -> Result<Option<String>, String> {
-            Ok(command("/sbin/mount", &[])?
-                .lines()
-                .find(|l| l.starts_with(&format!("{} on ", copy.display())))
-                .map(str::to_owned))
-        };
-        let remount = mounted_line();
-        let mountpoint = remount
-            .as_ref()
-            .ok()
-            .and_then(Option::as_deref)
-            .or(o.mount.as_deref())
-            .and_then(mount_point)
-            .map(str::to_owned);
-        let ours = |path: &str| {
-            path.starts_with(&format!("{}/", text(&copy)))
-                || mountpoint
-                    .as_deref()
-                    .is_some_and(|point| path.starts_with(&format!("{point}/")))
-        };
-        let own = || -> Result<Vec<u32>, String> {
-            Ok(products()?
-                .into_iter()
-                .filter(|(_, path)| ours(path))
-                .map(|(q, _)| q)
-                .collect())
-        };
-        // Cleanup waits do not end on a cancelled run: the run is stopping anyway.
-        for signal in ["-TERM", "-KILL"] {
-            for q in own()? {
-                let _ = command("/bin/kill", &[signal, &q.to_string()]);
-            }
-            let start = Instant::now();
-            while !own()?.is_empty() && start.elapsed().as_secs() < 3 {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        }
-        let left = own()?;
-        if !left.is_empty() {
-            return Ok(Some(format!(
-                "this run's StickyMD processes did not end: {left:?}"
-            )));
-        }
-        // macOS detaches the translocation after the process ends; wait for it before anything
-        // returns, so a failed observation leaves no mount behind for the next run either.
-        let start = Instant::now();
-        while mounted_line()?.is_some() && start.elapsed().as_secs() < 10 {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-        }
-        if mounted_line()?.is_some() {
-            return Ok(Some(
-                "this copy's translocation was still mounted 10 s after its process ended".into(),
-            ));
-        }
-        remount?;
-        observed?;
-        o.after = super::super::snapshot::tree(&watched)?;
-        // The bundle opened by path is still the bytes under test (a change undone between the
-        // two checks is not seen; the VM runs nothing else).
-        if let Err(e) = staging::matches(&copy, expected) {
-            return Ok(Some(format!("the copy changed while R03 ran: {e}")));
-        }
-        note(row, format!("after {} entries", o.after.len()));
-        judge(&o, row);
-        Ok(None)
-    }
-}

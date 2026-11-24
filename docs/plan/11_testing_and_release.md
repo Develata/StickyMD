@@ -300,10 +300,24 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
   任一不符即拒绝整次运行（不写成 R03 的 FAIL）。R03 运行时把 ZIP 复制进下载目录，复制件的 SHA-256 须等于检查时的值，成员再按上面核对一次；
   隔离标记先加在这份复制件（本次创建的普通文件）上，解开、确认解出的根是文件夹且整棵树只有文件与文件夹之后，再以 `xattr -w -r -s` 加在解出的
   整个文件夹上；解出的 bundle 再按两项摘要核对一次，进程结束后还要再核对一次。
-  “不写文件”比较 `.app` 所在文件夹（便携版的 `note/` 会写在那里）运行前后的递归快照：每个文件的大小、SHA-256 与修改时间，每个文件夹的修改时间
-  （运行中建了又删的文件会改变它），每个链接的目标。快照不同即为 FAIL，产品自行退出或由驱动结束都一样（第三次复审）。快照相同只证明所列属性在结束时与开始时相同，不排除运行中写入后又复原、
-  也不覆盖权限与扩展属性。USER 2026-11-24 选定以 kqueue 观测写入（[审查修复报告](../report/2026-11-24-m5-producers-review-fixes.md)“需要 Develata 决定”）；
-  在它落地之前，这一项记为 `NOT TESTED`，所以 R03 不能为 PASS，`record` 也拒绝登记 R03 的 PASS（fail closed，#24 第二轮审查 B9）。
+  “不写文件”（USER 2026-11-24 选定“A：kqueue 观测”，[审查修复报告](../report/2026-11-24-m5-producers-review-fixes.md)“需要 Develata 决定”，#24 第二轮
+  审查 B9）由两部分组成，被观察的是 `.app` 所在文件夹（便携版的 `note/` 会写在那里）：
+  - 写入观测：打开产品之前，驱动对这个文件夹及其中的每个文件与文件夹（不跟随链接，只能是普通文件与文件夹）以 `O_EVTONLY | O_NOFOLLOW` 打开，
+    在一个 kqueue 上逐个登记 `EVFILT_VNODE`（`EV_ADD | EV_CLEAR | EV_RECEIPT`，逐个核对登记结果）；然后取运行前的快照，快照的条目须恰为登记的条目。
+    本次的 StickyMD 进程都结束之后、取运行后的快照之前，以零超时反复读出 kqueue 直到为空。计为写入的是写（`NOTE_WRITE`）、扩展（`NOTE_EXTEND`）、
+    链接数变化（`NOTE_LINK`）、改名（`NOTE_RENAME`）与删除（`NOTE_DELETE`）：改动文件内容（含以相同字节重写）、截断、在任一文件夹中建立、删除或
+    改名一项（含建了又删）、增减硬链接，都至少使一个登记的条目带上其中之一（本机 APFS 上逐项测得，见 `native/vnodes.rs` 的测试）。属性变化
+    （`NOTE_ATTRIB`：权限、扩展属性与时间）不计入写文件，只记下哪些条目有，因为 Gatekeeper 自己会改 bundle 的隔离属性。登记、读出失败是 R03 的错误
+    （见下）。不证明的前提：经共享内存映射写入、在同步（`msync`）之前又复原的内容不产生事件，快照也看不到（本机测得；待 USER 确认）。
+  - 快照：运行前后的递归快照，每个文件的大小、SHA-256 与修改时间，每个文件夹的修改时间，每个链接的目标。
+  判定：快照不同为 FAIL；有条目带计为写入的标志为 FAIL（kqueue 不说明是谁写的；虚拟机中别无他事，驱动在两次快照之间只读）；观察到的写入不论产品
+  自行退出还是由驱动结束都为 FAIL（第三次复审）。没有读出观测、登记的条目与运行前的快照不符、没有看到写入但产品没有自行退出、或有条目被撤销
+  （`NOTE_REVOKE`，观测中断）为 `NOT TESTED`；其余为 PASS。这一项的检查名为
+  “nothing written in the folder holding the package (kqueue and snapshots)”，只比快照的旧驱动的检查表因此不能登记为 PASS。
+  对照坏样本：`mac-gui --r03-write-restore`（校准，只随 R03）在登记与运行前的快照之后，以相同字节重写 `StickyMD.app/Contents/Info.plist` 并恢复其
+  修改时间：快照看不出，写入观测使这一项为 FAIL。这样的证据带 `"calibration":"r03-write-restore"`，`record` 拒绝登记。
+  R03 的证据在这一行中另记它的观察事实 `facts`：ZIP 摘要、隔离属性、进程路径、挂载行、提示窗口、stderr、回答与退出、退出记录、两次快照、登记的
+  条目与每个条目读出的原始标志。
   R03 的任何错误（会话目录、打开、观察、附件、清理）都不是产品结果：另一个 StickyMD 正在运行、下载目录不能从被测字节布置、LaunchServices 打不开、
   查询本身失败（`pgrep`、`ps`、`xattr`、窗口列表、系统日志的读取或保存；`ps` 查不到的 PID 只在 `kill -0` 答“没有这个进程”时才算已退出）、
   R03 的进程或随机化挂载在它之后仍在（清理时重读挂载表，挂载解除之后才返回观察中的错误）、或 bundle 在运行中变了，这一行都记为 `NOT TESTED`，
@@ -315,10 +329,14 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 - **各生产者只写自己的行**（USER 2026-11-24 的 Resolution 之后，审查修复）：没有 `tool` 成员的证据是 `mac-gui` 或 `mac-logout` 的：
   `mac-logout` 的证据在环境中记有 `case`，只能登记那一种情况的注销行；`mac-gui` 的证据不记 `case`，只能登记 `mac-gui` 运行的行。
   `"tool":"mac-resources"` 的证据只能登记 R01、R02，且不得带 `zip_sha256`；其他 `tool` 拒绝。账本里 R01、R02 的自动化记录以独立的种类
-  `resources` 写出，读账本时种类与行不符的记录（例如旧版导入器写成 `automated` 的资源行）使账本被拒。R03 的一行不论结论都必须恰好带它的六项检查
-  （隔离标记预设、随机化启动、提示、回答后退出、退出码 1、不写文件），给了 ZIP 时再在最前面带上打开该 ZIP 的检查，且其中的摘要等于证据顶层的
-  `zip_sha256`；只带 `execution` 一项的 R03 行（机器的错误，第三次复审 B4）不登记。在“不写文件”的办法落地之前，即使检查表齐全也不登记 R03 的 PASS
-  （见上）。`--image` 须为镜像 digest（`sha256:<64 位十六进制>`，可带 `<名称>@` 前缀）。账本按内容摘要 `sha256:<十六进制>`（小写）分组，名称与大小写
+  `resources` 写出，读账本时种类与行不符的记录（例如旧版导入器写成 `automated` 的资源行）使账本被拒。R03 的 PASS 必须带它的观察事实
+  `facts`：`record` 以与驱动相同的判定从这些事实重算 R03 的检查表，与证据写下的检查名、结论与观察逐项相同才登记（带 `facts` 的 R03 行不论结论都这样
+  核对；#24 第二轮审查 S4）。重算出的 PASS 恰好带六项检查（隔离标记预设、随机化启动、提示、回答后退出、退出码 1、不写文件），给了 ZIP 时最前面是
+  打开该 ZIP 的检查，其中的摘要等于证据顶层的 `zip_sha256`，事实中的 ZIP 摘要也须等于它。事实中有写入观测时，这条记录另记 `"write_watch":true`
+  （只写为 true，只随 ZIP 摘要）；发布门只认带它的 R03 PASS（第三次复审 B1，#macos-readiness-check）。没有 `facts` 的 R03 行（比写入观测更早的
+  驱动）不登记 PASS；它的 FAIL 或 NOT_TESTED 只在恰好带 R03 的检查（今天的名字，或只比快照的驱动的“nothing written beside the package”）时登记，
+  只带 `execution` 一项的 R03 行（机器的错误，第三次复审 B4）不登记。
+  `--image` 须为镜像 digest（`sha256:<64 位十六进制>`，可带 `<名称>@` 前缀）。账本按内容摘要 `sha256:<十六进制>`（小写）分组，名称与大小写
   不影响身份：同一摘要的两种写法属于同一组，账本保留写入时的字节。旧行用同一语法读取（第三次复审 B5）：不合这一语法的镜像（例如旧版 CLI 收下的
   标签，或只是结尾像 digest 的字符串）保留原字节，身份不明；发布门遇到候选字节上身份不明的记录时，这一行没有干净的组（`NOT TESTED`），它的 FAIL
   照样算。
@@ -529,10 +547,10 @@ R03 与资源行的生产者改动按同一 Resolution 另开分支落地（#pha
   任何为 `NOT TESTED` 的行，只要这一行或它所需的行在候选字节上（不论哪个身份）记下过 `FAIL`，即为 `FAIL`，waiver 不再考虑；人工行在收据之前同样先看
   这些 `FAIL`；R03 在本批中候选字节上记下的 `FAIL`，不论另一组是否干净，也是 `FAIL`（第三次复审 S1）。I01–I03 与 R03 只看 `--batch` 所指的批次，
   不给批次时不计。
-  R03 另要求干净的组中有一次 PASS 的 `zip_sha256` 等于候选 ZIP 的 SHA-256；ZIP 不参与分组，组内经别的 ZIP（含从 `.app` 打包、没有 ZIP 摘要的运行）
-  记下的 FAIL、NOT_TESTED 与被撤销的 PASS 同样使该组不干净；只有经别的 ZIP 的 PASS 时为 `NOT TESTED`。R03 不可 waiver。在“不写文件”的观测落地之前
-  （#phase-16-macos-host 的“R03 的输入 ZIP”），即使有这样的干净组，R03 也为 `NOT TESTED`：账本里已有的 R03 PASS（例如旧驱动写下的）不使门成立
-  （第三次复审 BLOCKER 1）。
+  R03 另要求干净的组中有一次 PASS 的 `zip_sha256` 等于候选 ZIP 的 SHA-256，且记有 `"write_watch":true`（“不写文件”经写入观测判定，
+  #phase-16-macos-host）；ZIP 不参与分组，组内经别的 ZIP（含从 `.app` 打包、没有 ZIP 摘要的运行）记下的 FAIL、NOT_TESTED 与被撤销的 PASS 同样使
+  该组不干净；只有经别的 ZIP 或没有写入观测的 PASS 时为 `NOT TESTED`，所以账本里已有的、只比快照的驱动写下的 R03 PASS 不使门成立（第三次复审
+  BLOCKER 1）。R03 不可 waiver。
 - **发布用 USER 记录**（USER 2026-11-24）：记在账本 `dist/evidence/mac-gui-ledger/records.jsonl` 中，与其他记录同样只追加、在排他锁下原子发布。
   每条记录含候选 receipt 的 SHA-256（`candidate_receipt_sha256`；它绑定 ZIP 与 bundle 的两项字节身份）、记录所在的桌面、USER 的原话、可选的批次与时间。
   #phase-16-macos-host 的复用规则不读它们。
