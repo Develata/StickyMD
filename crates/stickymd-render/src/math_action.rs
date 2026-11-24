@@ -78,6 +78,12 @@ pub fn run_math_action(
         }
         .into());
     }
+    // Known limit (plan 07): the editor and the source maps split lines only at `\n`, while
+    // Comrak also breaks at a `\r` that no `\n` follows. Past the first such `\r` their
+    // positions disagree and a replacement could land on other bytes, so the pass refuses.
+    if has_isolated_cr(&snapshot.text) {
+        return Ok(None);
+    }
     let joined = join_math_equals_lines(&snapshot.text, scope.clone());
     let joined_snapshot = joined.as_ref().map(|joined| DocumentSnapshot {
         text: joined.text().into(),
@@ -93,6 +99,16 @@ pub fn run_math_action(
         Some(converted) => Some(MathActionPass::Converted(joined, converted)),
         None => joined.map(MathActionPass::Joined),
     })
+}
+
+/// Whether `text` holds a `\r` that is not followed by `\n`: one pass over the bytes, no
+/// allocation. A `\r\n` pair is one line break for both Comrak and the source maps.
+fn has_isolated_cr(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .any(|(index, &byte)| byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
 }
 
 #[cfg(test)]
@@ -115,6 +131,83 @@ mod tests {
         assert_eq!(pass("$$a\n=\nb\n=\nc$$").change_count(), 2);
         assert_eq!(pass("$$a\n=\nb$$\n\n$$c\n=\nd$$").change_count(), 2);
         assert_eq!(pass("\\(x\\) and \\(y\\)").change_count(), 2);
+    }
+
+    /// Known limit (plan 07): plan 05 keeps an isolated `\r` as an ordinary character and the
+    /// source maps count only `\n`, while Comrak reads `\r` as a line break. A document that
+    /// holds any `\r` without a following `\n` is left byte-identical. The first two inputs
+    /// were rewritten before the refusal: a formula before the first `\r`, and, with mixed
+    /// endings, the code span `\(y\)` that the shifted positions pointed at.
+    #[test]
+    fn phase11b_math_action_leaves_documents_with_an_isolated_cr_unchanged() {
+        let pass_in = |text: &str, scope: Option<std::ops::Range<usize>>| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            super::run_math_action(&snapshot, scope)
+                .unwrap()
+                .map(|pass| pass.into_text())
+        };
+        let pass = |text: &str| pass_in(text, None);
+        for text in [
+            "\\(x\\)\rp\r",
+            "# p\r# \\(x\\)\na`\\(y\\)`\n",
+            "\\[\ra\r=\rb\r\\]\r",
+            "$$\ra\r=\rb\r$$\r",
+            "p\r\\(x\\) q\r",
+            "p\r\\[\rx\r\\]\r",
+            "\\(x\\)\n\n$$a\n=\nb$$\nlast\r",
+            // The first `\r` is half of a `\r\n`; the isolated one comes later.
+            "\\(x\\)\r\np\r",
+        ] {
+            assert_eq!(pass(text), None, "{text:?} changed");
+        }
+        // Control: the same documents with `\n` or `\r\n` still convert.
+        assert_eq!(pass("\\(x\\)\np\n").as_deref(), Some("$x$\np\n"));
+        assert_eq!(pass("\\(x\\)\r\np\r\n").as_deref(), Some("$x$\r\np\r\n"));
+        assert_eq!(
+            pass("# p\n# \\(x\\)\na`\\(y\\)`\n").as_deref(),
+            Some("# p\n# $x$\na`\\(y\\)`\n")
+        );
+        // A selection of `\(x\)` that leaves the `\r` outside still refuses; with `\r\n` only,
+        // the same selection converts.
+        assert_eq!(pass_in("\\(x\\)\r\r\n", Some(0..5)), None);
+        assert_eq!(
+            pass_in("\\(x\\)\r\n", Some(0..5)).as_deref(),
+            Some("$x$\r\n")
+        );
+    }
+
+    /// Known limit (plan 07): the equals-line join does not tell text-mode arguments apart, so
+    /// an equals line inside `\text{...}` is joined and its spaces go.
+    #[test]
+    fn phase11b_math_action_joins_an_equals_line_inside_a_text_argument() {
+        let snapshot = stickymd_core::DocumentSnapshot {
+            text: std::sync::Arc::from("$$\\text{a\n=\nb}$$"),
+            generation: stickymd_core::Generation::initial(),
+            line_ending: stickymd_core::LineEnding::Lf,
+        };
+        let pass = super::run_math_action(&snapshot, None).unwrap();
+        assert_eq!(
+            pass.map(|pass| pass.into_text()).as_deref(),
+            Some("$$\\text{a=b}$$")
+        );
+    }
+
+    #[test]
+    fn an_isolated_cr_is_a_cr_without_a_following_lf() {
+        for (text, isolated) in [
+            ("", false),
+            ("a\nb", false),
+            ("a\r\nb", false),
+            ("a\r\r\nb", true),
+            ("a\rb", true),
+            ("a\r", true),
+        ] {
+            assert_eq!(super::has_isolated_cr(text), isolated, "{text:?}");
+        }
     }
 
     use std::time::{Duration, Instant};
@@ -179,6 +272,18 @@ mod tests {
         let mut text = "x".repeat(super::MAX_PREVIEW_SOURCE_BYTES - 10);
         text.push_str("\n\n$$a\n=\nb$$");
         assert_eq!(text.len(), super::MAX_PREVIEW_SOURCE_BYTES + 1);
+        let result = run_math_action(&snapshot(&text), None);
+        assert!(
+            matches!(
+                result,
+                Err(super::SemanticConversionError::Parse(
+                    super::PreviewParseError::SourceTooLarge { .. }
+                ))
+            ),
+            "{result:?}"
+        );
+        // The size check comes first: an isolated `\r` does not turn it into a no-op.
+        text.push('\r');
         let result = run_math_action(&snapshot(&text), None);
         assert!(
             matches!(
