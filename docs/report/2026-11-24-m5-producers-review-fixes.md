@@ -148,6 +148,24 @@ A 的实现曾先推到 #24（`7e5eb45`、`31a83b7`、`3846eed`），随后在 #
 
 建议 A：它不改条款，成立与 FAIL 都有证明，剩下的无法判定区间很窄。
 
+### 第三次修复后的验证
+
+在 `a179abf`（本机 macOS 27.2 arm64）：
+
+- `cargo test --locked -p stickymd-smoke`：单元 744 个、集成 20 个通过，3 个忽略。`qualification::resource_diagnostics` 的一个既有测试曾因临时目录名
+  （PID 加纳秒）冲突而失败一次，重跑通过；这是既有的不稳定，不是本轮引入的。
+- `cargo clippy --all-targets -D warnings`：八个 macOS 包与 `stickymd-smoke` 的 Windows 目标都无警告；`cargo fmt --check` 通过；`phase 00` 与 `phase 16` PASS。
+- 变异（删去或放宽一处守卫，跑对应的测试）：输出规则的已有文件名、`--zip` 在 `--out` 里、`F01.ppm` 的名字；R03 行的检查表（任何结论）；镜像语法；
+  身份不明的记录挡住干净组；门对已有 R03 PASS 判 `NOT TESTED`；R03 的 FAIL 先于别组；只由恰为 60 s 的窗口证明 FAIL；FAIL 须场景完整；偶数次运行的
+  中位数；驱动结束产品时的快照差异。共 12 处，起初有 3 处没被测试抓住（测试名指错一处，另两处的样本不够），补上样本后 12 处都被抓住。
+  `fe90d42` 单独不能编译测试（`52b4677` 修正），这两个提交之间没有推送。
+- `mac-test` 虚拟机（macOS 27.2，26B123），`a179abf` 的干净克隆构建：驱动为 debug 构建 `a3f42a69…`，本机打包的发布布局 ZIP `b83230b8…`
+  （不是晋升的候选），批次 `m24-r3`：R03 的六项检查通过，“不写文件”为 `NOT TESTED`（快照前后 14 项相同），整行 `NOT TESTED`，运行标为完成；
+  登记进真实账本的一份副本时记为 R03 的 NOT_TESTED（真实账本未改动）。同一驱动对复用的 `--out`、只留有 `F01.ppm` 的 `--out`（原字节保留）与
+  放在 `--out` 里的 `--zip` 都在运行前拒绝。证据在本 worktree 已忽略的 `dist/evidence/mac-vm-2026-11-24-m24/`（`mac-gui.json` 为 `28f2e8d4…`）。
+- 未覆盖：schema 5 的 `mac-resources` 仍没有在虚拟机中运行过（每次采样核对显示器集合、就绪期限、R02 的过渡规则都只在单元测试中验证）；
+  R03 的会话目录与附件失败、`ps` 的查询失败没有在虚拟机中复现。
+
 ## 验证
 
 - 本机（macOS 27.2 arm64）`cargo test --locked -p stickymd-smoke`：单元 692 个、集成 20 个通过，3 个忽略。
