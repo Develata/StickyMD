@@ -232,7 +232,17 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
         } else {
             Verdict::Fail
         },
-        format!("before={:?}; after={:?}", o.before, o.after),
+        if o.before == o.after {
+            format!(
+                "{} entries under the folder holding the bundle unchanged (sizes, SHA-256, times)",
+                o.before.len()
+            )
+        } else {
+            format!(
+                "changed: {:?}",
+                super::snapshot::changed(&o.before, &o.after)
+            )
+        },
     );
 }
 
@@ -256,18 +266,6 @@ mod live {
 
     /// The virtual key code of Return.
     const RETURN: u16 = 36;
-
-    fn entries(dir: &Path) -> Result<Vec<String>, String> {
-        let mut names = fs::read_dir(dir)
-            .map_err(|e| format!("{}: {e}", dir.display()))?
-            .map(|e| {
-                e.map(|e| e.file_name().to_string_lossy().into_owned())
-                    .map_err(|e| e.to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        names.sort();
-        Ok(names)
-    }
 
     /// The PIDs of processes named StickyMD with their executable paths.
     fn products() -> Result<Vec<(u32, String)>, String> {
@@ -311,7 +309,7 @@ mod live {
                 .lines()
                 .find_map(|l| l.split(&marker).nth(1).map(|r| r.trim().to_owned()))
             {
-                fs::write(dir.join("system.log"), &log).map_err(|e| e.to_string())?;
+                crate::atomic_evidence::write(&dir.join("system.log"), log.as_bytes())?;
                 return Ok(Some(record));
             }
         }
@@ -410,7 +408,7 @@ mod live {
             return Ok(());
         };
         match windows::screenshot(window) {
-            Ok(ppm) => fs::write(dir.join("prompt.ppm"), ppm).map_err(|e| e.to_string())?,
+            Ok(ppm) => crate::atomic_evidence::write(&dir.join("prompt.ppm"), &ppm)?,
             Err(e) => note(row, format!("prompt image not captured: {e}")),
         }
         // Activate the running instance as the manual procedure does, then answer it, but only
@@ -459,7 +457,10 @@ mod live {
 
     /// Runs R03 in `dir` (the scenario's session directory) for the app under test, whose byte
     /// identities must be `expected`, from the candidate ZIP `zip` when one was given. Leaves no
-    /// process of its own running.
+    /// process of its own running. `Ok(Some(reason))` stops the whole run unfinished: R03 could
+    /// not run on the bytes under test (staging, or another StickyMD running), the bytes changed
+    /// while it ran, or its processes or translocation outlived it. None of these is a product
+    /// result, so none is recorded as a FAIL (review F9, F11).
     pub(in crate::mac_gui) fn run(
         app: &Path,
         dir: &Path,
@@ -467,7 +468,7 @@ mod live {
         zip: Option<&Candidate>,
         started: Instant,
         row: &mut Row,
-    ) -> Result<(), String> {
+    ) -> Result<Option<String>, String> {
         let note = |row: &mut Row, event: String| {
             row.trace.push(Trace {
                 ms: started.elapsed().as_millis() as u64,
@@ -475,14 +476,23 @@ mod live {
             });
         };
         if !products()?.is_empty() {
-            return Err("a StickyMD process is already running; refused before R03".into());
+            return Ok(Some(
+                "a StickyMD process is already running; R03 was not started".into(),
+            ));
         }
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| e.to_string())?
             .as_secs();
         let value = format!("{QUARANTINE_FLAGS};{stamp:x};Safari;");
-        let staged = staging::stage(&dir.join("download"), app, expected, zip, &value)?;
+        let staged = match staging::stage(&dir.join("download"), app, expected, zip, &value) {
+            Ok(staged) => staged,
+            Err(e) => {
+                return Ok(Some(format!(
+                    "the download directory was not laid out from the bytes under test: {e}"
+                )));
+            }
+        };
         note(
             row,
             match &staged.zip_sha256 {
@@ -502,7 +512,7 @@ mod live {
             )
             .ok()
             .map(|q| q.trim().to_owned()),
-            before: entries(&watched)?,
+            before: super::super::snapshot::tree(&watched)?,
             ..Observed::default()
         };
         let stderr = dir.join("stderr.log");
@@ -535,37 +545,46 @@ mod live {
                 .map(|(q, _)| q)
                 .collect())
         };
+        // Cleanup waits do not end on a cancelled run: the run is stopping anyway.
         for signal in ["-TERM", "-KILL"] {
             for q in own()? {
                 let _ = command("/bin/kill", &[signal, &q.to_string()]);
             }
             let start = Instant::now();
             while !own()?.is_empty() && start.elapsed().as_secs() < 3 {
-                events::wait(100)?;
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
         let left = own()?;
         if !left.is_empty() {
-            return Err(format!(
+            return Ok(Some(format!(
                 "this run's StickyMD processes did not end: {left:?}"
-            ));
+            )));
         }
         observed?;
-        o.after = entries(&watched)?;
+        o.after = super::super::snapshot::tree(&watched)?;
         // macOS detaches the translocation after the process ends; wait for it before cleanup.
         let start = Instant::now();
-        while start.elapsed().as_secs() < 10 {
-            let mounts = command("/sbin/mount", &[])?;
-            if !mounts
+        let mounted = || -> Result<bool, String> {
+            Ok(command("/sbin/mount", &[])?
                 .lines()
-                .any(|l| l.starts_with(&format!("{} on ", copy.display())))
-            {
-                break;
-            }
-            events::wait(250)?;
+                .any(|l| l.starts_with(&format!("{} on ", copy.display()))))
+        };
+        while mounted()? && start.elapsed().as_secs() < 10 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
         }
-        note(row, format!("after {:?}", o.after));
+        if mounted()? {
+            return Ok(Some(
+                "this copy's translocation was still mounted 10 s after its process ended".into(),
+            ));
+        }
+        // The bundle opened by path is still the bytes under test (a change undone between the
+        // two checks is not seen; the VM runs nothing else).
+        if let Err(e) = staging::matches(&copy, expected) {
+            return Ok(Some(format!("the copy changed while R03 ran: {e}")));
+        }
+        note(row, format!("after {} entries", o.after.len()));
         judge(&o, row);
-        Ok(())
+        Ok(None)
     }
 }

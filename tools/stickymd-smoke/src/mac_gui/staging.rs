@@ -2,8 +2,12 @@
 //! quarantined as the USER's approval leaves it, and the bundle inside it. With `--zip` the
 //! package is the candidate ZIP itself, never repacked from the `.app` (plan 11
 //! #macos-release-gate); its bundle must be the app under test in both byte identities, checked
-//! before any row runs and again on the extracted copy. Without `--zip` the `.app` under test is
-//! packed here, as Phase 16 batches do, and the evidence names no ZIP.
+//! before any row runs and again on the extracted copy. The check reads one private copy of the
+//! ZIP (its digest, its member list, its extraction), so a file replaced meanwhile cannot mix in;
+//! the ZIP must hold exactly the release inventory, and every extracted entry must be a regular
+//! file or directory before a quarantine attribute is written to the tree, so no link can lead it
+//! outside the session. Without `--zip` the `.app` under test is packed here, as Phase 16 batches
+//! do, and the evidence names no ZIP.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
 /// The two byte identities of a bundle (plan 11 #macos-release-gate binds evidence to both).
@@ -40,7 +44,7 @@ pub(super) fn same_bundle(expected: &Bytes, found: &Bytes) -> Result<(), String>
 }
 
 #[cfg(target_os = "macos")]
-pub(super) use live::{Candidate, check, stage};
+pub(super) use live::{Candidate, check, matches, stage};
 
 #[cfg(target_os = "macos")]
 mod live {
@@ -88,25 +92,53 @@ mod live {
         })
     }
 
+    /// Whether the bundle at `app` is still `expected` in both identities.
+    pub fn matches(app: &Path, expected: &Bytes) -> Result<(), String> {
+        same_bundle(expected, &bytes_of(app)?)
+    }
+
+    /// Refuses a tree holding anything but regular files and directories; links are not
+    /// followed.
+    fn regular_tree(directory: &Path) -> Result<(), String> {
+        for entry in fs::read_dir(directory).map_err(|e| format!("{}: {e}", directory.display()))? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            let kind = fs::symlink_metadata(&path)
+                .map_err(|e| format!("{}: {e}", path.display()))?
+                .file_type();
+            if kind.is_dir() {
+                regular_tree(&path)?;
+            } else if !kind.is_file() {
+                return Err(format!(
+                    "{} is a link or a special file; the release ZIP holds only files and folders",
+                    path.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Checks before any row runs that `zip` holds the app under test in the release layout
-    /// (`StickyMD/StickyMD.app`), extracting it into `scratch`, which must be empty.
+    /// (`StickyMD/StickyMD.app`), from one private copy in `scratch`, which must be empty: its
+    /// digest, its member list (exactly the release inventory, before anything is extracted)
+    /// and its extraction (only files and folders) all describe the same bytes.
     pub fn check(zip: &Path, expected: &Bytes, scratch: &Path) -> Result<Candidate, String> {
         let path = zip.canonicalize().map_err(|e| format!("--zip: {e}"))?;
         if !path.is_file() {
             return Err("--zip must name a ZIP file".into());
         }
-        let sha256 = crate::integrity::sha256(&path)?;
+        let snapshot = scratch.join("candidate.zip");
+        fs::copy(&path, &snapshot).map_err(|e| format!("copy --zip: {e}"))?;
+        let sha256 = crate::integrity::sha256(&snapshot)?;
+        stickymd_package::macos::listing::check_archive(&snapshot).map_err(|e| {
+            format!("--zip is not a StickyMD release ZIP (plan 11 #macos-release-artifact): {e}")
+        })?;
+        let extracted = scratch.join("extracted");
         run(
             "/usr/bin/ditto",
-            &["-x", "-k", &text(&path), &text(scratch)],
+            &["-x", "-k", &text(&snapshot), &text(&extracted)],
         )?;
-        let app = scratch.join(APP);
-        if !app.is_dir() {
-            return Err(format!(
-                "--zip has no {APP}: not a StickyMD release ZIP (plan 11 #macos-release-artifact)"
-            ));
-        }
-        same_bundle(expected, &bytes_of(&app)?)?;
+        regular_tree(&extracted)?;
+        same_bundle(expected, &bytes_of(&extracted.join(APP))?)?;
         Ok(Candidate { path, sha256 })
     }
 
@@ -153,13 +185,23 @@ mod live {
             "/usr/bin/ditto",
             &["-x", "-k", &text(&archive), &text(&download)],
         )?;
-        run(
-            "/usr/bin/xattr",
-            &["-w", "-r", "com.apple.quarantine", quarantine, &text(&top)],
-        )?;
         if !extracted.is_dir() {
             return Err(format!("no bundle at {}", extracted.display()));
         }
+        // The attribute is written to the tree only after it is known to hold no link, and `-s`
+        // acts on a link itself in any case.
+        regular_tree(&top)?;
+        run(
+            "/usr/bin/xattr",
+            &[
+                "-w",
+                "-r",
+                "-s",
+                "com.apple.quarantine",
+                quarantine,
+                &text(&top),
+            ],
+        )?;
         same_bundle(expected, &bytes_of(&extracted)?)?;
         Ok(Staged {
             watched: extracted
@@ -176,11 +218,13 @@ mod live {
         use super::*;
         use crate::mac_common::session::Session;
 
-        /// A bundle with an executable and a property list, enough for both identities.
+        /// A bundle with the release inventory's three files, enough for both identities.
         fn bundle(at: &Path, executable: &[u8]) {
             fs::create_dir_all(at.join("Contents/MacOS")).unwrap();
+            fs::create_dir_all(at.join("Contents/_CodeSignature")).unwrap();
             fs::write(at.join("Contents/MacOS/StickyMD"), executable).unwrap();
             fs::write(at.join("Contents/Info.plist"), b"<plist/>").unwrap();
+            fs::write(at.join("Contents/_CodeSignature/CodeResources"), b"seal").unwrap();
         }
 
         /// A file of the bundle to overwrite, and its new bytes.
@@ -195,7 +239,12 @@ mod live {
                 &[&text(app), &text(&root.join("StickyMD.app"))],
             )
             .unwrap();
-            fs::write(root.join("README.txt"), b"readme").unwrap();
+            // The rest of the release inventory beside the bundle.
+            for (name, _) in stickymd_package::macos::content::FILES {
+                let file = work.join(name);
+                fs::create_dir_all(file.parent().unwrap()).unwrap();
+                fs::write(file, name.as_bytes()).unwrap();
+            }
             if let Some((file, bytes)) = change {
                 fs::write(root.join("StickyMD.app").join(file), bytes).unwrap();
             }
@@ -339,6 +388,46 @@ mod live {
             )
             .unwrap_err();
             assert!(error.contains("changed after it was checked"), "{error}");
+        }
+
+        /// Review F4: a link in the ZIP, under an inventory name, could lead the quarantine
+        /// attribute to a file outside the session.
+        #[test]
+        fn a_zip_holding_a_link_is_refused_before_any_attribute_is_written() {
+            let session = Session::new().unwrap();
+            let (app, expected) = fixture(&session);
+            let outside = session.path().join("outside.txt");
+            fs::write(&outside, b"a file of the USER").unwrap();
+            let work = session.path().join("work-link");
+            release_zip(&session.path().join("first.zip"), &app, &work, None);
+            let readme = work.join("StickyMD/README.txt");
+            fs::remove_file(&readme).unwrap();
+            std::os::unix::fs::symlink(&outside, &readme).unwrap();
+            let zip = session.path().join("linked.zip");
+            run(
+                "/usr/bin/ditto",
+                &[
+                    "-c",
+                    "-k",
+                    "--norsrc",
+                    "--keepParent",
+                    &text(&work.join("StickyMD")),
+                    &text(&zip),
+                ],
+            )
+            .unwrap();
+            let scratch = session.path().join("scratch-link");
+            fs::create_dir(&scratch).unwrap();
+            let error = check(&zip, &expected, &scratch).unwrap_err();
+            assert!(error.contains("link or a special file"), "{error}");
+            assert!(
+                run(
+                    "/usr/bin/xattr",
+                    &["-p", "com.apple.quarantine", &text(&outside)]
+                )
+                .is_err(),
+                "the file outside was given a quarantine attribute"
+            );
         }
     }
 }

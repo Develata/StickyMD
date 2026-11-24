@@ -57,6 +57,9 @@ mod scenario_tests;
 mod scenarios;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod snapshot;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod staging;
 #[cfg(test)]
 mod tests;

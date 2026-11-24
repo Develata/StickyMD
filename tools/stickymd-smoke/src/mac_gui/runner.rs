@@ -342,14 +342,20 @@ fn one(
         super::fault::RestoreOnDrop::new(matches!(id, "W11" | "W12").then(|| session.anchor()));
     let result = (|| {
         if id == "R03" {
-            return super::translocation::run(
+            let stopped = super::translocation::run(
                 app,
                 session.path(),
                 &hash.bytes(),
                 hash.zip.as_ref(),
                 input.backend.started,
                 row,
-            );
+            )?;
+            // Not a product result: the row stays untested and the run is not finished.
+            if let Some(reason) = stopped {
+                row.skip("execution", &reason);
+                input.stopped = Some(format!("R03 stopped the run: {reason}"));
+            }
+            return Ok(());
         }
         let note = match id {
             "F01" => "中文字体验证\n\n`Menlo code 012345`\n",
