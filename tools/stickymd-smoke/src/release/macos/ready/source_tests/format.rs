@@ -1,9 +1,10 @@
-//! The receipt as JSON (schema 2): written whole by the runner, read whole and strictly by the
+//! The receipt as JSON (schema 3): written whole by the runner, read whole and strictly by the
 //! gate. Every object has exactly its fields; a missing, extra or mistyped one rejects the file.
-//! Schema 1 (counts only, no test names) is refused, not migrated.
+//! Earlier schemas are refused, not migrated: schema 1 had counts only, schema 2 had no run
+//! identity, no driver and no account of how a process ended (review round 4).
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
-use super::{Case, CaseOutcome, Counts, Explicit, Host, Receipt, Run, Side, Target};
+use super::{Case, CaseOutcome, Counts, Driver, Exit, Explicit, Host, Receipt, Run, Side, Target};
 use crate::evidence::escape_json;
 use crate::release::json::{self, Value};
 
@@ -16,8 +17,29 @@ fn list(values: &[String]) -> String {
     format!("[{}]", items.join(","))
 }
 
-fn code(exit: Option<i32>) -> String {
-    exit.map_or_else(|| "null".to_owned(), |code| code.to_string())
+/// An exit code as a number; the other endings as words.
+fn exit(exit: Exit) -> String {
+    match exit {
+        Exit::Code(code) => code.to_string(),
+        Exit::Signal => "\"signal\"".to_owned(),
+        Exit::NotStarted => "\"not-started\"".to_owned(),
+        Exit::Unknown => "\"unknown\"".to_owned(),
+    }
+}
+
+fn driver(driver: &Driver) -> String {
+    match &driver.sha256 {
+        Ok(sha256) => format!(
+            "{{\"command\":{},\"sha256\":{}}}",
+            list(&driver.command),
+            text(sha256)
+        ),
+        Err(error) => format!(
+            "{{\"command\":{},\"error\":{}}}",
+            list(&driver.command),
+            text(error)
+        ),
+    }
 }
 
 fn counts(counts: &Counts) -> String {
@@ -84,22 +106,24 @@ pub(in super::super) fn render(receipt: &Receipt) -> String {
         .iter()
         .map(|entry| {
             format!(
-                "{{\"item\":{},\"command\":{},\"tests\":{},\"target\":{},\"counts\":{},\"cases\":{},\"exit_code\":{},\"temporary_volume\":{},\"image_volume\":{}}}",
+                "{{\"item\":{},\"command\":{},\"tests\":{},\"target\":{},\"counts\":{},\"cases\":{},\"listed\":{},\"exit\":{},\"temporary_volume\":{},\"image_volume\":{}}}",
                 text(&entry.item),
                 list(&entry.command),
                 list(&entry.tests),
                 optional(entry.target.as_ref(), target),
                 optional(entry.counts.as_ref(), counts),
                 cases(&entry.cases),
-                code(entry.exit_code),
+                list(&entry.listed),
+                exit(entry.exit),
                 optional(entry.temporary_volume.as_ref(), |v: &String| text(v)),
                 optional(entry.image_volume.as_ref(), |v: &String| text(v)),
             )
         })
         .collect();
     format!(
-        "{{\"schema_version\":2,\"kind\":\"macos-release-source-tests\",\"release_source\":{},\"host\":{{\"product_name\":{},\"product_version\":{},\"build_version\":{},\"arch\":{},\"virtual_machine\":{},\"cargo\":{},\"rustc\":{}}},\"start\":{},\"end\":{},\"command\":{},\"exit_code\":{},\"expected\":[{}],\"binaries\":[{}],\"explicit\":[{}],\"problems\":{}}}\n",
+        "{{\"schema_version\":3,\"kind\":\"macos-release-source-tests\",\"release_source\":{},\"run\":{},\"host\":{{\"product_name\":{},\"product_version\":{},\"build_version\":{},\"arch\":{},\"virtual_machine\":{},\"cargo\":{},\"rustc\":{}}},\"start\":{},\"end\":{},\"command\":{},\"exit\":{},\"expected\":[{}],\"binaries\":[{}],\"explicit\":[{}],\"driver\":{},\"problems\":{}}}\n",
         text(&receipt.release_source),
+        text(&receipt.run),
         text(&host.product_name),
         text(&host.product_version),
         text(&host.build_version),
@@ -110,10 +134,11 @@ pub(in super::super) fn render(receipt: &Receipt) -> String {
         side(&receipt.start),
         side(&receipt.end),
         list(&receipt.command),
-        code(receipt.exit_code),
+        exit(receipt.exit),
         expected.join(","),
         binaries.join(","),
         explicit.join(","),
+        driver(&receipt.driver),
         list(&receipt.problems),
     )
 }
@@ -155,15 +180,33 @@ fn boolean(value: &Value, key: &str) -> Result<bool, String> {
     }
 }
 
-fn exit(value: &Value, key: &str) -> Result<Option<i32>, String> {
+fn read_exit(value: &Value, key: &str) -> Result<Exit, String> {
     match value.field(key)? {
-        Value::Null => Ok(None),
         Value::Number(number) => number
             .parse()
-            .map(Some)
+            .map(Exit::Code)
             .map_err(|_| format!("{key} is not an exit code")),
-        _ => Err(format!("{key} is not an exit code")),
+        Value::String(word) => match word.as_str() {
+            "signal" => Ok(Exit::Signal),
+            "not-started" => Ok(Exit::NotStarted),
+            "unknown" => Ok(Exit::Unknown),
+            _ => Err(format!("{key} {word:?} is not how a process ends")),
+        },
+        _ => Err(format!("{key} is not how a process ends")),
     }
+}
+
+fn read_driver(value: &Value) -> Result<Driver, String> {
+    let sha256 = if exactly(value, &["command", "sha256"]).is_ok() {
+        Ok(string(value, "sha256")?)
+    } else {
+        exactly(value, &["command", "error"])?;
+        Err(string(value, "error")?)
+    };
+    Ok(Driver {
+        command: strings(value, "command")?,
+        sha256,
+    })
 }
 
 fn read_counts(value: &Value) -> Result<Counts, String> {
@@ -242,21 +285,23 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
             "schema_version",
             "kind",
             "release_source",
+            "run",
             "host",
             "start",
             "end",
             "command",
-            "exit_code",
+            "exit",
             "expected",
             "binaries",
             "explicit",
+            "driver",
             "problems",
         ],
     )?;
-    if value.field("schema_version")?.unsigned()? != 2
+    if value.field("schema_version")?.unsigned()? != 3
         || string(&value, "kind")? != "macos-release-source-tests"
     {
-        return Err("not a schema 2 macOS source-test receipt".to_owned());
+        return Err("not a schema 3 macOS source-test receipt".to_owned());
     }
     let host = value.field("host")?;
     exactly(
@@ -298,7 +343,8 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
                     "target",
                     "counts",
                     "cases",
-                    "exit_code",
+                    "listed",
+                    "exit",
                     "temporary_volume",
                     "image_volume",
                 ],
@@ -310,7 +356,8 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
                 target: nullable(entry, "target", read_target)?,
                 counts: nullable(entry, "counts", read_counts)?,
                 cases: read_cases(entry.field("cases")?)?,
-                exit_code: exit(entry, "exit_code")?,
+                listed: strings(entry, "listed")?,
+                exit: read_exit(entry, "exit")?,
                 temporary_volume: nullable(entry, "temporary_volume", |v| {
                     v.string().map(str::to_owned)
                 })?,
@@ -320,6 +367,7 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
         .collect::<Result<_, String>>()?;
     Ok(Receipt {
         release_source: string(&value, "release_source")?,
+        run: string(&value, "run")?,
         host: Host {
             product_name: string(host, "product_name")?,
             product_version: string(host, "product_version")?,
@@ -332,7 +380,7 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
         start: read_side(value.field("start")?)?,
         end: read_side(value.field("end")?)?,
         command: strings(&value, "command")?,
-        exit_code: exit(&value, "exit_code")?,
+        exit: read_exit(&value, "exit")?,
         expected: value
             .field("expected")?
             .array()?
@@ -341,6 +389,7 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
             .collect::<Result<_, _>>()?,
         binaries,
         explicit,
+        driver: read_driver(value.field("driver")?)?,
         problems: strings(&value, "problems")?,
     })
 }

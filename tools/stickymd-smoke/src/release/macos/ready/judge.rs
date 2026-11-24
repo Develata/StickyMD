@@ -34,8 +34,9 @@ pub(super) struct Inputs<'a> {
     pub batch: Option<&'a str>,
     /// The macOS major version this release's download paths must have run on (decision (b)).
     pub macos_major: u32,
-    /// The SHA-256 of R's `mac-gui` driver, lowercase (USER 2026-11-24, `--driver`).
-    pub driver: &'a str,
+    /// The SHA-256 of R's `mac-gui` driver, lowercase (USER 2026-11-24, `--driver`), once it is
+    /// shown to be the driver the run on R built; otherwise why not (review round 4, BLOCKER 1).
+    pub driver: Result<&'a str, &'a str>,
     pub candidate: Read<&'a Candidate>,
     pub ledger: Read<&'a [Record]>,
     pub source_tests: Read<&'a source_tests::Receipt>,
@@ -388,6 +389,28 @@ fn members(row: &str) -> Vec<String> {
         std::iter::once(row.to_owned()).chain(parts).collect()
     } else {
         vec![row.to_owned()]
+    }
+}
+
+/// R's driver for the `mac-gui` rows: `given` (the SHA-256 of `--driver`) when it is the driver
+/// the run on R built, as R's source-test receipt records it; otherwise why not (review round 4,
+/// BLOCKER 1).
+pub(super) fn r_driver(
+    given: &str,
+    receipt: Read<&source_tests::Receipt>,
+    release: &str,
+) -> Result<String, String> {
+    match receipt {
+        Read::Present(receipt) => match source_tests::driver_of(receipt, release) {
+            Ok(built) if built == given => Ok(built),
+            Ok(built) => Err(format!(
+                "--driver hashes to {given}, not to the driver the run on R built ({built})"
+            )),
+            Err(reason) => Err(reason),
+        },
+        Read::Missing(reason) | Read::Invalid(reason) => Err(format!(
+            "R's driver is the one its source-test receipt records, and there is none: {reason}"
+        )),
     }
 }
 

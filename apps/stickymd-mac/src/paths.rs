@@ -217,9 +217,13 @@ mod tests {
             .err()
             .map(|error| unwritable_advice(&note_root, error));
         drop(note_root);
-        let left_behind = fs::read_dir(&mount)
-            .unwrap()
-            .filter_map(Result::ok)
+        // Every entry read, or the count proves nothing (review round 4); judged after detaching.
+        let entries: std::io::Result<Vec<fs::DirEntry>> =
+            fs::read_dir(&mount).and_then(|entries| entries.collect());
+        hdiutil("detach", &[mount.as_os_str()]);
+        let left_behind = entries
+            .expect("every entry of the volume is read")
+            .iter()
             .filter(|entry| {
                 entry
                     .file_name()
@@ -227,7 +231,6 @@ mod tests {
                     .starts_with(".stickymd-write-test")
             })
             .count();
-        hdiutil("detach", &[mount.as_os_str()]);
         fs::remove_dir_all(&root).unwrap();
         assert!(
             matches!(result, Err(RuntimePathsError::VolumeUnsupported(_))),

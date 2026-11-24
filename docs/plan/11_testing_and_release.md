@@ -391,8 +391,10 @@ FAIL 不妨碍另一身份的干净运行）、同键互斥的结果并入源码
 - **源码测试的运行：** `stickymd-smoke release macos-source-tests --release-source <R>` 在 macOS 主机上依次：
   1. 核对源码身份为干净的 R，环境中没有 `CARGO_TARGET_*_RUNNER`、`CARGO_BUILD_RUSTC_WRAPPER`、`RUSTC_WRAPPER` 与两个 workspace wrapper 变量（决定 (d)），
      不符即不运行、不写收据，旧收据不动；
-  2. 取得运行锁（`dist/evidence/.release-source-tests-macos.lock`，另一次运行或正在读收据的核对持有时拒绝），删除旧收据并同步其目录；此后的任何失败都
-     不会留下更早的 PASS；
+  2. 取得运行锁（`dist/evidence/.release-source-tests-macos.lock`，另一次运行或正在读收据的核对持有时拒绝）；收据路径上若有文件而它不是源码测试收据
+     （`kind` 不是 `macos-release-source-tests`），保留它并失败退出；原子写本次运行的身份（开始时间与进程号）到运行记录
+     `dist/evidence/.release-source-tests-macos.run`，再删除旧收据并同步其目录。核对只认名字等于运行记录中身份的收据，所以此后的任何失败，包括删除旧收据
+     之前的中断，都不会留下更早的 PASS（第四次复审 BLOCKER 2）；
   3. 以同一组包的 `cargo test --locked … --no-run --message-format=json` 求出测试二进制，以 `cargo metadata --no-deps --locked` 求出做文档测试的库；
      对每个二进制运行 `--list --format terse` 与 `--list --ignored --format terse`，对每个库运行 `cargo test --locked -p <包> --doc -- --list …`，得到各目标
      自己的测试清单；
@@ -403,31 +405,43 @@ FAIL 不妨碍另一身份的干净运行）、同键互斥的结果并入源码
      （决定 (a)）。P18-L08 那次运行把 `STICKYMD_VOLUME_REPORT` 设为本次运行自己的临时目录中的一个文件：默认集中的测试在它断言所用的临时目录上、映像测试在
      挂载点上各自探测大小写，追加一行 `temporary <结果>` 或 `image <结果>`（结果为 `case-insensitive` 或 `case-sensitive`）；运行器要求每个卷恰好一行，
      否则记入 `problems`。默认集中的测试在大小写敏感的卷上仍跳过只差大小写的检查，所以卷由测试自己测得，而不由运行器的临时目录推断（第三次复审 B4）；
-  6. 再次读取源码身份，原子写 `dist/evidence/release-source-tests-macos.json` 后释放运行锁。
-  运行器只为输出设 `CARGO_TERM_COLOR=never`。读管道出错时先结束子进程再等待它。
-- **收据（schema 2，schema 1 不迁移）：** `release_source`；`host`（`sw_vers` 的产品名、版本与构建号，`uname -m`，`kern.hv_vmm_present`，`cargo -V`，
-  `rustc -V`）；`start` 与 `end` 各为 `{head, clean}`；`command` 与 `exit_code`；`expected`（发现的测试二进制与文档测试，以包、种类与名字标识，不记路径）；
+  6. 以 `mac-gui` 的文档命令 `CARGO_PROFILE_RELEASE_PANIC=unwind cargo build --locked --release -p stickymd-smoke --message-format=json` 在 R 上构建
+     驱动，记下 Cargo 所报的那个 `stickymd-smoke` 二进制的 SHA-256（第四次复审 BLOCKER 1）；构建失败时记下原因，不影响源码测试的结论；
+  7. 再次读取源码身份，原子写 `dist/evidence/release-source-tests-macos.json` 后释放运行锁。
+  运行器只为输出设 `CARGO_TERM_COLOR=never`。每个进程记下它怎样结束：退出码、被信号结束、没有启动、或启动后不能跟到结束（读管道出错时先结束子进程再
+  等待它）。主运行已得出结果之后，P18-L08 卷报告的临时目录建不起来只记入 `problems`，已取得的结果照常写入收据（第四次复审）。
+- **收据（schema 3；schema 1 与 2 不迁移）：** `release_source`；`run`（本次运行的身份，与运行记录相同）；`host`（`sw_vers` 的产品名、版本与构建号，`uname -m`，`kern.hv_vmm_present`，`cargo -V`，
+  `rustc -V`）；`start` 与 `end` 各为 `{head, clean}`；`command` 与 `exit`（退出码为数，否则为 `signal`、`not-started` 或 `unknown`）；`expected`（发现的测试二进制与文档测试，以包、种类与名字标识，不记路径）；
   `binaries`（每一项：目标、libtest 的 passed、failed、ignored、measured、filtered_out 与运行数，以及 `cases`：该目标清单中的每个测试的全名、是否列为
   ignored、运行打印的结果 `ok`/`failed`/`ignored`/`not-run`）；`explicit`（依次为 `same-key` 与 `P16-S06`，每项：门的条目、命令、测试名、该段归属的目标、
-  计数、按名的结果、退出码，`same-key` 另记 `temporary_volume` 与 `image_volume`，即测试测得的结果，没有测得时为 null）；`problems`（运行器无法确定的事）。整份严格解析，
-  每个对象恰有这些字段。
+  计数、按名的结果、`listed`（规定的测试中，stickymd-mac 的二进制在任何运行之前自己的清单所列的那些）、`exit`，`same-key` 另记 `temporary_volume` 与
+  `image_volume`，即测试测得的结果，没有测得时为 null）；`driver`（构建驱动的命令，与 `sha256` 或构建失败的 `error` 二者之一）；`problems`（运行器
+  无法确定的事）。整份严格解析，每个对象恰有这些字段。
 - **判定**（依次）：
   1. 身份：`release_source` 等于给出的 R，`start` 与 `end` 都是干净的 R，`command` 与两条显式运行的命令、测试名逐字等于规定值，主机为 macOS、arm64；
      任一不符，源码测试行、同键互斥行与 S06 都为 `NOT TESTED`。
-  2. 记下的失败：`exit_code` 不为 0（含被信号结束），或某项 failed 非 0、某个测试的结果为 `failed`，三者任一单独成立，源码测试行即为 `FAIL`；显式运行
-     同样。身份成立后，记下的失败先于下面的完整性：核对时列不出 R 的测试目标，收据记下的失败仍为 `FAIL`（第三次复审 S2）。
+  2. 记下的失败：某项 failed 非 0、某个测试的结果为 `failed`，或进程以非 0 退出码或信号结束，任一单独成立，源码测试行即为 `FAIL`；显式运行同样。没有
+     启动或不能跟到结束的进程没有结果，为 `NOT TESTED`，但它打印出的失败仍为 `FAIL`（第四次复审）。身份成立后，记下的失败先于下面的完整性：核对时
+     列不出 R 的测试目标，收据记下的失败仍为 `FAIL`（第三次复审 S2）。
   3. 完整：`problems` 为空；`expected` 等于核对时在 R 上由 `cargo metadata --no-deps` 列出的目标（八个包中 `test` 为真的目标，构建脚本除外，加上做文档
      测试的库）；`binaries` 与之是同一集合且每项只出现一次；每项 filtered_out 为 0，清单中的每个测试都运行了一次，结果为 `ignored` 当且仅当清单列它为
      ignored，计数等于这些结果（不溢出、measured 为 0）。读输出时，libtest 的 `ok`/`FAILED` 与失败数矛盾、汇总行不完整（不以 `finished in <秒>s`
      结束）即为无法读取；段头打印的路径须逐个路径组件是 Cargo 构建出的可执行文件路径的结尾；清单、ignored 清单与运行结果中每个名字只出现一次，
-     ignored 清单是清单的子集，运行打印的测试都在清单中，否则记入 `problems`，不并入第一项（第三次复审 B3、S4）。
-  4. 显式运行：该段归属 stickymd-mac 的二进制，运行的测试按名恰为规定的那些、都为 `ok`，计数恰为它们，且每个都在主运行中该二进制的清单里；`same-key`
+     ignored 清单是清单的子集，运行打印的测试都在清单中，否则记入 `problems`，不并入第一项，同名结果中有 `FAILED` 时该测试为 `failed`（第三次复审 B3、
+     S4；第四次复审）。测试名后 libtest 表示模式的后缀（` - compile fail`、` - compile`、` - should panic`）去掉后再与清单对照，结果行在第一个
+     ` ... ` 处分开（忽略原因可以含它），一个 `Doc-tests` 段可以有 rustdoc 的多组 `running` 与汇总（合并的与单独的文档测试），计数相加；测试二进制
+     只有一组。清单列为 ignored 的每个测试都须在核对程序的归类表中（按包、目标与全名，第四次复审 BLOCKER 3），否则为 `NOT TESTED`。
+  4. 显式运行：该段归属 stickymd-mac 的二进制，运行的测试按名恰为规定的那些、都为 `ok`，计数恰为它们，`listed` 恰为它们（取自该二进制自己的清单，
+     不依赖主运行是否跑到它：Cargo 在第一个失败的二进制之后停止，第四次复审）；`same-key`
      另须 `temporary_volume` 为 `case-insensitive`、`image_volume` 为 `case-sensitive`，两者各自单独决定。否则为 `NOT TESTED`。
 - **核对程序：** `stickymd-smoke release macos-ready --release-source <R> --macos-major <N> --driver <R 上的 stickymd-smoke> [--batch <名>]` 只读，在 macOS 主机上运行：
   1. 源码身份须为干净的 R（门用 R 的工具判定，见 #platform-artifact-reuse“沿用后”），R 须包含在 `origin/main` 中；
   2. 读矩阵并核对分类表；在运行锁的共享锁下读源码测试收据（锁文件只读打开、不创建；运行进行中为 `NOT TESTED`），在账本写入锁的共享锁下读账本（与写入器
-     和 `plan` 同样校验，含一个镜像只对应一个系统；账本、锁与收据的路径不得是符号链接），两把锁一直持到判定完成。收据或账本存在而其锁文件不存在时
-     不读：它不是在锁下写成的，收据为 `NOT TESTED`（在 R 上重跑），账本为错误（第三次复审 B5）；
+     和 `plan` 同样校验，含一个镜像只对应一个系统；账本、锁与收据的路径不得是符号链接，检查路径时除不存在外的任何错误都使核对停止），两把锁一直持到
+     判定完成。收据或账本存在而其锁文件不存在时不读，连内容也不读：它不是在锁下写成的，收据为 `NOT TESTED`（在 R 上重跑），账本为错误（第三次复审
+     B5）；收据只在运行记录存在、且收据的 `run` 等于其中的身份时才读入，否则为 `NOT TESTED`（第四次复审 BLOCKER 2）。R 的驱动是收据所记、在 R 上
+     构建的那个：收据属于 R（判定 1 的身份）、构建命令为规定的命令、`--driver` 所给文件的 SHA-256 等于收据所记的，三者都成立时 `mac-gui` 行才认它的组，
+     否则没有一组能使 `mac-gui` 行 PASS（第四次复审 BLOCKER 1）；
   3. 经 resolver 取得候选：除每个暂存文件与 receipt 相符外，暂存的 checksum 文件须恰好列出 receipt 中 ZIP 与 SBOM 的摘要，暂存的 ZIP 本身须通过包检查，
      其中的 bundle、可执行文件、产品输入指纹、签名方式与构建来源须等于 receipt，包检查算出的 ZIP 摘要须等于 receipt 中的，SBOM 须描述 ZIP 中的成员；
      另外重算构建来源上 `Cargo.lock` 的摘要；
@@ -445,14 +459,17 @@ FAIL 不妨碍另一身份的干净运行）、同键互斥的结果并入源码
 - **Phase 16 行的分类**是核对程序中的一张表，测试核对它恰好覆盖矩阵中的全部 P16 行，且每行的 Mode 恰为分类时的 Mode（Mode 一改，例如 Manual
   改为 Review，即须重新分类）：
   - 源码行，由 R 上的源码测试承担：B01、B02、S01–S05、S07–S15、W13、W14、W17、K01、C01–C04、V01、V02；
-  - S06 的测试标为 `#[ignore]`（要挂载 exFAT 映像），凭收据中它的显式运行判定（决定 (a)）；八个包中的每个 `#[ignore]` 测试由测试按名归类，新增或移动的
-    忽略测试须先归类；
+  - S06 的测试标为 `#[ignore]`（要挂载 exFAT 映像），凭收据中它的显式运行判定（决定 (a)）；八个包在 macOS 上被忽略的每个测试都在核对程序的一张归类
+    表中（按包、目标与 libtest 全名，及其作用：没有门的行依赖它，或由某个显式运行承担），判定时与收据中各目标 `--list --ignored` 列出的名字逐个比对，
+    所以不论 `ignore` 写成什么形式（单独的属性、一行或多行的 `cfg_attr`、文档测试的 `ignore`）都被发现；新增或移动的忽略测试须先归类（第四次复审
+    BLOCKER 3）；
   - `mac-gui` 行，账本中候选字节上的 PASS：W02–W04、W07–W12、K02、E01；W12 另要求三条注销行在同一组身份下 PASS；
   - 人工行，发布用 USER 收据或 waiver：W01、W05、W06、I01–I03、F01、V04；
   - 资源行：R01、R02、V03；
   - R03 是门的单独一类；P01 由“包完整性”一类承担；W15、W16、V05 是 Windows 回归，不属于 macOS 发布门。
 - **账本判定：** 只看可执行文件与 bundle 清单两项摘要都等于候选的记录，按驱动、镜像与系统分组；产品输入指纹不参与分组（字节相同则指纹相同，记录也
-  可能没有它）。只有驱动的 SHA-256 等于 `--driver` 所给二进制的组能使一行 PASS（与 `mac-ledger plan` 只为当前驱动复用 PASS 相同；USER 2026-11-24），
+  可能没有它）。只有驱动的 SHA-256 等于 R 的驱动（`--driver` 所给、且为 R 上源码测试的运行所构建的那个，见核对程序第 2 步）的组能使一行 PASS（与
+  `mac-ledger plan` 只为当前驱动复用 PASS 相同；USER 2026-11-24；第四次复审 BLOCKER 1），
   `FAIL` 不论驱动都算。一行所需的各行（W12 为它与三条注销行，其他行为它自己）先在每一组内一起判定：某一组中每一行都有 PASS 且没有 FAIL、NOT_TESTED 或被撤销
   的 PASS，这一行才 PASS（先后无法证明，与 #phase-16-macos-host 的复用规则相同）；没有这样的组而某一组中有一行失败时为 `FAIL`；其余为 `NOT TESTED`。
   任何为 `NOT TESTED` 的行，只要这一行或它所需的行在候选字节上（不论哪个身份）记下过 `FAIL`，即为 `FAIL`，waiver 不再考虑；人工行在收据之前同样先看
@@ -472,15 +489,18 @@ FAIL 不妨碍另一身份的干净运行）、同键互斥的结果并入源码
   - `mac-ledger revoke --rows <id> --release-source <R> --quote <原话>`：按候选摘要撤销这一行在该候选下此前的全部发布记录；之后重新确认的记录有效
     （账本中的先后就是确认的先后）。
   - 读入与登记同样严格：每种记录（含撤销）恰有其字段，收据只给人工行、waiver 只给可 waiver 的行、下载记录只给 P18-D01–D05 且结果合于其行；`--ledger`
-    与其锁文件不得是符号链接，也不得占用源码测试收据或其锁（按命令所在仓库的根判断；除不存在外，任何检查错误都使命令不读不写，第三次复审 B6）。
+    与其锁文件不得是符号链接，也不得占用源码测试收据、其锁或其运行记录（按命令所在仓库的根判断；除不存在外，任何检查错误都使命令不读不写，第三次复审
+    B6）。`--ledger` 在命令开始时按当前目录一次解析成绝对路径，检查、加锁与写入都用它；在 macOS 上与保留路径的比较不分大小写，尚不存在的文件也一样
+    （默认的卷不分大小写；在区分大小写的卷上这多拒几个名字，第四次复审 BLOCKER 4）。
   - 判定：人工行有本候选的发布收据为 PASS；可 waiver 的行在其余判定为 `NOT TESTED`、没有任何 `FAIL` 且有本候选的 waiver 时为 `WAIVED`；下载路径五行
-    各有本候选的记录、每条的签名方式等于候选的、`sw_vers` 恰有一个 `ProductVersion`、它由一到三段数字组成且大版本等于 `--macos-major`（这是对所记材料的
-    格式核对，不是对机器的证明，第三次复审 S7）、D04 与 D05 各有合于其行的结果时成立。只认本候选的记录：
+    各有本候选的记录、每条的签名方式等于候选的、`sw_vers` 整份材料中恰有一个 `ProductVersion` 标签（末尾缺了值的标签也算一个）、其后的值由一到三段数字
+    组成且大版本等于 `--macos-major`（这是对所记材料的格式核对，不是对机器的证明，第三次复审 S7；第四次复审 BLOCKER 5）、D04 与 D05 各有合于其行的结果时成立。只认本候选的记录：
     以前候选的下载路径在签名方式与大版本不变时沿用的规则尚未实现，因此 fail closed。I01–I03 的记录只认 `--batch` 所指的批次。`WAIVED` 与 PASS 一样
     使该行成立。
 - **尚无来源的行**：R03（探针仍从 `.app` 打包，证据不含 ZIP 摘要）与资源行（`mac-resources` 只记可执行文件且不进账本）。两者的生产者改动在另一分支
-  （M5 报告 Resolution）；在此之前 R03 为 `NOT TESTED`，门不成立；资源行没有程序证据，可由 USER 逐行 waiver（USER 2026-11-24 批准），已记下的 `FAIL`
-  仍为 `FAIL`。
+  （M5 报告 Resolution）；在此之前 R03 不能 PASS：本批中候选字节上记下的 `FAIL` 为 `FAIL`，其余为 `NOT TESTED`，门不成立；资源行没有程序证据，
+  可由 USER 逐行 waiver（USER 2026-11-24 批准），已记下的 `FAIL` 仍为 `FAIL`。普通 `mac-gui` 行在一组身份下 `FAIL`、另一组干净时 PASS（已批准的分组
+  规则）；人工行、资源行与 R03 的 `FAIL` 不被另一组的 PASS 盖住。
 
 <a id="qualification-process-isolation"></a>
 ### GUI qualification process isolation

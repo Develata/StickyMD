@@ -24,10 +24,15 @@ fn rows(root: &Path) -> Result<Rows, String> {
 
 pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
     let command = options.command.ok_or("mac-ledger needs a command")?;
-    let ledger = options.ledger.clone().unwrap_or_else(|| {
-        root.join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
-            .join("records.jsonl")
-    });
+    // One absolute path, resolved once against the directory the command runs in, for the check,
+    // the lock and the write alike (review round 4, BLOCKER 4).
+    let ledger = match &options.ledger {
+        Some(path) => std::path::absolute(path)
+            .map_err(|e| format!("cannot resolve --ledger {}: {e}", path.display()))?,
+        None => root
+            .join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
+            .join("records.jsonl"),
+    };
     refuse_links(root, &ledger)?;
     if command == Command::Plan {
         let existing = record::read_all(&read(&ledger)?)?;
@@ -121,21 +126,26 @@ pub(crate) fn read_whole(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(format!("{}: {e}", lock_path(ledger).display())),
     };
-    if let Some(file) = &lock {
-        file.try_lock_shared()
-            .map_err(|e| format!("a mac-ledger writer holds the ledger: {e}"))?;
-    }
-    match (fs::read_to_string(ledger), lock) {
-        (Ok(text), Some(lock)) => Ok((Some(text), Some(lock))),
-        // Every append creates the lock first; a ledger without it was not written under it
-        // (copied, or a writer starting), so it is not read unlocked (review round 3, B5).
-        (Ok(_), None) => Err(format!(
-            "{} has no lock beside it; create the empty file {} (or record through mac-ledger) and check again",
-            ledger.display(),
-            lock_path(ledger).display()
-        )),
-        (Err(e), lock) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, lock)),
-        (Err(e), _) => Err(format!("{}: {e}", ledger.display())),
+    // Every append creates the lock first; a ledger without it was not written under it (copied,
+    // or a writer starting), so it is not read unlocked, not even its bytes (review round 3, B5;
+    // review round 4).
+    let Some(lock) = lock else {
+        return match fs::symlink_metadata(ledger) {
+            Ok(_) => Err(format!(
+                "{} has no lock beside it; create the empty file {} (or record through mac-ledger) and check again",
+                ledger.display(),
+                lock_path(ledger).display()
+            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, None)),
+            Err(e) => Err(format!("cannot inspect {}: {e}", ledger.display())),
+        };
+    };
+    lock.try_lock_shared()
+        .map_err(|e| format!("a mac-ledger writer holds the ledger: {e}"))?;
+    match fs::read_to_string(ledger) {
+        Ok(text) => Ok((Some(text), Some(lock))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, Some(lock))),
+        Err(e) => Err(format!("{}: {e}", ledger.display())),
     }
 }
 
@@ -342,5 +352,23 @@ mod reading_tests {
             assert!(error.contains("cannot inspect"), "{error}");
         }
         assert!(refuse_links(root, &root.join("records.jsonl")).is_ok());
+    }
+
+    /// Review round 4, BLOCKER 4: on macOS a spelling that differs only in case names the same
+    /// reserved file on the default volume, even before it exists; the run record is reserved
+    /// as well.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_reserved_name_in_another_case_or_the_run_record_is_refused() {
+        let scratch = stickymd_package::temporary::TemporaryDirectory::new("ledger-case").unwrap();
+        let root = scratch.path();
+        for reserved in [
+            "dist/EVIDENCE/Release-Source-Tests-MacOS.json",
+            "dist/evidence/.RELEASE-source-tests-macos.lock",
+            crate::qualification::reserved_paths::MACOS_SOURCE_TEST_RUN,
+        ] {
+            let error = refuse_links(root, &root.join(reserved)).unwrap_err();
+            assert!(error.contains("source-test receipt or its lock"), "{error}");
+        }
     }
 }

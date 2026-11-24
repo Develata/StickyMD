@@ -126,7 +126,18 @@ mod tests {
     /// or object store is refused on its own; others are not.
     #[test]
     fn each_git_redirection_is_refused_alone() {
-        for name in super::REDIRECTIONS {
+        // Named here, not read from the table under test, so a name left out of it is caught
+        // (review round 4).
+        let names = [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+        ];
+        assert_eq!(super::REDIRECTIONS, names);
+        for name in names {
             assert_eq!(super::redirection(|set| set == name), Some(name));
         }
         assert_eq!(

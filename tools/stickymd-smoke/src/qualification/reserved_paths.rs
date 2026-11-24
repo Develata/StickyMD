@@ -16,11 +16,13 @@ pub(super) const MANUAL_LOCK: &str = "dist/evidence/manual.lock";
 pub(super) const MANUAL_ARCHIVE: &str = "dist/evidence/manual-archive";
 /// The macOS GUI ledger (`mac-ledger`); only that command appends to it.
 pub(crate) const MAC_GUI_LEDGER: &str = "dist/evidence/mac-gui-ledger";
-/// The macOS source-test receipt and its run lock (`release macos-source-tests`); only that
-/// command writes them, and a replaced lock would let two runs overlap (plan 11
+/// The macOS source-test receipt, its run lock and its run record (`release
+/// macos-source-tests`); only that command writes them, a replaced lock would let two runs
+/// overlap, and a replaced record would let another receipt count (plan 11
 /// #macos-readiness-check).
 pub(crate) const MACOS_SOURCE_TEST_RECEIPT: &str = "dist/evidence/release-source-tests-macos.json";
 pub(crate) const MACOS_SOURCE_TEST_LOCK: &str = "dist/evidence/.release-source-tests-macos.lock";
+pub(crate) const MACOS_SOURCE_TEST_RUN: &str = "dist/evidence/.release-source-tests-macos.run";
 
 /// Exclusive for any change to the store or to the candidate it is bound to (Promote,
 /// Source Freeze); shared for reading a consistent target and log. Taken before the
@@ -42,12 +44,24 @@ pub(super) fn is_manual_store_path(root: &Path, path: &Path) -> bool {
         .any(|reserved| path_identity::reaches(root, path, reserved))
 }
 
-/// Whether `path` names the macOS source-test receipt or its lock. Public writers, and the
-/// ledger's configurable destination, refuse them.
+/// Whether `path` names the macOS source-test receipt, its lock or its run record. Public
+/// writers, and the ledger's configurable destination, refuse them. On macOS the spelling is also
+/// compared without case: a case-insensitive volume (the default) names one file by either case,
+/// even one not created yet (review round 4, BLOCKER 4); on a case-sensitive volume this refuses
+/// a few more names than it must.
 pub(crate) fn is_macos_source_test_path(root: &Path, path: &Path) -> bool {
-    [MACOS_SOURCE_TEST_RECEIPT, MACOS_SOURCE_TEST_LOCK]
-        .iter()
-        .any(|reserved| path_identity::reaches(root, path, reserved))
+    [
+        MACOS_SOURCE_TEST_RECEIPT,
+        MACOS_SOURCE_TEST_LOCK,
+        MACOS_SOURCE_TEST_RUN,
+    ]
+    .iter()
+    .any(|reserved| {
+        path_identity::reaches(root, path, reserved)
+            || (cfg!(target_os = "macos")
+                && path_identity::normalize(&root.join(path)).to_lowercase()
+                    == path_identity::normalize(&root.join(reserved)).to_lowercase())
+    })
 }
 
 /// Whether `path` names the macOS GUI ledger directory or anything below it. Public writers

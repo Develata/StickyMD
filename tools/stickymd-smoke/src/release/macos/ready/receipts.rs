@@ -91,18 +91,21 @@ pub(super) fn downloads<'a>(
 }
 
 /// The macOS major version in a `sw_vers` text (`ProductVersion: 27.2` gives 27): exactly one
-/// `ProductVersion`, of one to three dot-separated numbers (review round 3, S7). A format check
-/// of what was recorded, not a proof of the machine.
+/// `ProductVersion` label in the whole text, followed by one to three dot-separated numbers
+/// (review round 3, S7; review round 4, BLOCKER 5: a label at the end, cut off from its value,
+/// is still a label). A format check of what was recorded, not a proof of the machine.
 pub(super) fn major_version(system: &str) -> Option<u32> {
     let words: Vec<&str> = system.split_whitespace().collect();
-    let versions: Vec<&str> = words
-        .windows(2)
-        .filter(|pair| pair[0] == "ProductVersion:")
-        .map(|pair| pair[1])
+    let labels: Vec<usize> = words
+        .iter()
+        .enumerate()
+        .filter(|(_, word)| **word == "ProductVersion:")
+        .map(|(index, _)| index)
         .collect();
-    let [version] = versions.as_slice() else {
+    let [label] = labels.as_slice() else {
         return None;
     };
+    let version = words.get(label + 1)?;
     let parts: Vec<&str> = version.split('.').collect();
     let numeric = (1..=3).contains(&parts.len())
         && parts

@@ -10,7 +10,7 @@
 - **代码：** `tools/stickymd-smoke/src/release/macos/ready/`（`rows` 分类表、`source_tests` 收据与运行器、`judge` 纯判定）；
   `release/macos/promote.rs` 的 resolver 返回 receipt 摘要、两项字节身份与签名方式；`mac_ledger/release.rs`（发布用记录）与
   `mac-ledger receipt --release-source`、`waive`、`revoke --release-source`。R03 接收候选 ZIP 与资源行的字节绑定另开分支，
-  在此之前核对程序对 R03 判 `NOT_TESTED`。
+  在此之前 R03 不能 PASS：本批中候选字节上记下的 `FAIL` 为 `FAIL`，其余为 `NOT_TESTED`。
 
 2026-11-21 平台构建输入收窄为打包 crate（USER 决定 2026-11-21，[验证报告](report/2026-11-20-phase-18-verification.md)末尾的 Resolution）：
 
