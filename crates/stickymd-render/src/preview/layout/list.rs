@@ -79,6 +79,9 @@ pub(super) fn attach_marker(
     });
     if (matches!(kind, RenderBlockKind::DisplayMath) || opens_with_display_formula)
         && let (Some(item), Some(marker_chunk)) = (block.boxes.first_mut(), marker.chunks.first())
+        // Only a formula on the marker's own first line: leading hard breaks push it below, and
+        // the box must not then cover the blank lines.
+        && item.rect.y + 0.5 < marker_chunk.y + marker.height
     {
         // A short formula's ink rectangle sits inside the line. Its selectable
         // row must include the marker's shaped line box, or the y-based row

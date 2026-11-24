@@ -350,3 +350,156 @@ fn a_list_item_that_starts_with_the_formula_hits_the_formula_not_the_bullet() {
     assert_eq!(selection.anchor, formula.selection_range.start);
     assert_eq!(selection.active, formula.selection_range.end);
 }
+
+/// Drags across the whole of the atomic box in a 300 px pane, forwards and backwards, and
+/// returns what the two copies give.
+fn drag_both_ways(frame: &PreviewFrame, pane: f32) -> (String, String) {
+    let rect = formula_box(frame).rect;
+    let y = middle(rect).1;
+    let forward = drag(frame, (rect.x + 1.0, y), (pane - 1.0, y));
+    let back = drag(frame, (pane - 1.0, y), (rect.x + 1.0, y));
+    (
+        frame.copy_text(forward).unwrap(),
+        frame.copy_text(back).unwrap(),
+    )
+}
+
+#[test]
+fn an_overwide_failed_formula_at_the_paragraph_end_drags_to_its_full_tex() {
+    // An unclosed group fails in the math engine, so the formula is atomic error text.
+    let tex = format!("\\frac{{{}", "x".repeat(160));
+    let (pipeline, frame) = frame(&format!("lead\n$${tex}$$"), 300);
+    let (formulas, _) = chunks(&pipeline, 0);
+    assert!(formulas.is_empty(), "the formula did not lay out as math");
+    let (forward, back) = drag_both_ways(&frame, 300.0);
+    assert_eq!((forward, back), (tex.clone(), tex));
+}
+
+#[test]
+fn a_long_remote_image_placeholder_at_the_paragraph_end_drags_to_its_alt_text() {
+    let url = format!("https://example.com/{}", "a".repeat(200));
+    let (_, frame) = frame(&format!("lead\n![alt text]({url})"), 300);
+    let (forward, back) = drag_both_ways(&frame, 300.0);
+    assert_eq!((forward.as_str(), back.as_str()), ("alt text", "alt text"));
+}
+
+#[test]
+fn leading_hard_breaks_keep_the_bullet_box_off_the_blank_lines() {
+    let source = "- \\\n  \\\n  [$$x$$](https://example.org) tail";
+    assert_eq!(
+        blocks(source)[0]
+            .spans
+            .iter()
+            .filter(|span| span.hard_break)
+            .count(),
+        2
+    );
+    let (pipeline, frame) = frame(source, 900);
+    let chunk_y = chunks(&pipeline, 0).0[0].1;
+    let rect = formula_box(&frame).rect;
+    let x = middle(rect).0;
+    assert!(
+        frame.action_at(x, middle(rect).1).is_some(),
+        "the link on the formula"
+    );
+    assert!(
+        rect.y > chunk_y - 2.0,
+        "the box starts at the formula, not at the bullet"
+    );
+    assert!(
+        frame.action_at(x, chunk_y - 10.0).is_none(),
+        "the blank line above the formula is not the link"
+    );
+}
+
+struct OnePixelImage(Vec<u8>);
+
+const IMAGE_PIXEL: [u8; 4] = [10, 200, 60, 255];
+
+impl PreviewImageSource for OnePixelImage {
+    fn inspect(&self, _: &str) -> Result<Option<crate::image::ImageMetadata>, String> {
+        crate::image::inspect_encoded_image(&self.0)
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
+    fn load(&self, _: &str) -> Result<Option<Vec<u8>>, String> {
+        Ok(Some(self.0.clone()))
+    }
+}
+
+#[test]
+fn an_image_after_many_own_line_formulas_is_drawn_when_scrolled_to() {
+    let rgba: Vec<u8> = IMAGE_PIXEL
+        .iter()
+        .copied()
+        .cycle()
+        .take(32 * 32 * 4)
+        .collect();
+    let image = OnePixelImage(
+        crate::image::prepare_rgba_image(32, 32, rgba)
+            .unwrap()
+            .bytes()
+            .to_vec(),
+    );
+    let source = format!("{}![i](image.png)", "$$x$$\n".repeat(120));
+    let mut pipeline = PreviewPipeline::new();
+    let first = pipeline
+        .build_with_image_source(
+            &snapshot(&source),
+            400,
+            300,
+            1.0,
+            0.0,
+            PreviewSelection::default(),
+            PreviewTheme::Light,
+            Some(&image),
+        )
+        .unwrap();
+    let bottom = first.document_height() - 300.0;
+    assert!(
+        bottom > 2500.0,
+        "the image lies far below the paragraph top"
+    );
+    let scrolled = pipeline
+        .paint_with_image_source(
+            Generation::initial(),
+            300,
+            bottom,
+            PreviewSelection::default(),
+            PreviewTheme::Light,
+            Some(&image),
+        )
+        .unwrap();
+    let drawn = scrolled
+        .rgba()
+        .chunks(4)
+        .filter(|pixel| *pixel == IMAGE_PIXEL)
+        .count();
+    assert!(
+        drawn > 32 * 32 / 2,
+        "the image's pixels are painted: {drawn}"
+    );
+}
+
+#[test]
+fn the_embedded_background_is_painted_like_the_standalone_one() {
+    let pixel = |frame: &PreviewFrame, x: usize, y: usize| {
+        let at = (y * frame.width() as usize + x) * 4;
+        frame.rgba()[at..at + 4].to_vec()
+    };
+    let (_, embedded) = frame(TIGHT, 900);
+    let (_, standalone) = frame(BLANK, 900);
+    let (embedded_y, standalone_y) = (
+        middle(formula_box(&embedded).rect).1 as usize,
+        middle(formula_box(&standalone).rect).1 as usize,
+    );
+    // Left of the text column and far from the formula's ink, inside the background.
+    let tinted = pixel(&standalone, 20, standalone_y);
+    assert_ne!(
+        tinted,
+        pixel(&standalone, 2, standalone_y),
+        "the tint differs from the page"
+    );
+    assert_eq!(pixel(&embedded, 20, embedded_y), tinted);
+}

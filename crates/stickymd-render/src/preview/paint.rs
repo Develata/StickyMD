@@ -108,6 +108,15 @@ pub(super) fn paint_document(
     let mut visible_boxes = Vec::new();
     for (index, block) in document.blocks[start..end].iter().enumerate() {
         let target = target_of(index, block);
+        // Clip, then clamp: both kinds of atomic box (formula and image objects, and the text
+        // of a failed formula or image placeholder) decide drag endpoints by what is visible.
+        let finish_box = |item| {
+            if target.is_some() {
+                item
+            } else {
+                visible_bounds(item)
+            }
+        };
         let offset = target.map_or(0.0, |target| target.offset());
         let Some(clip) = target.map_or(Some(viewport), |target| {
             intersect(target.content_rect(), viewport)
@@ -120,13 +129,7 @@ pub(super) fn paint_document(
                 .iter()
                 .cloned()
                 .filter_map(|item| clip_box(item, offset, clip))
-                .map(|item| {
-                    if target.is_some() {
-                        item
-                    } else {
-                        visible_bounds(item)
-                    }
-                }),
+                .map(finish_box),
         );
         for chunk in &block.chunks {
             let (offset, clip) = if chunk.scroll_with_block {
@@ -143,7 +146,8 @@ pub(super) fn paint_document(
                         clip,
                     )
                     .into_iter()
-                    .filter_map(|item| clip_box(item, 0.0, clip)),
+                    .filter_map(|item| clip_box(item, 0.0, clip))
+                    .map(finish_box),
                 );
             }
         }

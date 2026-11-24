@@ -62,6 +62,27 @@ impl LaidOutImage {
         Some(Box::new(slot))
     }
 
+    /// Re-decides admission at the image's final top `y`, known only once its line is placed:
+    /// an inline image can lie far below the paragraph top it was built with. Refresh then
+    /// agrees with this layout. A load that fails or returns other dimensions leaves the
+    /// placeholder; the refresh pass rebuilds in that case, as for any changed file.
+    pub fn readmit(
+        &mut self,
+        y: f32,
+        source: &mut ImageRequests<'_>,
+        cache: &mut DecodedImageCache,
+        band: (f32, f32),
+    ) {
+        self.admission_y = y;
+        if !self.in_band(band) {
+            self.raster = None;
+        } else if self.raster.is_none() {
+            self.raster = self
+                .load(source, cache)
+                .filter(|raster| (raster.width, raster.height) == (self.width, self.height));
+        }
+    }
+
     fn in_band(&self, band: (f32, f32)) -> bool {
         self.admission_y + self.height as f32 >= band.0 && self.admission_y <= band.1
     }
