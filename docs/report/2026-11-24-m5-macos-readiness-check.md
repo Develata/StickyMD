@@ -311,7 +311,7 @@ schema 1 与 2 被拒，须在 R 上重跑。
 | SHOULD_FIX Cargo 提前停止时显式运行找不到清单 | 已修复：显式运行记下 stickymd-mac 的二进制在任何运行之前自己的清单所列的测试（`listed`），不再依赖主运行 |
 | SHOULD_FIX libtest 的 ` - compile` 后缀与 rustdoc 的多组 | 已修复并对照 rustc 1.99.1 的真实输出（临时的 2024 edition crate：合并与单独的文档测试、`compile_fail`、`no_run`、`should_panic`、含 ` ... ` 的忽略原因）：去掉三种模式后缀、在第一个 ` ... ` 处分开、文档测试段的多组计数相加；样本即那份输出 |
 | SHOULD_FIX 缺锁时先读内容、路径检查吞掉错误 | 已修复：缺锁时只看是否存在，不读内容；检查路径时除不存在外的错误都使读取停止。“没有读”本身不能由样本观察，检查出错有样本 |
-| SHOULD_FIX S06 的 `filter_map(Result::ok)` | 已修复：读出全部目录项，有一项读不出即测试失败；卸载之后再断言。由真跑的 S06 显式运行验证 |
+| SHOULD_FIX S06 的 `filter_map(Result::ok)` | 已修复：读出全部目录项的名字，有一项读不出即测试失败；卸载之后再断言。第一次真跑（`4b6980f`）抓到修复本身的错：保留的 `DirEntry` 使目录一直打开，卷忙而卸载失败，S06 为 FAIL；改为只保留名字后，显式运行通过 |
 | SHOULD_FIX 重新打包 ZIP 的样本到不了摘要比较 | 已修复：checksum 文件由真正的生成器写成，只差 ZIP 的摘要，断言具体的 `Checksum mismatch`；另加“检查的是 A、登记时已换成 B”的样本 |
 | SHOULD_FIX README、plan、coverage 的措辞 | 已修复：README 的命令带上 `--macos-major`、`--driver`、`--candidate-sha256` 与 `--outcome`，写明 S06 只凭显式运行；R03 写成“本批的 FAIL 为 FAIL，其余为 NOT_TESTED”；普通 `mac-gui` 行在另一组干净时 PASS。G02 的引文说明已在 `ec70cbe` 改正 |
 | 另：同名先 `ok` 后 `FAILED` | 已修复：保留失败，同时记为问题 |

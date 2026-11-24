@@ -218,18 +218,15 @@ mod tests {
             .map(|error| unwritable_advice(&note_root, error));
         drop(note_root);
         // Every entry read, or the count proves nothing (review round 4); judged after detaching.
-        let entries: std::io::Result<Vec<fs::DirEntry>> =
-            fs::read_dir(&mount).and_then(|entries| entries.collect());
+        // Only the names are kept: a `DirEntry` holds the directory open, and the volume would
+        // then be busy and refuse to detach.
+        let names: std::io::Result<Vec<std::ffi::OsString>> = fs::read_dir(&mount)
+            .and_then(|entries| entries.map(|entry| entry.map(|e| e.file_name())).collect());
         hdiutil("detach", &[mount.as_os_str()]);
-        let left_behind = entries
+        let left_behind = names
             .expect("every entry of the volume is read")
             .iter()
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".stickymd-write-test")
-            })
+            .filter(|name| name.to_string_lossy().starts_with(".stickymd-write-test"))
             .count();
         fs::remove_dir_all(&root).unwrap();
         assert!(
