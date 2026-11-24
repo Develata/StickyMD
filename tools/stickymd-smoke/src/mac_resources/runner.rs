@@ -38,10 +38,11 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     // (review round 3, B2 and its first-run finding).
     crate::mac_common::output::prepare(&out, &|name| name == "mac-resources.json", &[])?;
     // One reading of the environment gives both the evidence and the conditions it is judged
-    // under (review B3); every sample checks the display is still this one.
-    let display = native::display()?;
+    // under (review B3); every sample checks the displays are still these.
+    let screen = Screen::now()?;
+    let display = screen.dimensions;
     let [pixel_width, pixel_height, point_width, point_height] = display;
-    let displays = native::display_count()?;
+    let displays = u32::try_from(screen.active.len()).map_err(|e| e.to_string())?;
     let mut evidence = Evidence {
         environment: environment(display, displays)?,
         conditions: Conditions {
@@ -72,7 +73,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
                 "{name} run {repetition}/{}: starting isolated measurement",
                 options.repetitions
             );
-            let run = one_run(&app, &fixture, scenario, repetition, &evidence, display);
+            let run = one_run(&app, &fixture, scenario, repetition, &evidence, &screen);
             println!("{name} run {repetition}: {} {}", run.status, run.reason);
             let cleanup_error = run.cleanup_error.clone();
             evidence
@@ -101,13 +102,33 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     }
 }
 
+/// The displays a campaign is measured on: the main display's mode and size, its ID and the
+/// active displays' IDs.
+#[derive(Debug, PartialEq)]
+struct Screen {
+    dimensions: [f64; 4],
+    main: u32,
+    active: Vec<u32>,
+}
+
+impl Screen {
+    fn now() -> Result<Self, String> {
+        let (main, active) = native::displays()?;
+        Ok(Self {
+            dimensions: native::display()?,
+            main,
+            active,
+        })
+    }
+}
+
 fn one_run(
     app: &Path,
     fixture: &str,
     scenario: Scenario,
     repetition: usize,
     evidence: &Evidence,
-    display: [f64; 4],
+    screen: &Screen,
 ) -> Run {
     let timebase = evidence.timebase;
     let mut run = Run::new(repetition);
@@ -119,7 +140,7 @@ fn one_run(
         }
     };
     let result = prepare(&mut session, app, fixture, scenario.mode, evidence)
-        .and_then(|()| measure(&mut session, &mut run, timebase, scenario.hidden, display));
+        .and_then(|()| measure(&mut session, &mut run, timebase, scenario.hidden, screen));
     if let Err(error) = result {
         run.reason = error;
     }
@@ -191,15 +212,16 @@ fn capture(
     session: &mut Session,
     run: &mut Run,
     started: Instant,
-    display: [f64; 4],
+    screen: &Screen,
 ) -> Result<bool, String> {
     if exited(session, run, started)? {
         return Ok(false);
     }
-    // The scale the campaign records must be the one measured under (review B3).
-    if native::display()? != display {
+    // The scale and the single display the campaign records must be the ones measured under
+    // (review B3 and round 3): the main display's mode, its ID and the set of active displays.
+    if Screen::now()? != *screen {
         run.status = "DISPLAY_CHANGED";
-        return Err("the main display changed during the campaign".into());
+        return Err("the displays changed during the campaign".into());
     }
     let result = native::sample(run.pid.ok_or("Missing measured PID")?, started);
     let error = match result {
@@ -224,7 +246,7 @@ fn measure(
     run: &mut Run,
     timebase: (u32, u32),
     hidden: bool,
-    display: [f64; 4],
+    screen: &Screen,
 ) -> Result<(), String> {
     let started = Instant::now();
     let pid = session.child.as_ref().ok_or("Missing child")?.id();
@@ -233,10 +255,15 @@ fn measure(
         if exited(session, run, started)? {
             return Ok(());
         }
-        if native::window_ready(pid)? {
+        // One instant decides both readiness and the deadline (review round 3): a window first
+        // seen after 30 s is a timeout, never a run the reader would refuse.
+        let ready = native::window_ready(pid)?;
+        let at = started.elapsed();
+        if ready && at <= Duration::from_secs(30) {
+            run.ready_seconds = Some(at.as_secs_f64());
             break;
         }
-        if started.elapsed() >= Duration::from_secs(30) {
+        if at >= Duration::from_secs(30) {
             run.status = "READINESS_TIMEOUT";
             return Err("No PID-owned on-screen content window within 30 seconds".into());
         }
@@ -249,7 +276,6 @@ fn measure(
             return Ok(());
         }
     }
-    run.ready_seconds = Some(started.elapsed().as_secs_f64());
     if hidden && !hide(session, run, pid, started)? {
         return Ok(());
     }
@@ -258,7 +284,7 @@ fn measure(
         run,
         started,
         Instant::now() + Duration::from_secs(crate::resource_plan::WARMUP_SECONDS),
-    )? || !capture(session, run, started, display)?
+    )? || !capture(session, run, started, screen)?
     {
         return Ok(());
     }
@@ -268,7 +294,7 @@ fn measure(
     let deadline = started
         + Duration::from_secs_f64(run.samples[0].elapsed_seconds)
         + Duration::from_secs(crate::resource_plan::CPU_SECONDS);
-    if !wait(session, run, started, deadline)? || !capture(session, run, started, display)? {
+    if !wait(session, run, started, deadline)? || !capture(session, run, started, screen)? {
         return Ok(());
     }
     if hidden {

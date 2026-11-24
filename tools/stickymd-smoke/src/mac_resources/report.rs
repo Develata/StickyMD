@@ -91,7 +91,7 @@ impl Evidence {
                                 let [before, after] = run.samples.as_slice() else {
                                     return None;
                                 };
-                                Reading::of(metrics, after.elapsed_seconds - before.elapsed_seconds)
+                                Reading::of(metrics, before, after, self.timebase)
                             })
                             .flatten()
                     })

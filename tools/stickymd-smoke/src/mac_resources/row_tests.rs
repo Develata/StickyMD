@@ -72,30 +72,51 @@ fn one_run_over_its_memory_gate_fails_r01_alone_and_names_the_bytes() {
     assert_eq!(verdicts(&over), [("R01", "MEASURED"), ("R02", "MEASURED")]);
 }
 
-/// The history of the row: periodic caret-layer toggling gave Split a median of 0.103%.
+/// The history of the row: periodic caret-layer toggling gave Split a median of 0.103%. Each case
+/// changes the runs' raw samples, which the rule reads, and is read back from its JSON.
 #[test]
 fn a_median_idle_cpu_above_the_hard_line_fails_r02_and_a_single_spike_does_not() {
-    let mut busy = evidence();
-    let limit = SCENARIOS[2].limit;
-    for (index, run) in busy.scenarios[2].iter_mut().enumerate() {
-        *run = measured(index + 1, limit, BUSY_TICKS);
-    }
-    assert_eq!(verdicts(&busy), [("R01", "MEASURED"), ("R02", "FAIL")]);
-    assert!(busy.rows()[1].detail.contains("split median 0.103000%"));
-    assert_eq!(read(&busy.json()).unwrap()[1].verdict, "FAIL");
-    let mut spike = evidence();
-    spike.scenarios[0][0]
-        .metrics
-        .as_mut()
-        .unwrap()
-        .idle_cpu_percent = 5.0;
-    assert_eq!(verdicts(&spike), [("R01", "MEASURED"), ("R02", "MEASURED")]);
-    // At the line is within it.
-    let mut edge = evidence();
-    for run in &mut edge.scenarios[3] {
-        run.metrics.as_mut().unwrap().idle_cpu_percent = CPU_HARD_FAILURE_PERCENT;
-    }
-    assert_eq!(verdicts(&edge), [("R01", "MEASURED"), ("R02", "MEASURED")]);
+    let with_ticks = |scenario: usize, ticks: &dyn Fn(usize) -> u64, window: f64| {
+        let mut evidence = evidence();
+        let limit = SCENARIOS[scenario].limit;
+        for (index, run) in evidence.scenarios[scenario].iter_mut().enumerate() {
+            *run = super::tests::measured_over(index + 1, limit, ticks(index), window);
+        }
+        let verdict = verdicts(&evidence)[1].1;
+        assert_eq!(
+            read(&evidence.json()).unwrap()[1].verdict,
+            if verdict == "MEASURED" {
+                "NOT_TESTED"
+            } else {
+                verdict
+            },
+            "read back"
+        );
+        (verdict, evidence.rows()[1].detail.clone())
+    };
+    let (verdict, detail) = with_ticks(2, &|_| BUSY_TICKS, 60.0);
+    assert_eq!(verdict, "FAIL");
+    assert!(
+        detail.contains("split median 0.103000% in 60 s windows"),
+        "{detail}"
+    );
+    // One run fifty times busier does not move the median.
+    let spike = |index: usize| {
+        if index == 0 {
+            50 * BUSY_TICKS
+        } else {
+            super::tests::IDLE_TICKS
+        }
+    };
+    assert_eq!(with_ticks(2, &spike, 60.0).0, "MEASURED");
+    // Exactly 60 ms of CPU (1,440,000 ticks at 125/3) is at the line, and within it; one tick
+    // more is over it. Compared in raw ticks, the review's late sample (the second at
+    // 91.500012 s) whose percent of the budget reads 0.10000000000000002 is still at the line.
+    const AT_THE_LINE: u64 = 1_440_000;
+    assert_eq!(with_ticks(1, &|_| AT_THE_LINE, 60.0).0, "MEASURED");
+    assert_eq!(with_ticks(1, &|_| AT_THE_LINE + 1, 60.0).0, "FAIL");
+    assert_eq!(with_ticks(1, &|_| AT_THE_LINE, 60.000012).0, "MEASURED");
+    assert!(CPU_HARD_FAILURE_PERCENT == 0.1);
 }
 
 #[test]
@@ -385,9 +406,12 @@ fn the_environment_must_agree_with_itself() {
     );
 }
 
-/// Review B8: a second sample up to 0.5 s late dilutes the average; holding needs the CPU time
-/// within the 60 s budget, a FAIL the diluted median above the line, and in between the scenario
-/// is measured again. The median is of five runs: three high and two low fail, two and three hold.
+/// Review B8 and round 3 B3: a second sample up to 0.5 s late dilutes the average; holding needs
+/// the CPU time within the 60 s budget, and a FAIL a 60 s window shown above the line, which only
+/// a window of exactly 60 s shows. A later sample above the budget is NOT_TESTED: the review's
+/// 31 ms at each end of a 60.5 s window averages 0.1025% yet no 60 s window exceeds 0.052%. The
+/// median is of five runs: three high and two low fail, two and three hold; with fewer than five
+/// valid runs nothing fails.
 #[test]
 fn a_late_sample_cannot_turn_a_hard_failure_into_a_pass() {
     use super::tests::measured_over;
@@ -406,11 +430,23 @@ fn a_late_sample_cannot_turn_a_hard_failure_into_a_pass() {
         verdicts(&undecided),
         [("R01", "MEASURED"), ("R02", "NOT_TESTED")]
     );
-    assert!(undecided.rows()[1].detail.contains("measure again"));
+    assert!(
+        undecided.rows()[1]
+            .detail
+            .contains("does not show a 60 s window above it"),
+        "{:?}",
+        undecided.rows()[1]
+    );
     assert_eq!(read(&undecided.json()).unwrap()[1].verdict, "NOT_TESTED");
-    assert_eq!(verdicts(&with(0.0607, 60.5))[1].1, "FAIL");
+    assert_eq!(verdicts(&with(0.062, 60.5))[1].1, "NOT_TESTED");
     assert_eq!(verdicts(&with(0.0599, 60.5))[1].1, "MEASURED");
     assert_eq!(verdicts(&with(0.0603, 60.0))[1].1, "FAIL");
+    // One valid run of five, far over the line: incomplete, not a FAIL.
+    let mut one = with(0.5, 60.0);
+    for run in &mut one.scenarios[1][1..] {
+        run.exited(3.0, "signal: 9".into());
+    }
+    assert_eq!(verdicts(&one)[1].1, "NOT_TESTED");
     let mixed = |high: usize| {
         let mut evidence = evidence();
         let limit = SCENARIOS[2].limit;

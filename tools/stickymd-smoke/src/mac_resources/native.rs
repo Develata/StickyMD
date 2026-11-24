@@ -165,6 +165,25 @@ pub(super) fn display_count() -> Result<u32, String> {
     Ok(count)
 }
 
+/// The main display's ID and the active displays' IDs, sorted: what every sample checks is still
+/// the campaign's (review round 3: a second display, or another main one of the same size).
+pub(super) fn displays() -> Result<(u32, Vec<u32>), String> {
+    let count = display_count()?;
+    let mut ids = vec![0_u32; count as usize];
+    let mut written = 0_u32;
+    // SAFETY: `ids` holds `count` elements; the call writes at most `count` IDs into it and how
+    // many it wrote into `written`.
+    let error = unsafe { CGGetActiveDisplayList(count, ids.as_mut_ptr(), &mut written) };
+    if error != 0 {
+        return Err(format!("CGGetActiveDisplayList failed: {error}"));
+    }
+    ids.truncate(written.min(count) as usize);
+    ids.sort_unstable();
+    // SAFETY: a getter with no arguments.
+    let main = unsafe { CGMainDisplayID() };
+    Ok((main, ids))
+}
+
 pub(super) fn display() -> Result<[f64; 4], String> {
     // SAFETY: getters borrow the main display; the copied mode is released exactly once.
     let dimensions = unsafe {

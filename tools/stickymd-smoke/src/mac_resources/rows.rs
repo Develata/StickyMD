@@ -9,11 +9,16 @@
 //! campaign measured elsewhere leaves the row NOT_TESTED. No run yet confirms that its scenario
 //! opened in the view its configuration names (review F7), so until Develata decides how to
 //! confirm it, complete runs within the lines leave the row NOT_TESTED, never PASS; a FAIL stays
-//! a FAIL.
+//! a FAIL. Two samples at least 60 s apart bound every 60 s window inside them from above, so
+//! R02 holds on the CPU time within the 60 s budget, compared exactly in raw ticks; they show a
+//! 60 s window above the line only when the window was exactly 60 s, so a FAIL needs that, and a
+//! later sample leaves the scenario NOT_TESTED (review round 3, B3; awaiting Develata's decision
+//! on a third sample).
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
 use super::model::{self, Metrics, SCENARIOS, Sample};
 use crate::release::json::Value;
+use crate::resource_plan::CPU_SECONDS;
 
 /// `10`'s target table: idle CPU (a 60 s average) above 0.1% is a hard failure. R02 compares each
 /// scenario's median over its valid runs with it (USER 2026-11-24, plan 11 #phase-16-macos-host).
@@ -23,34 +28,72 @@ const MEMORY_SCALE: f64 = 2.0;
 /// `10`: on the macOS host the measurement environment reads Release build + macOS 27.
 const MACOS_MAJOR: &str = "27";
 
-/// What a valid run read: its `phys_footprint` after the warm-up and its idle CPU percent.
+/// `10`'s hard line on a 60 s window, in nanoseconds of CPU: 0.1% of 60 s.
+const BUDGET_NANOSECONDS: u128 = 60_000_000;
+
+/// What a valid run read: its `phys_footprint` after the warm-up and its CPU time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Reading {
     pub footprint: u64,
-    /// The CPU over the measured window, as a percent of that window.
+    /// The CPU over the measured window, as a percent of that window (shown, not judged).
     pub idle_cpu: f64,
-    /// The same CPU time as a percent of `10`'s 60 s budget (review B8): at least the first
-    /// 60 s window's average, however late the second sample came.
-    pub budget_cpu: f64,
+    /// The CPU time exactly, as nanoseconds times [`Self::denom`]: ticks times the Mach
+    /// timebase's numerator (review round 3: the 60 ms budget compared in raw ticks).
+    pub cpu_scaled: u128,
+    /// The Mach timebase's denominator.
+    pub denom: u128,
+    /// The measured window, in seconds: at least 60, at most 60.5.
+    pub window: f64,
 }
 
 impl Reading {
-    /// The reading of a run's metrics over a `window` of seconds; `None` for readings no valid
-    /// run can have.
-    pub(super) fn of(metrics: &Metrics, window: f64) -> Option<Self> {
-        let budget_cpu =
-            metrics.idle_cpu_percent * window / crate::resource_plan::CPU_SECONDS as f64;
+    /// The reading of a valid run from its two samples and their metrics; `None` for readings
+    /// no valid run can have.
+    pub(super) fn of(
+        metrics: &Metrics,
+        before: &Sample,
+        after: &Sample,
+        timebase: (u32, u32),
+    ) -> Option<Self> {
+        let ticks = u128::from(after.user_ticks.checked_sub(before.user_ticks)?)
+            + u128::from(after.system_ticks.checked_sub(before.system_ticks)?);
         Some(Self {
             footprint: metrics.footprint_bytes,
             idle_cpu: metrics.idle_cpu_percent,
-            budget_cpu,
+            cpu_scaled: ticks * u128::from(timebase.0),
+            denom: u128::from(timebase.1),
+            window: after.elapsed_seconds - before.elapsed_seconds,
         })
-        .filter(|r| {
-            r.idle_cpu.is_finite()
-                && r.idle_cpu >= 0.0
-                && r.budget_cpu.is_finite()
-                && r.footprint > 0
-        })
+        .filter(|r| r.idle_cpu.is_finite() && r.idle_cpu >= 0.0 && r.footprint > 0 && r.denom > 0)
+    }
+
+    /// The CPU time as a percent of the 60 s budget, for display: at least the average of any
+    /// 60 s window inside the measured one.
+    fn budget_percent(&self) -> f64 {
+        self.cpu_scaled as f64 / self.denom as f64 / (CPU_SECONDS as f64 * 1e7)
+    }
+
+    /// CPU time some 60 s window inside the measured one is shown to hold: all of it when the
+    /// window was exactly 60 s; none otherwise, since two samples do not say where in a longer
+    /// window it was spent (review round 3, B3).
+    fn proven_scaled(&self) -> u128 {
+        if self.window <= CPU_SECONDS as f64 {
+            self.cpu_scaled
+        } else {
+            0
+        }
+    }
+}
+
+/// Whether the median of CPU times scaled by `denom` exceeds the 60 s budget, exactly: the
+/// middle value, or the sum of the two middle ones against twice the budget.
+fn median_over(mut values: Vec<u128>, denom: u128) -> bool {
+    values.sort_unstable();
+    let budget = BUDGET_NANOSECONDS * denom;
+    match values.len() {
+        0 => false,
+        n if n % 2 == 1 => values[n / 2] > budget,
+        n => values[n / 2 - 1] + values[n / 2] > 2 * budget,
     }
 }
 
@@ -190,38 +233,47 @@ pub(super) fn judge(
     } else {
         ("NOT_TESTED", missing.clone())
     };
-    // R02: each scenario's median idle CPU over its valid runs, against the hard failure line.
-    // The measured window may overshoot 60 s by scheduling (at most 0.5 s), which dilutes the
-    // average (review B8). A FAIL needs the diluted median above the line; holding needs the
-    // CPU time within the 60 s budget, which bounds the first 60 s from above; between the two
-    // the run cannot tell, and the scenario is to be measured again.
-    let medians: Vec<(&str, f64, f64)> = scenarios
+    // R02: each complete scenario's median CPU time against the 60 s budget at the hard line,
+    // exactly in raw ticks. The measured window overshoots 60 s by scheduling (at most 0.5 s):
+    // within the budget bounds every 60 s window inside it, so the scenario holds; above the
+    // line is shown only by runs whose window was exactly 60 s (review B8, round 3 B3), so a
+    // FAIL needs their median above it; otherwise the scenario cannot be told either way.
+    struct Cpu {
+        name: &'static str,
+        over: bool,
+        within: bool,
+        shown: f64,
+    }
+    let cpu: Vec<Cpu> = scenarios
         .iter()
+        .filter(|s| complete(s, repetitions))
         .filter_map(|s| {
-            Some((
-                s.name,
-                model::summarize(valid(s).map(|r| r.idle_cpu))?.median,
-                model::summarize(valid(s).map(|r| r.budget_cpu))?.median,
-            ))
+            let runs: Vec<Reading> = valid(s).collect();
+            let denom = runs.first()?.denom;
+            if runs.iter().any(|r| r.denom != denom) {
+                return None;
+            }
+            Some(Cpu {
+                name: s.name,
+                over: median_over(runs.iter().map(Reading::proven_scaled).collect(), denom),
+                within: !median_over(runs.iter().map(|r| r.cpu_scaled).collect(), denom),
+                shown: model::summarize(runs.iter().map(Reading::budget_percent))?.median,
+            })
         })
         .collect();
-    let above: Vec<String> = medians
+    let above: Vec<String> = cpu
         .iter()
-        .filter(|(_, median, _)| *median > CPU_HARD_FAILURE_PERCENT)
-        .map(|(name, median, _)| format!("{name} median {median:.6}%"))
+        .filter(|c| c.over)
+        .map(|c| format!("{} median {:.6}% in 60 s windows", c.name, c.shown))
         .collect();
-    let undecided: Vec<String> = medians
+    let undecided: Vec<String> = cpu
         .iter()
-        .filter(|(_, median, budget)| {
-            *median <= CPU_HARD_FAILURE_PERCENT && *budget > CPU_HARD_FAILURE_PERCENT
-        })
-        .map(|(name, median, budget)| {
-            format!("{name} median {median:.6}% over the window, {budget:.6}% of the 60 s budget")
-        })
+        .filter(|c| !c.over && !c.within)
+        .map(|c| format!("{} median {:.6}% of the 60 s budget", c.name, c.shown))
         .collect();
-    let listed = medians
+    let listed = cpu
         .iter()
-        .map(|(name, _, budget)| format!("{name} {budget:.6}%"))
+        .map(|c| format!("{} {:.6}%", c.name, c.shown))
         .collect::<Vec<_>>()
         .join(", ");
     let r02 = if !conditions.macos_27() {
@@ -241,7 +293,7 @@ pub(super) fn judge(
         (
             "NOT_TESTED",
             format!(
-                "crosses the {CPU_HARD_FAILURE_PERCENT}% line within the window's timing tolerance; measure again: {}",
+                "above the {CPU_HARD_FAILURE_PERCENT}% line over the 60 s budget, but a window longer than 60 s does not show a 60 s window above it (review round 3, B3; awaiting Develata's decision): {}",
                 undecided.join(", ")
             ),
         )
@@ -406,10 +458,7 @@ fn reading(
     if matches!(written, Value::Null) || metrics(written)? != recomputed {
         return Err("a VALID run's written readings differ from those its samples give".into());
     }
-    Ok(Reading::of(
-        &recomputed,
-        after.elapsed_seconds - before.elapsed_seconds,
-    ))
+    Ok(Reading::of(&recomputed, before, after, timebase))
 }
 
 /// The value of `key: <value>` in `sw_vers` text.
