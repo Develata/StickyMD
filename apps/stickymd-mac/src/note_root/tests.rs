@@ -313,15 +313,16 @@ fn one_key_is_exclusive_and_another_key_runs_beside_it() {
         ("root-keys-case", "stickymd"),
     ] {
         let world = World::new(label);
-        // One probe: what is reported is what decides (review round 4, BLOCKER 6).
-        let insensitive = case_insensitive(&world);
+        // One probe, only where the case matters: what is reported is what decides (review
+        // round 4, BLOCKER 6; fix round, SHOULD_FIX 13).
         if home_name == "stickymd" {
+            let insensitive = case_insensitive(&world);
             report_volume("temporary", insensitive);
-        }
-        if home_name == "stickymd" && !insensitive {
-            // The temporary volume decides; the case-sensitive side has its own image test.
-            eprintln!("skipped on a case-sensitive temporary volume");
-            continue;
+            if !insensitive {
+                // The temporary volume decides; the case-sensitive side has its own image test.
+                eprintln!("skipped on a case-sensitive temporary volume");
+                continue;
+            }
         }
         let system = world.resolve(&world.app("system", "StickyMD")).unwrap();
         let _guard = primary(&system);

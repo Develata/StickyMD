@@ -93,19 +93,26 @@ pub(super) fn downloads<'a>(
 /// The macOS major version in a `sw_vers` text (`ProductVersion: 27.2` gives 27): exactly one
 /// `ProductVersion` label in the whole text, followed by one to three dot-separated numbers
 /// (review round 3, S7; review round 4, BLOCKER 5: a label at the end, cut off from its value,
-/// is still a label). A format check of what was recorded, not a proof of the machine.
+/// is still a label; fix round, BLOCKER 6: so is one with its value attached, as in
+/// `ProductVersion:28.0`). A format check of what was recorded, not a proof of the machine.
 pub(super) fn major_version(system: &str) -> Option<u32> {
+    const LABEL: &str = "ProductVersion:";
     let words: Vec<&str> = system.split_whitespace().collect();
     let labels: Vec<usize> = words
         .iter()
         .enumerate()
-        .filter(|(_, word)| **word == "ProductVersion:")
+        .filter(|(_, word)| word.starts_with(LABEL))
         .map(|(index, _)| index)
         .collect();
     let [label] = labels.as_slice() else {
         return None;
     };
-    let version = words.get(label + 1)?;
+    let attached = &words[*label][LABEL.len()..];
+    let version = if attached.is_empty() {
+        *words.get(label + 1)?
+    } else {
+        attached
+    };
     let parts: Vec<&str> = version.split('.').collect();
     let numeric = (1..=3).contains(&parts.len())
         && parts

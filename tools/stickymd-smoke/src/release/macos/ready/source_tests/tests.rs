@@ -309,18 +309,18 @@ fn a_package_or_binary_that_did_not_run_leaves_the_row_open() {
 #[test]
 fn filtered_or_inconsistent_counts_leave_the_row_open() {
     let mut filtered = good();
-    filtered.binaries[3].counts.filtered_out = 1;
+    filtered.binaries[3].counts.as_mut().unwrap().filtered_out = 1;
     not_tested(&verdicts(&filtered).0, "filtered");
     let mut uneven = good();
-    uneven.binaries[3].counts.ran += 1;
+    uneven.binaries[3].counts.as_mut().unwrap().ran += 1;
     not_tested(&verdicts(&uneven).0, "are not the");
 }
 
 #[test]
 fn a_recorded_failure_is_a_fail() {
     let mut failing = good();
-    failing.binaries[2].counts.failed = 1;
-    failing.binaries[2].counts.ran += 1;
+    failing.binaries[2].counts.as_mut().unwrap().failed = 1;
+    failing.binaries[2].counts.as_mut().unwrap().ran += 1;
     failed(&verdicts(&failing).0, "a test failed");
     let mut exited = good();
     exited.exit = Exit::Code(101);
@@ -400,15 +400,15 @@ fn s06_holds_on_its_explicit_run_only() {
 fn a_binary_that_lists_tests_but_ran_none_is_not_a_pass() {
     let mut silent = good();
     let run = &mut silent.binaries[0];
-    run.counts = Counts::default();
+    run.counts = Some(Counts::default());
     for case in &mut run.cases {
         case.outcome = CaseOutcome::NotRun;
     }
     not_tested(&verdicts(&silent).0, "listed but did not run");
     let mut ignored = good();
     ignored.binaries[0].cases[0].outcome = CaseOutcome::Ignored;
-    ignored.binaries[0].counts.passed -= 1;
-    ignored.binaries[0].counts.ignored += 1;
+    ignored.binaries[0].counts.as_mut().unwrap().passed -= 1;
+    ignored.binaries[0].counts.as_mut().unwrap().ignored += 1;
     not_tested(&verdicts(&ignored).0, "its listing says ignored=false");
     let mut contradicted = good();
     contradicted.binaries[0].cases[0].outcome = CaseOutcome::Failed;
@@ -515,16 +515,16 @@ fn contradictory_or_overflowing_counts_are_refused() {
             .contains("contradicts")
     );
     let mut wrapped = good();
-    wrapped.binaries[0].counts = Counts {
+    wrapped.binaries[0].counts = Some(Counts {
         ran: 0,
         passed: u64::MAX,
         ignored: 1,
         ..Counts::default()
-    };
+    });
     not_tested(&verdicts(&wrapped).0, "are not the");
     // Review round 3, NEEDS_VERIFICATION: a measured test alone breaks only the sum.
     let mut measured = good();
-    measured.binaries[0].counts.measured = 1;
+    measured.binaries[0].counts.as_mut().unwrap().measured = 1;
     not_tested(&verdicts(&measured).0, "are not the");
 }
 
@@ -599,20 +599,22 @@ fn the_listed_targets_come_from_cargo_metadata() {
 #[test]
 fn the_ignored_table_names_each_test_once_and_the_explicit_runs_by_role() {
     use super::ignored::{IGNORED, Role, role};
-    let mut keys: Vec<(&str, &str, &str)> =
-        IGNORED.iter().map(|(p, t, n, _)| (*p, *t, *n)).collect();
+    let mut keys: Vec<(&str, &str, &str, &str)> = IGNORED
+        .iter()
+        .map(|(p, k, t, n, _)| (*p, *k, *t, *n))
+        .collect();
     keys.sort_unstable();
     assert!(keys.windows(2).all(|pair| pair[0] != pair[1]));
     for (item, tests) in EXPLICIT {
         for test in tests.iter().filter(|test| **test != SAME_KEY_TESTS[0]) {
             assert_eq!(
-                role("stickymd-mac", "stickymd-mac", test),
+                role(&explicit_target(), test),
                 Some(Role::Explicit(item)),
                 "{test}"
             );
         }
     }
-    for (_, _, name, role) in IGNORED {
+    for (_, _, _, name, role) in IGNORED {
         if let Role::Explicit(item) = role {
             assert!(
                 EXPLICIT
@@ -636,8 +638,8 @@ fn an_unclassified_ignored_test_leaves_the_default_tests_open() {
         ignored: true,
         outcome: CaseOutcome::Ignored,
     });
-    run.counts.ran += 1;
-    run.counts.ignored += 1;
+    run.counts.as_mut().unwrap().ran += 1;
+    run.counts.as_mut().unwrap().ignored += 1;
     not_tested(&verdicts(&receipt).0, "not classified");
 }
 
@@ -838,4 +840,128 @@ fn a_same_named_binary_elsewhere_or_a_cut_summary_is_refused() {
     assert!(output::target_of(&sections[0], &here, &[]).is_some());
     let cut = OUTPUT.replace("finished in 0.52s", "finished in 0.");
     assert!(output::sections(&cut).unwrap_err().contains("unreadable"));
+}
+
+/// Fix round, BLOCKER 4: a classified test moved to a target of the same package and name but
+/// another kind (a `lib` test moved to `tests/`) is a new ignored test until it is classified.
+#[test]
+fn an_ignored_test_moved_to_a_target_of_another_kind_is_unclassified() {
+    use super::ignored::{IGNORED, role};
+    let (package, kind, name, test, _) = IGNORED[0];
+    assert!(role(&target(package, kind, name), test).is_some());
+    let moved = if kind == "test" { "lib" } else { "test" };
+    assert!(role(&target(package, moved, name), test).is_none());
+}
+
+/// Fix round, BLOCKER 5: a test registered twice is listed twice; the explicit run, which runs
+/// it once, does not hold.
+#[test]
+fn an_explicit_test_listed_twice_does_not_hold() {
+    let mut doubled = good();
+    doubled.explicit[1].listed.push(S06_TESTS[0].to_owned());
+    assert!(matches!(s06(&doubled), Outcome::NotTested(ref r) if r.contains("twice")));
+}
+
+/// Fix round, BLOCKER 3: a `FAILED` printed before the output broke off (no summary, say past
+/// the size cap) is kept from the raw output to the verdict, and a `running 3 tests` in a failed
+/// test's captured output is not read as a control line.
+#[test]
+fn a_failure_printed_before_the_output_breaks_off_is_a_fail() {
+    let head =
+        "     Running unittests src/lib.rs (target/debug/deps/stickymd_package-492cd95c54ae281b)
+
+running 2 tests
+test json::tests::nested ... FAILED
+test json::tests::flat ... ok
+
+failures:
+
+---- json::tests::nested stdout ----
+running 3 tests
+test inner ... ok
+thread 'json::tests::nested' panicked at src/json.rs:9:5
+";
+    let library = target("stickymd-package", "lib", "stickymd_package");
+    let executables = vec![output::Executable {
+        target: library.clone(),
+        path: "/repo/target/debug/deps/stickymd_package-492cd95c54ae281b".into(),
+    }];
+    let listings = vec![output::Listed {
+        target: library.clone(),
+        all: vec!["json::tests::nested".into(), "json::tests::flat".into()],
+        ignored: Vec::new(),
+    }];
+    // Whole, the captured lines are not tests and the counts hold.
+    let whole = format!(
+        "{head}\nfailures:\n    json::tests::nested\n\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n"
+    );
+    let sections = output::sections(&whole).unwrap();
+    assert_eq!(sections[0].tests.len(), 2);
+    // Broken mid-stream by an unreadable turn (another binary starts before this result): the
+    // sections read so far are kept.
+    let tests_only = &head[..head.find("\nfailures:").unwrap()];
+    let broken = output::parse(&format!(
+        "{tests_only}\n     Running unittests src/main.rs (target/debug/deps/other-0123456789abcdef)\n"
+    ));
+    assert!(broken.error.is_some());
+    assert_eq!(broken.sections[0].tests[0].1, CaseOutcome::Failed);
+    // Cut short: an error, and the failure stays.
+    let parsed = output::parse(head);
+    assert!(parsed.error.is_some());
+    let (runs, _) = output::attribute(&parsed.sections, &executables, &[], &listings);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].counts, None);
+    let mut receipt = good();
+    let at = receipt
+        .binaries
+        .iter()
+        .position(|run| run.target == library)
+        .unwrap();
+    receipt.binaries[at] = runs[0].clone();
+    receipt.exit = Exit::Unknown;
+    receipt
+        .problems
+        .push("the test output was cut short".into());
+    failed(&verdicts(&receipt).0, "a test failed");
+    // Without a failure, a section without its summary never passes.
+    receipt.binaries[at].cases[0].outcome = CaseOutcome::Ok;
+    receipt.exit = Exit::Code(0);
+    receipt.problems.clear();
+    not_tested(&verdicts(&receipt).0, "printed no test result");
+}
+
+/// Fix round, SHOULD_FIX 9: schema 3 values have their forms: a SHA-256 for the driver, the
+/// runner's own run identity, and volumes only on P18-L08's run, as one of two words.
+#[test]
+fn schema_3_values_have_their_forms() {
+    let text = render(&good());
+    for (from, to) in [
+        (
+            format!("\"sha256\":\"{}\"", "1".repeat(64)),
+            "\"sha256\":\"1111\"".to_owned(),
+        ),
+        (
+            "\"run\":\"1764000000000000000-4242\"".to_owned(),
+            "\"run\":\"\"".to_owned(),
+        ),
+        (
+            "\"run\":\"1764000000000000000-4242\"".to_owned(),
+            "\"run\":\"yesterday\"".to_owned(),
+        ),
+        (
+            "\"temporary_volume\":\"case-insensitive\"".to_owned(),
+            "\"temporary_volume\":\"maybe\"".to_owned(),
+        ),
+    ] {
+        let bad = text.replacen(&from, &to, 1);
+        assert_ne!(bad, text, "{from}");
+        assert!(parse(&bad).is_err(), "{to}");
+    }
+    let mut s06 = good();
+    s06.explicit[1].image_volume = Some("case-sensitive".into());
+    assert!(
+        parse(&render(&s06))
+            .unwrap_err()
+            .contains("measures no volume")
+    );
 }

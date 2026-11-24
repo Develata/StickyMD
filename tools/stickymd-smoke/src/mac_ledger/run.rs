@@ -370,5 +370,10 @@ mod reading_tests {
             let error = refuse_links(root, &root.join(reserved)).unwrap_err();
             assert!(error.contains("source-test receipt or its lock"), "{error}");
         }
+        // Fix round, SHOULD_FIX 7: a reserved name in another case as an ancestor, before it
+        // exists: creating the ledger's parents would make it a directory.
+        let through = root.join("dist/evidence/Release-Source-Tests-MacOS.json/records.jsonl");
+        let error = refuse_links(root, &through).unwrap_err();
+        assert!(error.contains("source-test receipt or its lock"), "{error}");
     }
 }

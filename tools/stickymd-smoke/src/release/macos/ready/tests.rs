@@ -970,6 +970,12 @@ fn the_major_version_needs_one_complete_product_version() {
         None
     );
     assert_eq!(major_version("ProductVersion:"), None);
+    // Fix round, BLOCKER 6: a second label with its value attached is a second label.
+    assert_eq!(
+        major_version("ProductVersion: 27.2\nProductVersion:28.0"),
+        None
+    );
+    assert_eq!(major_version("ProductVersion:27.2"), Some(27));
     // Review round 4, BLOCKER 5: a second copy cut off after its label is still a second label.
     assert_eq!(
         major_version("ProductVersion: 27.2 BuildVersion: 27C55 ProductVersion:"),

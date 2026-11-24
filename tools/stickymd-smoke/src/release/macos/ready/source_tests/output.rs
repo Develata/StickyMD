@@ -210,62 +210,118 @@ fn add(a: Counts, b: Counts) -> Option<Counts> {
     })
 }
 
-/// The sections of one `cargo test`, in order. A section's group opens at its `running` line and
-/// closes at its result; a test binary holds exactly one group, a doc-test section one or more.
+/// What one `cargo test` printed, as far as it could be read: the sections in order (the last one
+/// possibly without its result) and, when the output broke off or could not be read, why. What was
+/// read before the break is kept, so a `FAILED` already printed is never lost (fix round,
+/// BLOCKER 3); a complete result is still needed for anything to pass.
+pub(in super::super) struct Parsed {
+    pub sections: Vec<Section>,
+    pub error: Option<String>,
+}
+
+/// The sections of one `cargo test`, or why the output cannot be read whole.
+#[cfg(test)]
 pub(in super::super) fn sections(output: &str) -> Result<Vec<Section>, String> {
-    let mut sections: Vec<Section> = Vec::new();
-    // The `running` count of the group open in the last section.
-    let mut open: Option<u64> = None;
-    for line in output.lines() {
-        if let Some(header) = header(line) {
-            if let Some(last) = sections
+    let parsed = parse(output);
+    match parsed.error {
+        Some(error) => Err(error),
+        None => Ok(parsed.sections),
+    }
+}
+
+/// The reader's state: the sections so far, the `running` count of the group open in the last
+/// one, and whether libtest is printing its failures (from `failures:` to the result line: the
+/// failed tests' captured output, which may hold any line, `running 3 tests` included).
+struct Reader {
+    sections: Vec<Section>,
+    open: Option<u64>,
+    diagnostics: bool,
+}
+
+impl Reader {
+    /// One line. A section's group opens at its `running` line and closes at its result; a test
+    /// binary holds exactly one group, a doc-test section one or more.
+    fn line(&mut self, line: &str) -> Result<(), String> {
+        if self.diagnostics && !line.starts_with("test result: ") {
+            return Ok(());
+        }
+        self.diagnostics = false;
+        if self.open.is_some() && line == "failures:" {
+            self.diagnostics = true;
+        } else if let Some(header) = header(line) {
+            if let Some(last) = self
+                .sections
                 .last()
-                .filter(|s| s.counts.is_none() || open.is_some())
+                .filter(|s| s.counts.is_none() || self.open.is_some())
             {
                 return Err(format!("{:?} printed no test result", last.header));
             }
-            sections.push(Section {
+            self.sections.push(Section {
                 header,
                 counts: None,
                 tests: Vec::new(),
             });
         } else if let Some(count) = running(line) {
-            match sections.last() {
+            match self.sections.last() {
                 Some(last)
-                    if open.is_none()
+                    if self.open.is_none()
                         && (last.counts.is_none() || matches!(last.header, Header::Doc(_))) =>
                 {
-                    open = Some(count);
+                    self.open = Some(count);
                 }
                 _ => return Err(format!("{line:?} outside a test binary's output")),
             }
         } else if !line.starts_with("test result: ")
             && let Some(test) = test_line(line)
         {
-            match sections.last_mut() {
-                Some(last) if open.is_some() => last.tests.push(test),
+            match self.sections.last_mut() {
+                Some(last) if self.open.is_some() => last.tests.push(test),
                 _ => return Err(format!("{line:?} outside a test binary's output")),
             }
         } else if line.starts_with("test result: ") {
-            let last = sections
-                .last_mut()
-                .filter(|_| open.is_some())
+            let ran = self
+                .open
+                .take()
                 .ok_or_else(|| format!("{line:?} outside a test binary's output"))?;
-            let group = result(line, open.take().expect("an open group"))?;
+            let last = self
+                .sections
+                .last_mut()
+                .ok_or_else(|| format!("{line:?} outside a test binary's output"))?;
+            let group = result(line, ran)?;
             last.counts = Some(match last.counts {
                 None => group,
                 Some(before) => add(before, group)
                     .ok_or_else(|| format!("{:?}: the counts overflow", last.header))?,
             });
         }
+        Ok(())
     }
-    if let Some(last) = sections
+}
+
+/// The sections of one `cargo test`, in order, as far as they can be read.
+pub(in super::super) fn parse(output: &str) -> Parsed {
+    let mut reader = Reader {
+        sections: Vec::new(),
+        open: None,
+        diagnostics: false,
+    };
+    for line in output.lines() {
+        if let Err(error) = reader.line(line) {
+            return Parsed {
+                sections: reader.sections,
+                error: Some(error),
+            };
+        }
+    }
+    let error = reader
+        .sections
         .last()
-        .filter(|s| s.counts.is_none() || open.is_some())
-    {
-        return Err(format!("{:?} printed no test result", last.header));
+        .filter(|s| s.counts.is_none() || reader.open.is_some())
+        .map(|last| format!("{:?} printed no test result", last.header));
+    Parsed {
+        sections: reader.sections,
+        error,
     }
-    Ok(sections)
 }
 
 /// A test executable Cargo built, by package, kinds, target name and file name.
@@ -413,8 +469,9 @@ pub(in super::super) fn attribute(
     let mut runs = Vec::new();
     let mut problems = Vec::new();
     for section in sections {
-        let (Some(target), Some(counts)) = (target_of(section, executables, doc), section.counts)
-        else {
+        // A section without its result is kept: its printed failures count (fix round,
+        // BLOCKER 3); with no summary it can never pass.
+        let Some(target) = target_of(section, executables, doc) else {
             problems.push(format!(
                 "{:?} is not one listed test target",
                 section.header
@@ -436,7 +493,7 @@ pub(in super::super) fn attribute(
         );
         runs.push(Run {
             target: target.clone(),
-            counts,
+            counts: section.counts,
             cases,
         });
     }

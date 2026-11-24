@@ -57,10 +57,15 @@ pub(crate) fn is_macos_source_test_path(root: &Path, path: &Path) -> bool {
     ]
     .iter()
     .any(|reserved| {
+        let folded = path_identity::normalize(&root.join(reserved)).to_lowercase();
         path_identity::reaches(root, path, reserved)
+            // The path itself or any of its ancestors: creating the parents of a path through a
+            // reserved name would make that name a directory (fix round, SHOULD_FIX 7).
             || (cfg!(target_os = "macos")
-                && path_identity::normalize(&root.join(path)).to_lowercase()
-                    == path_identity::normalize(&root.join(reserved)).to_lowercase())
+                && root
+                    .join(path)
+                    .ancestors()
+                    .any(|ancestor| path_identity::normalize(ancestor).to_lowercase() == folded))
     })
 }
 
