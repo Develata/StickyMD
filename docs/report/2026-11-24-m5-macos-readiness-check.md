@@ -382,3 +382,10 @@ R 才冻结。这一条取代上面“只审修复”的规则在合并上的作
 中断时保留已读部分；归类中的种类；显式行的重复；清单按次数保留；紧贴冒号的标签；上级目录的大小写比较；驱动摘要、运行身份与卷字段的格式；登记入口的
 候选比对。没有移除结果的：驱动命令中的 `--target-dir`（命令与判定用同一常量）、结束时的 Git 错误进 `problems`、L08 探测的位置。
 
+**验证**（本机 macOS 27.2.1 arm64，`6740860`，即合并进 `main` 的 #23 head）：`stickymd-smoke` 726 + 20 个测试、`stickymd-mac` 124 个测试通过；clippy
+在八个 macOS 包上与 `stickymd-smoke --target x86_64-pc-windows-msvc` 都无警告；fmt 通过；`phase 00`、`phase 16` 通过，`phase 18` 的最后一项只因 `main`
+上已有的 P18-P04 `NOT TESTED` 而失败。运行器的真实演练（不是正式收据）：schema 3 收据中 23 个目标的 2025 个测试逐个对上清单（1992 通过、33 忽略且都在
+归类表中、0 未运行，没有 `counts` 为 null 的目标），`problems` 为空，收据的 `run` 等于运行记录；same-key 2/2 与 S06 1/1 通过，两个测试自己测得临时卷
+`case-insensitive`、映像 `case-sensitive`；驱动在先清空的 `target/macos-driver` 中构建，摘要 `1ed0c204…` 等于 `target/macos-driver/release/stickymd-smoke`
+的；三项判定都为 PASS，开始与结束都干净。新测试在 Windows 上只做了 clippy，没有实际运行。
+
