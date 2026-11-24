@@ -305,6 +305,24 @@ impl Record {
                 recorded_unix,
             },
             "revocation" => {
+                // Exactly its fields: an unknown one (a batch, a schema) would be dropped by every
+                // reader and the withdrawal applied wider than it says.
+                if let Value::Object(fields) = &value
+                    && let Some(extra) = fields.keys().find(|key| {
+                        !matches!(
+                            key.as_str(),
+                            "kind"
+                                | "row"
+                                | "evidence_sha256"
+                                | "app_inputs"
+                                | "candidate_receipt_sha256"
+                                | "quote"
+                                | "recorded_unix"
+                        )
+                    })
+                {
+                    return Err(format!("a revocation has no field {extra}"));
+                }
                 let revoked = match (
                     optional_text(&value, "evidence_sha256")?,
                     inputs,

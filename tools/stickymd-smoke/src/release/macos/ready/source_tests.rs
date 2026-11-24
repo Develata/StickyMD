@@ -19,13 +19,13 @@ pub(super) use verdict::Verdicts;
 pub(super) use verdict::{Outcome, judge};
 
 /// Where the receipt lives; the runner replaces it, the gate reads it.
-pub(crate) const RECEIPT: &str = "dist/evidence/release-source-tests-macos.json";
+pub(crate) const RECEIPT: &str = crate::qualification::reserved_paths::MACOS_SOURCE_TEST_RECEIPT;
 
 /// Held exclusively by a run from before it retires the old receipt until it has published the
 /// new one, and shared by the gate while it reads the receipt: two runs never overlap, and the
 /// gate never reads a receipt a run is replacing. The operating system releases it when the
 /// holder exits, killed or not.
-pub(crate) const LOCK: &str = "dist/evidence/.release-source-tests-macos.lock";
+pub(crate) const LOCK: &str = crate::qualification::reserved_paths::MACOS_SOURCE_TEST_LOCK;
 
 /// The run's lock, created if need be, or `None` while another holder keeps it.
 #[cfg(target_os = "macos")]

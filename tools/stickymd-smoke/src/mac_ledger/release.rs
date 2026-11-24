@@ -369,6 +369,23 @@ mod tests {
         );
     }
 
+    /// Review round 2, SHOULD_FIX 6: a revocation is read with exactly its fields.
+    #[test]
+    fn a_revocation_with_another_field_is_refused() {
+        let held = Record::Release(record(ReleaseKind::Waiver, "R01")).line();
+        let revocation = Record::Revocation {
+            row: "R01".into(),
+            revoked: Revoked::Candidate(hex('c')),
+            quote: "撤回".into(),
+            recorded_unix: 6,
+        }
+        .line();
+        assert!(read_all(&format!("{held}\n{revocation}\n")).is_ok());
+        let widened = revocation.replacen("\"quote\"", "\"batch\":\"rc0\",\"quote\"", 1);
+        let error = read_all(&format!("{held}\n{widened}\n")).unwrap_err();
+        assert!(error.contains("no field batch"), "{error}");
+    }
+
     #[test]
     fn a_candidate_revocation_needs_a_release_record_of_its_row_before_it() {
         let held = [Record::Release(record(ReleaseKind::Waiver, "R01"))];

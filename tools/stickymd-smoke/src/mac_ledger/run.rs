@@ -91,10 +91,15 @@ fn refuse_links(ledger: &Path) -> Result<(), String> {
             ));
         }
     }
-    let name = ledger.file_name().and_then(|name| name.to_str());
-    if name.is_some_and(|name| name.starts_with("release-") || name.starts_with(".release-")) {
+    if let Ok(root) = crate::governance::find_repository_root(ledger.parent().unwrap_or(ledger))
+        && [ledger.to_path_buf(), lock_path(ledger)]
+            .iter()
+            .any(|path| {
+                crate::qualification::reserved_paths::is_macos_source_test_path(&root, path)
+            })
+    {
         return Err(format!(
-            "{} would occupy a release evidence file",
+            "{} would occupy the macOS source-test receipt or its lock",
             ledger.display()
         ));
     }

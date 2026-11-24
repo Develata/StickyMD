@@ -1,5 +1,6 @@
 //! The gate against bad samples: one good set of inputs, and samples that each change one fact.
 //! The two samples the contract names (plan 11 #macos-release-gate) are tests of their own.
+//! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 use super::judge::{Candidate, Inputs, Line, Read, Verdict, judge, ready};
 use super::rows::{Class, ROWS};

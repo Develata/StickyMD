@@ -1,5 +1,6 @@
 //! The receipt's format, the output reader, and the judgement against bad samples: each sample
 //! changes one recorded fact of a good receipt and must lose its PASS for that reason.
+//! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 use super::output::{self, Header};
 use super::*;
