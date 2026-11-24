@@ -278,8 +278,12 @@ mod live {
         let mut out = Vec::new();
         for pid in found.split_whitespace() {
             let pid: u32 = pid.parse().map_err(|_| format!("pgrep printed {pid:?}"))?;
-            if let Ok(path) = command("/bin/ps", &["-o", "comm=", "-p", &pid.to_string()]) {
-                out.push((pid, path.trim().to_owned()));
+            // ps exits 1 for a PID that is gone; any other failure is not a finding about the
+            // process and must not read as its exit (review #24 S1).
+            match command("/bin/ps", &["-o", "comm=", "-p", &pid.to_string()]) {
+                Ok(path) => out.push((pid, path.trim().to_owned())),
+                Err(e) if e.contains("exit status: 1") => {}
+                Err(e) => return Err(e),
             }
         }
         Ok(out)
@@ -462,6 +466,21 @@ mod live {
     /// while it ran, or its processes or translocation outlived it. None of these is a product
     /// result, so none is recorded as a FAIL (review F9, F11).
     pub(in crate::mac_gui) fn run(
+        app: &Path,
+        dir: &Path,
+        expected: &Bytes,
+        zip: Option<&Candidate>,
+        started: Instant,
+        row: &mut Row,
+    ) -> Result<Option<String>, String> {
+        // Every error of R03 is the infrastructure's (opening, observing, cleaning up); a product
+        // result is only ever a check. So any error stops the run unfinished, never a FAIL
+        // (review #24 S1).
+        Ok(attempt(app, dir, expected, zip, started, row)
+            .unwrap_or_else(|error| Some(format!("R03 could not complete: {error}"))))
+    }
+
+    fn attempt(
         app: &Path,
         dir: &Path,
         expected: &Bytes,

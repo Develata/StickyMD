@@ -97,6 +97,33 @@ mod live {
         same_bundle(expected, &bytes_of(app)?)
     }
 
+    /// The most a release ZIP may expand to; the package is a few megabytes.
+    const MAX_EXPANDED_BYTES: u64 = 256 * 1024 * 1024;
+
+    /// Refuses an archive with a member that is not a plain file or folder, or that expands past
+    /// [`MAX_EXPANDED_BYTES`], from its listing before anything is extracted (review #24 S2).
+    fn members_are_plain(zip: &Path) -> Result<(), String> {
+        let listing = run("/usr/bin/tar", &["-tvf", &text(zip)])?;
+        let mut expanded: u64 = 0;
+        for line in listing.lines().filter(|line| !line.is_empty()) {
+            if !matches!(line.chars().next(), Some('-' | 'd')) {
+                return Err(format!(
+                    "the ZIP holds a link or special member, refused before extracting: {line}"
+                ));
+            }
+            let size: u64 = line
+                .split_whitespace()
+                .nth(4)
+                .and_then(|size| size.parse().ok())
+                .ok_or_else(|| format!("the ZIP listing has no size: {line}"))?;
+            expanded = expanded.saturating_add(size);
+        }
+        if expanded > MAX_EXPANDED_BYTES {
+            return Err(format!("the ZIP expands to {expanded} bytes"));
+        }
+        Ok(())
+    }
+
     /// Refuses a tree holding anything but regular files and directories; links are not
     /// followed.
     fn regular_tree(directory: &Path) -> Result<(), String> {
@@ -132,6 +159,7 @@ mod live {
         stickymd_package::macos::listing::check_archive(&snapshot).map_err(|e| {
             format!("--zip is not a StickyMD release ZIP (plan 11 #macos-release-artifact): {e}")
         })?;
+        members_are_plain(&snapshot)?;
         let extracted = scratch.join("extracted");
         run(
             "/usr/bin/ditto",
@@ -164,6 +192,9 @@ mod live {
                 if crate::integrity::sha256(&archive)? != candidate.sha256 {
                     return Err("the ZIP changed after it was checked; refused before R03".into());
                 }
+                // The bytes are the ones checked; their members are checked again where they are
+                // extracted.
+                members_are_plain(&archive)?;
                 let top = APP.split('/').next().ok_or("release layout")?;
                 (archive, download.join(APP), download.join(top))
             }
@@ -189,7 +220,11 @@ mod live {
             return Err(format!("no bundle at {}", extracted.display()));
         }
         // The attribute is written to the tree only after it is known to hold no link, and `-s`
-        // acts on a link itself in any case.
+        // acts on a link itself in any case. The root itself must be a folder too.
+        let root = fs::symlink_metadata(&top).map_err(|e| format!("{}: {e}", top.display()))?;
+        if !root.file_type().is_dir() {
+            return Err(format!("{} is not a folder", top.display()));
+        }
         regular_tree(&top)?;
         run(
             "/usr/bin/xattr",
@@ -419,7 +454,7 @@ mod live {
             let scratch = session.path().join("scratch-link");
             fs::create_dir(&scratch).unwrap();
             let error = check(&zip, &expected, &scratch).unwrap_err();
-            assert!(error.contains("link or a special file"), "{error}");
+            assert!(error.contains("link or special member"), "{error}");
             assert!(
                 run(
                     "/usr/bin/xattr",
@@ -427,6 +462,23 @@ mod live {
                 )
                 .is_err(),
                 "the file outside was given a quarantine attribute"
+            );
+            // Review #24 S5: where R03 actually extracts and quarantines, a linked ZIP whose
+            // digest was somehow taken as checked is refused before anything is extracted.
+            let forged = Candidate {
+                path: zip.clone(),
+                sha256: crate::integrity::sha256(&zip).unwrap(),
+            };
+            let download = session.path().join("download-link");
+            let error = stage(&download, &app, &expected, Some(&forged), QUARANTINE).unwrap_err();
+            assert!(error.contains("link or special member"), "{error}");
+            assert!(!download.join("StickyMD").exists(), "nothing was extracted");
+            assert!(
+                run(
+                    "/usr/bin/xattr",
+                    &["-p", "com.apple.quarantine", &text(&outside)]
+                )
+                .is_err()
             );
         }
     }

@@ -59,7 +59,8 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         scenarios: Vec::new(),
     };
     let output = out.join("mac-resources.json");
-    crate::atomic_evidence::write(&output, evidence.json().as_bytes())?;
+    // Review B7: an earlier campaign's evidence is never replaced; the first write is exclusive.
+    crate::atomic_evidence::write_new(&output, evidence.json().as_bytes())?;
     for scenario in model::SCENARIOS {
         let name = scenario.name;
         evidence.scenarios.push(Vec::new());

@@ -98,6 +98,9 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     // Prevent output from ever targeting the supplied bundle or its canonical note directory.
     let out = crate::mac_common::output::guarded(&options.out, &app)?;
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    // Review B7: nothing of an earlier run (or a file named like one, such as the --zip input) is
+    // replaced; the first checkpoint is created exclusively.
+    refuse_earlier_evidence(&out)?;
     let environment = format!(
         "{{\"os\":{},\"architecture\":{},\"hv_vmm_present\":{},\"allow_host\":{},\"permissions\":{{\"accessibility\":{},\"post_event\":{},\"screen_recording\":{}}},\"unix_seconds\":{},\"fixture_config\":{},\"main_display\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}},\"coordinate_space\":\"main-display global CG points (DIP)\",\"keyboard_precondition\":\"ABC/US; not automatically verified\"}}",
         quote(&command("/usr/bin/sw_vers", &[])?),
@@ -132,6 +135,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         &rows,
         false,
         options.batch.as_deref(),
+        true,
     )?;
     events::install_cancel()?;
     let mut input = Injection::new(Events::new());
@@ -175,6 +179,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             &rows,
             false,
             options.batch.as_deref(),
+            false,
         )?;
     }
     cut_short |= input.stopped.is_some() || events::running().is_err();
@@ -185,6 +190,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         &rows,
         !cut_short,
         options.batch.as_deref(),
+        false,
     )?;
     if cut_short {
         println!(
@@ -268,6 +274,22 @@ pub(super) fn launch(
 /// of an interrupted run is never taken for a finished one (mac-ledger records only finished runs).
 /// Schema 2 is the first whose `finished` only this driver's rules set, and the first that names
 /// the batch the run was started for; mac-ledger records no older schema.
+/// Refuses an --out holding a `mac-gui.json` or an attachment name this driver writes.
+fn refuse_earlier_evidence(out: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(out).map_err(|e| format!("{}: {e}", out.display()))? {
+        let name = entry.map_err(|e| e.to_string())?.file_name();
+        let name = name.to_string_lossy();
+        if name == "mac-gui.json" || name.ends_with("-stderr.log") || name.starts_with("R03-") {
+            return Err(format!(
+                "{} already holds {name}; each run needs an --out of its own",
+                out.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `first`: the run's first checkpoint, created exclusively; later ones replace only it.
 fn save(
     out: &Path,
     environment: &str,
@@ -275,6 +297,7 @@ fn save(
     rows: &[Row],
     finished: bool,
     batch: Option<&str>,
+    first: bool,
 ) -> Result<(), String> {
     let batch = batch.map_or_else(String::new, |b| format!(",\"batch\":{}", quote(b)));
     // The candidate ZIP R03 opened; mac-ledger records it with R03 alone.
@@ -294,7 +317,12 @@ fn save(
         quote(&hash.driver),
         rows.iter().map(Row::json).collect::<Vec<_>>().join(",")
     );
-    crate::atomic_evidence::write(&out.join("mac-gui.json"), json.as_bytes())
+    let path = out.join("mac-gui.json");
+    if first {
+        crate::atomic_evidence::write_new(&path, json.as_bytes())
+    } else {
+        crate::atomic_evidence::write(&path, json.as_bytes())
+    }
 }
 fn one(
     app: &Path,
@@ -381,7 +409,7 @@ fn one(
         let ms = input.backend.started.elapsed().as_millis() as u64;
         match fs::read(session.path().join(name)) {
             Ok(bytes) => {
-                crate::atomic_evidence::write(&target, &bytes)?;
+                crate::atomic_evidence::write_new(&target, &bytes)?;
                 row.trace.push(Trace {
                     ms,
                     event: format!(

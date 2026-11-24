@@ -1,8 +1,11 @@
-//! Where `mac-gui`, `mac-logout` and `mac-resources` may write their evidence (review F6): never
-//! inside the bundle under test or its note directory, and never inside the mac-gui ledger,
-//! which only `mac-ledger` writes (plan 11 #phase-16-macos-host). The drivers run in the VM,
-//! outside any checkout, so the ledger is recognised by its path's last components rather than
-//! by a repository root; aliases are resolved first, so a symlinked spelling is caught too.
+//! Where `mac-gui`, `mac-logout` and `mac-resources` may write their evidence (review F6, #24
+//! B6): never inside the bundle under test, the note directory a portable bundle uses beside
+//! itself, the installed version's Note Roots (`~/Library/Application Support/StickyMD/`, plan
+//! 05 #note-root, whichever key), or the mac-gui ledger, which only `mac-ledger` writes (plan 11
+//! #phase-16-macos-host). Both sides are resolved through their existing ancestors (links
+//! included), and paths are compared without regard to case, as a case-insensitive volume does;
+//! refusing more on a case-sensitive one is the safe direction. The drivers run in the VM,
+//! outside any checkout, so the ledger is recognised by its path's last components.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
 use std::path::{Component, Path, PathBuf};
@@ -31,19 +34,56 @@ pub(crate) fn resolve(path: &Path) -> Result<PathBuf, String> {
     Ok(resolved)
 }
 
-/// Whether `out` (resolved) lies in a directory named like the mac-gui ledger's.
-fn in_ledger(out: &Path) -> bool {
-    let ledger = Path::new(crate::qualification::reserved_paths::MAC_GUI_LEDGER);
-    out.ancestors().any(|ancestor| ancestor.ends_with(ledger))
+/// A path's components, lowercased, for a comparison that ignores case.
+fn folded(path: &Path) -> Vec<String> {
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+        .collect()
 }
 
-/// The evidence directory for `out`, refused when it reaches the canonical bundle `app`, its
-/// note directory or the mac-gui ledger.
+/// Whether `out` lies in `protected` (both resolved), ignoring case.
+fn within(out: &Path, protected: &Path) -> bool {
+    folded(out).starts_with(&folded(protected))
+}
+
+/// Whether `out` (resolved) lies in a directory named like the mac-gui ledger's, ignoring case.
+fn in_ledger(out: &Path) -> bool {
+    let ledger = folded(Path::new(
+        crate::qualification::reserved_paths::MAC_GUI_LEDGER,
+    ));
+    out.ancestors()
+        .any(|ancestor| folded(ancestor).ends_with(&ledger))
+}
+
+/// The evidence directory for `out`, refused when it reaches the canonical bundle `app`, a Note
+/// Directory the product may use for it, or the mac-gui ledger.
 pub(crate) fn guarded(out: &Path, app: &Path) -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .ok_or("HOME is unset; the installed version's Note Roots cannot be protected")?;
+    guarded_in(out, app, Path::new(&home))
+}
+
+fn guarded_in(out: &Path, app: &Path, home: &Path) -> Result<PathBuf, String> {
     let out = resolve(out)?;
-    let note = app.parent().ok_or("bundle has no parent")?.join("note");
-    if out.starts_with(app) || out.starts_with(&note) {
-        return Err("evidence cannot be inside the input bundle or its note directory".into());
+    let protected = [
+        (app.to_path_buf(), "the input bundle"),
+        (
+            app.parent().ok_or("bundle has no parent")?.join("note"),
+            "the portable note directory",
+        ),
+        (
+            home.join("Library/Application Support/StickyMD"),
+            "the installed version's Note Roots",
+        ),
+    ];
+    for (path, what) in protected {
+        if within(&out, &resolve(&path)?) {
+            return Err(format!(
+                "evidence cannot be inside {what} ({})",
+                path.display()
+            ));
+        }
     }
     if in_ledger(&out) {
         return Err(
@@ -85,5 +125,46 @@ mod tests {
             assert!(guarded(&good, &app).is_ok(), "{}", good.display());
         }
         assert!(guarded(&root.join("a/../b"), &app).is_err());
+    }
+
+    /// Review B6: the installed Note Root, a protected directory that is itself a link, and a
+    /// spelling in another case are all refused.
+    #[test]
+    fn the_installed_note_root_a_linked_note_and_another_case_are_refused() {
+        let session = crate::mac_common::session::Session::new().unwrap();
+        let root = session.path();
+        let home = root.join("home");
+        let installed = home.join("Library/Application Support/StickyMD/StickyMD/note");
+        std::fs::create_dir_all(&installed).unwrap();
+        let applications = root.join("Applications");
+        let app = applications.join("StickyMD.app");
+        std::fs::create_dir_all(&app).unwrap();
+        for bad in [
+            installed.join("out"),
+            home.join("Library/Application Support/StickyMD/Other/note/out"),
+            home.join("library/application support/stickymd/StickyMD/note/out"),
+            root.join("repo/dist/EVIDENCE/Mac-GUI-Ledger/run"),
+        ] {
+            let error = guarded_in(&bad, &app, &home).unwrap_err();
+            assert!(
+                error.contains("cannot be inside"),
+                "{}: {error}",
+                bad.display()
+            );
+        }
+        // A portable bundle whose note directory is a link to elsewhere: the target is protected.
+        let elsewhere = root.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let portable = root.join("portable");
+        std::fs::create_dir_all(portable.join("StickyMD.app")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, portable.join("note")).unwrap();
+        let error = guarded_in(
+            &elsewhere.join("out"),
+            &portable.join("StickyMD.app"),
+            &home,
+        )
+        .unwrap_err();
+        assert!(error.contains("portable note directory"), "{error}");
+        assert!(guarded_in(&root.join("out"), &app, &home).is_ok());
     }
 }
