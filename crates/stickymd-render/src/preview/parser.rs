@@ -202,16 +202,14 @@ impl ConvertContext<'_> {
                     output.push(BlockNode::DisplayMath(self.math_node(only, math)));
                 } else {
                     // Comrak also unescapes the pipes of the paragraph it splits off above a
-                    // table's header row: that table follows on the very next line, with no
-                    // blank line between them.
+                    // table's header row: that table starts on the very next line. Comrak's own
+                    // line numbers say so even past an isolated `\r`, where the byte ranges of
+                    // `SourceMap` do not hold.
+                    let last_line = node.data.borrow().sourcepos.end.line;
                     self.pipes_unescaped = node.next_sibling().is_some_and(|next| {
-                        matches!(next.data.borrow().value, NodeValue::Table(_))
-                            && source_range
-                                .zip(self.source_range(next))
-                                .and_then(|(paragraph, table)| {
-                                    self.source.get(paragraph.end..table.start)
-                                })
-                                .is_some_and(|gap| gap.matches('\n').count() == 1)
+                        let next = next.data.borrow();
+                        matches!(next.value, NodeValue::Table(_))
+                            && next.sourcepos.start.line == last_line + 1
                     });
                     let content = self.convert_inlines(node, depth);
                     self.pipes_unescaped = false;
@@ -1007,6 +1005,11 @@ mod tests {
         // A blank line before the table: Comrak did not split this paragraph off it, so the
         // range stays Comrak's (an escape that starts a text omits its backslash everywhere).
         assert_eq!(starts("p\n\\|x\n\n| h |\n| - |"), [Some("|x".to_owned())]);
+        // An isolated `\r` only after the table does not stop the paragraph above it.
+        assert_eq!(
+            starts("p\n\\|x\n| h |\n| - |\r| y |")[0],
+            Some("\\|x".to_owned())
+        );
         assert_eq!(
             starts("| h |\n| - |\n| \\|x |\n| \\|y |"),
             [Some("\\|x".to_owned()), Some("\\|y".to_owned())]

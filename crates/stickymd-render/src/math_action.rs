@@ -290,6 +290,25 @@ mod tests {
         assert_eq!(pass("\\(x\\) and \\(y\\)").change_count(), 2);
     }
 
+    /// Step 1 can shrink a document below the Preview's node limit, but the original is parsed
+    /// too when anything joins, so an original over the limit is refused with the parse error,
+    /// before any change.
+    #[test]
+    fn phase11b_math_action_reports_an_original_over_the_node_limit() {
+        let text = "$$a\n=\nb$$\n\n".repeat(50_001);
+        let snapshot = stickymd_core::DocumentSnapshot {
+            text: std::sync::Arc::from(text.as_str()),
+            generation: stickymd_core::Generation::initial(),
+            line_ending: stickymd_core::LineEnding::Lf,
+        };
+        assert!(matches!(
+            super::run_math_action(&snapshot, None),
+            Err(super::SemanticConversionError::Parse(
+                super::PreviewParseError::NodeLimit { .. }
+            ))
+        ));
+    }
+
     /// An invalid scope is refused before either step parses, so a document over the node limit
     /// still reports the scope.
     #[test]
@@ -346,6 +365,12 @@ mod tests {
             "$$a\n=\n<custom-tag>\nb$$",
             "$$a\n# H\n=\nb$$",
             "[p]: /p\n$$a\n# H\n=\nb$$",
+            // Fourth review: an ATX heading below the `=`, one between the opener and the
+            // join, and a quote marker that only the raw source holds. Step 1 takes `$$`
+            // formulas from Comrak's nodes alone (USER 2026-11-25), so none of them joins.
+            "$$a\n=\n# b$$",
+            "[p]: /p\n$$open\n# H\nprose\n=\nnext$$",
+            "> $$a\n=\n> b$$",
         ] {
             assert_eq!(pass(text), None, "{text:?}");
             // Step 2 still converts the original text.
@@ -362,6 +387,10 @@ mod tests {
             ("[p]: /p\n$$a\n=\nb$$", "[p]: /p\n$$a=b$$"),
             ("$$a\n=\nb\n=\nc$$", "$$a=b=c$$"),
             ("- $$a\n  =\n  b$$", "- $$a=b$$"),
+            // With Setext off Comrak reads the last line as the item's lazy continuation, so
+            // this is one formula; joining completes it inside the item (USER 2026-11-25).
+            ("- $$a\n  =\nb$$", "- $$a=b$$"),
+            ("> $$a\n=\nb$$", "> $$a=b$$"),
         ] {
             assert_eq!(pass(text).as_deref(), Some(joined), "{text:?}");
         }
@@ -544,8 +573,7 @@ mod tests {
     /// clicks that each follow a timed parse of the same document (so a stall
     /// slows both alike):
     ///
-    /// - regression: the click median is at most 12 parse medians (10 until the
-    ///   Comrak 1.2 upgrade, USER 2026-11-25). The ratio
+    /// - regression: the click median is at most 10 parse medians. The ratio
     ///   removes the host's speed, so a fast machine catches waste too;
     /// - fluency: the nearest-rank p95 (the 95th sample) stays under 100 ms.
     ///   Up to five samples may exceed it, so a stall of a shared CI host that
@@ -582,7 +610,7 @@ mod tests {
             "phase11b math_action_1mib_1000_math parse_median={parse:?} median_over_parse={:.2}",
             median.as_secs_f64() / parse.as_secs_f64()
         );
-        assert!(median <= parse * 12, "median={median:?} parse={parse:?}");
+        assert!(median <= parse * 10, "median={median:?} parse={parse:?}");
         assert!(p95 < Duration::from_millis(100), "p95={p95:?}");
     }
 

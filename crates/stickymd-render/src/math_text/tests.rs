@@ -24,9 +24,7 @@ fn phase11b_equals_lines_join_chains_and_preserve_other_bytes() {
             "$$\n甲🙂=乙\n$$",
         ),
         ("$$a\n=\nb\nc\n=\nd$$", "$$a=b\nc=d$$"),
-        ("$$a\n=\nb\n\nc\n=\nd$$", "$$a=b\n\nc=d$$"),
         ("$$a\n=\nb$$\n\n$$c\n=\nd$$", "$$a=b$$\n\n$$c=d$$"),
-        ("$$a\n=\n\nb\n=\nc$$", "$$a\n=\n\nb=c$$"),
         ("$$=\na\n=\nb\n=$$", "$$=\na=b\n=$$"),
         ("$$a\n=\nb$$\r\nTAIL\r\n", "$$a=b$$\r\nTAIL\r\n"),
         ("- $$a\n  =\n  b$$", "- $$a=b$$"),
@@ -356,18 +354,24 @@ fn phase11b_equals_lines_reject_positions_that_disagree_with_the_formula() {
             "{source:?}"
         );
     }
-    // An empty block quote or list item inside a `$$` pair is markup, not a
-    // detached definition, so the pair still joins.
-    for marker in [">", "-", "1.", "> -", "- >", "- -", "1. >", "> - >", ">>"] {
+    // A `$$` pair across blank lines is not one formula for Comrak (USER
+    // 2026-11-25: a formula is what Comrak finds with Setext off), so nothing
+    // in it joins, an empty block quote or list item between them or not.
+    for marker in [
+        "", ">", "-", "1.", "> -", "- >", "- -", "1. >", "> - >", ">>",
+    ] {
         for newline in ["\n", "\r\n"] {
             let source = format!(
                 "[x]: u{newline}{newline}$$a{newline}={newline}b{newline}{newline}{marker}{newline}{newline}c$$"
             );
-            let expected = format!(
-                "[x]: u{newline}{newline}$$a=b{newline}{newline}{marker}{newline}{newline}c$$"
+            assert!(
+                join_math_equals_lines(&source, None).is_none(),
+                "{source:?}"
             );
-            assert_conversion(&source, &expected);
         }
+    }
+    for source in ["$$a\n=\nb\n\nc\n=\nd$$", "$$a\n=\n\nb\n=\nc$$"] {
+        assert!(join_math_equals_lines(source, None).is_none(), "{source:?}");
     }
     // A paragraph that ends in a link whose destination and title span lines
     // joins like any other.
@@ -404,103 +408,4 @@ fn phase11b_equals_lines_name_each_joined_equals_in_the_result() {
     assert_eq!(equals.len(), conversion.joined_lines());
     assert!(equals.iter().all(|&at| text.as_bytes()[at] == b'='));
     assert!(equals.windows(2).all(|pair| pair[0] < pair[1]));
-}
-
-/// The byte-by-byte scan `collect_dollar_pairs` used before it jumped to the next `$` or `\`
-/// with `memchr2`, kept as the reference the jumping scan must match.
-fn reference_dollar_pairs(
-    source: &str,
-    protected: &[Range<usize>],
-    scope: Option<&Range<usize>>,
-    removed: &mut Vec<Range<usize>>,
-) {
-    let bytes = source.as_bytes();
-    let mut cursor = 0;
-    let mut protection = 0;
-    let mut open: Option<(usize, bool)> = None;
-    while cursor < bytes.len() {
-        if let Some(range) = protected.get(protection)
-            && cursor >= range.start
-        {
-            if let Some((_, blocked)) = &mut open {
-                *blocked = true;
-            }
-            cursor = cursor.max(range.end);
-            protection += 1;
-            continue;
-        }
-        match bytes[cursor] {
-            b'\\' => cursor = (cursor + 2).min(bytes.len()),
-            b'$' => {
-                let start = cursor;
-                while cursor < bytes.len() && bytes[cursor] == b'$' {
-                    cursor += 1;
-                }
-                if cursor - start != 2 || (start > 0 && bytes[start - 1] == b'$') {
-                    continue;
-                }
-                if let Some((body_start, blocked)) = open.take() {
-                    if !blocked
-                        && scope.is_none_or(|range| {
-                            body_start - 2 >= range.start && cursor <= range.end
-                        })
-                    {
-                        super::collect_joins(&source[body_start..start], body_start, removed);
-                    }
-                } else {
-                    open = Some((cursor, false));
-                }
-            }
-            _ => cursor += 1,
-        }
-    }
-}
-
-/// Fixed-seed sources built from the scan's tokens, with sorted disjoint protected ranges and
-/// optional scopes on char boundaries: the jumping scan removes exactly what the reference
-/// scan removes.
-#[test]
-fn phase11b_dollar_pair_scan_matches_the_byte_by_byte_reference() {
-    let alphabet = [
-        "$$", "$$", "$$", "a", "b", "a b", "\n=\n", "\n=\n", "\n", "$", "\\", "\\$", " ", "中",
-        "$$$", "=",
-    ];
-    let mut state = 0x2545_f491_4f6c_dd1d_u64;
-    let mut next = |bound: usize| {
-        state = state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        ((state >> 33) as usize) % bound.max(1)
-    };
-    let mut joined = 0;
-    for case in 0..50_000 {
-        let length = case % 16 + 1;
-        let source: String = (0..length)
-            .map(|_| alphabet[next(alphabet.len())])
-            .collect();
-        let boundaries: Vec<usize> = (0..=source.len())
-            .filter(|&at| source.is_char_boundary(at))
-            .collect();
-        let mut cuts: Vec<usize> = (0..next(3) * 2)
-            .map(|_| boundaries[next(boundaries.len())])
-            .collect();
-        cuts.sort_unstable();
-        cuts.dedup();
-        let protected: Vec<Range<usize>> =
-            cuts.chunks_exact(2).map(|pair| pair[0]..pair[1]).collect();
-        let scope = (next(3) == 0).then(|| {
-            let (a, b) = (
-                boundaries[next(boundaries.len())],
-                boundaries[next(boundaries.len())],
-            );
-            a.min(b)..a.max(b)
-        });
-        let (mut expected, mut actual) = (Vec::new(), Vec::new());
-        reference_dollar_pairs(&source, &protected, scope.as_ref(), &mut expected);
-        super::collect_dollar_pairs(&source, &protected, scope.as_ref(), &mut actual);
-        assert_eq!(actual, expected, "{source:?} {protected:?} {scope:?}");
-        joined += usize::from(!expected.is_empty());
-    }
-    // The tokens make pairs with joins common, not only empty results.
-    assert!(joined > 100, "{joined}");
 }

@@ -117,7 +117,7 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   [报告](../report/2026-11-12-math-button-equals-first.md)）→ 数学公式 `$` 按钮。上一节的
   步骤顺序与“仅 `$$` 块”范围由本节取代，其余预期不变。
 - Preconditions：USER 的 `\[` / `\rho'(g^{op})(y)` / `=` / `\rho(g^{op})(y).` / `\]` 原文；多行
-  `\(...\)` 与 `$...$`；列表内公式；公式外的 `标题\n=\n正文`；被空行切断的 `\[`；引用块、
+  `\(...\)` 与 `$...$`；列表内公式；公式外的 `标题\n=\n正文`；被空行切断的 `\[` 与 `$$`（`$$` 以 Comrak 的公式节点为准，USER 2026-11-25）；引用块、
   链接、代码、表格内的公式；紧贴另一个 `$` 的 `\$$a\n=\nb$$`；从块的第二行起、各行缩进不同的
   多行公式（Comrak 0.56 之前会报错结束列）；同一行的两个多行公式；段首有链接引用定义的段落
   （Comrak 0.59 时位置整体错位，1.0 起正确）；结束行上的 closer 前有转义的反斜杠（`\\$`、
@@ -136,11 +136,11 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   `phase11b_equals_lines_scope_requires_a_complete_latex_formula`、
   `phase11b_equals_lines_locate_misreported_multiline_formula_ends`、
   `phase11b_equals_lines_reject_positions_that_disagree_with_the_formula`、
-  `crates/stickymd-render/src/math_text/tests.rs:308` `phase11b_equals_lines_join_formulas_after_reference_definitions`、
-  `crates/stickymd-render/src/math_text/tests.rs:290` `phase11b_equals_lines_locate_closers_after_escaped_backslashes`、
-  `crates/stickymd-render/src/math_text/tests.rs:398` `phase11b_equals_lines_name_each_joined_equals_in_the_result`、
+  `crates/stickymd-render/src/math_text/tests.rs:306` `phase11b_equals_lines_join_formulas_after_reference_definitions`、
+  `crates/stickymd-render/src/math_text/tests.rs:288` `phase11b_equals_lines_locate_closers_after_escaped_backslashes`、
+  `crates/stickymd-render/src/math_text/tests.rs:402` `phase11b_equals_lines_name_each_joined_equals_in_the_result`、
   `phase11b_equals_lines_leave_tables_whole`，`semantic_conversion` 的
-  `crates/stickymd-render/src/preview/semantic_conversion.rs:379` `phase11b_conversion_after_reference_definitions_leaves_titles`，`math_action` 的 `crates/stickymd-render/src/math_action.rs:324` `phase11b_math_action_drops_joins_the_preview_reads_outside_text`（Setext 标题之后的引用定义、缩进代码、HTML 块与行内代码中的 `=`，`=` 的下一行开始定义、缩进代码或 HTML 块，以及跨过 ATX 标题的 `$$` 配对，都不连接；引用定义之后的公式与连续等号仍连接）、`crates/stickymd-render/src/math_action.rs:299` `phase11b_math_action_refuses_an_invalid_scope_before_parsing`（无效选区在解析前拒绝），以及 `flow/editor` 的
+  `crates/stickymd-render/src/preview/semantic_conversion.rs:379` `phase11b_conversion_after_reference_definitions_leaves_titles`，`math_action` 的 `crates/stickymd-render/src/math_action.rs:340` `phase11b_math_action_drops_joins_the_preview_reads_outside_text`（Setext 标题之后的引用定义、缩进代码、HTML 块与行内代码中的 `=`，`=` 的下一行开始定义、缩进代码或 HTML 块，以及跨过 ATX 标题的 `$$` 配对，都不连接；引用定义之后的公式与连续等号仍连接）、`crates/stickymd-render/src/math_action.rs:315` `phase11b_math_action_refuses_an_invalid_scope_before_parsing`（无效选区在解析前拒绝）、`crates/stickymd-render/src/math_action.rs:297` `phase11b_math_action_reports_an_original_over_the_node_limit`（原文超过 Preview 节点上限时报错，不改动），以及 `flow/editor` 的
   `phase11b_math_button_joins_equals_before_recognizing_latex_formulas`（含两次点击）、
   `phase11b_math_button_maps_scope_through_equals_then_delimiters`、
   `phase11b_math_button_refuses_a_result_it_would_change_again`、
@@ -148,8 +148,8 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   `math_action` 的 `phase11b_performance_math_action_one_mib`（1 MiB、1000 个需两步的公式，
   每个单元另含公式外的裸 `=` 行与一个段首有引用定义的段落；计时为 Flow 调用的同一函数：
   一次处理加提交前的再次处理，不含提交；不计时运行 3 轮后计时 100 轮，每轮先解析同一文档一次：
-  按钮中位数不超过解析中位数的 12 倍（USER 2026-11-25 由 10 倍调整），nearest-rank p95 `< 100 ms`，即最多 5 个样本可超出）与
-  `crates/stickymd-render/src/math_action.rs:593` `phase11b_performance_math_action_stays_linear_after_reference_definitions`（附加诊断，
+  按钮中位数不超过解析中位数的 10 倍，nearest-rank p95 `< 100 ms`，即最多 5 个样本可超出）与
+  `crates/stickymd-render/src/math_action.rs:619` `phase11b_performance_math_action_stays_linear_after_reference_definitions`（附加诊断，
   不属于 plan 07 的两项检查：23,717 个段首有引用定义的段落，按钮小于同一文档单次 Comrak 解析的 12 倍）由现有 Phase 11-B
   Release 基线任务运行；实测值连同所用提交与原始
   输出记录在[报告](../report/2026-11-12-math-button-equals-first.md)末节；Comrak 1.2 上的复测见

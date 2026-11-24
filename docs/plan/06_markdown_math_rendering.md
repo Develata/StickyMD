@@ -95,6 +95,8 @@ Preview 呈现：
 - inline HTML → inline-code 风格显示原始文本。
 - block HTML → code-block 风格显示原始文本。
 - 必须保留用户原文。
+- 例外（USER 2026-11-25 接受）：Comrak 1.x 把块内容中的孤立 `\r` 统一为 `\n`，所以 Raw HTML 原文块与
+  代码块里的孤立 `\r` 在 Preview 中显示为换行，对象复制（含复制侧条）得到 `\n`；文档本身不变。
 
 ---
 
