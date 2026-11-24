@@ -547,7 +547,8 @@ mod tests {
     /// clicks that each follow a timed parse of the same document (so a stall
     /// slows both alike):
     ///
-    /// - regression: the click median is at most 10 parse medians. The ratio
+    /// - regression: the click median is at most 12 parse medians (10 until the
+    ///   Comrak 1.2 upgrade, USER 2026-11-25). The ratio
     ///   removes the host's speed, so a fast machine catches waste too;
     /// - fluency: the nearest-rank p95 (the 95th sample) stays under 100 ms.
     ///   Up to five samples may exceed it, so a stall of a shared CI host that
@@ -584,7 +585,7 @@ mod tests {
             "phase11b math_action_1mib_1000_math parse_median={parse:?} median_over_parse={:.2}",
             median.as_secs_f64() / parse.as_secs_f64()
         );
-        assert!(median <= parse * 10, "median={median:?} parse={parse:?}");
+        assert!(median <= parse * 12, "median={median:?} parse={parse:?}");
         assert!(p95 < Duration::from_millis(100), "p95={p95:?}");
     }
 

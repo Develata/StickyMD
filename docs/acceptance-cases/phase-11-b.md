@@ -148,7 +148,7 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   `math_action` 的 `phase11b_performance_math_action_one_mib`（1 MiB、1000 个需两步的公式，
   每个单元另含公式外的裸 `=` 行与一个段首有引用定义的段落；计时为 Flow 调用的同一函数：
   一次处理加提交前的再次处理，不含提交；不计时运行 3 轮后计时 100 轮，每轮先解析同一文档一次：
-  按钮中位数不超过解析中位数的 10 倍，nearest-rank p95 `< 100 ms`，即最多 5 个样本可超出）与
+  按钮中位数不超过解析中位数的 12 倍（USER 2026-11-25 由 10 倍调整），nearest-rank p95 `< 100 ms`，即最多 5 个样本可超出）与
   `crates/stickymd-render/src/math_action.rs:593` `phase11b_performance_math_action_stays_linear_after_reference_definitions`（附加诊断，
   不属于 plan 07 的两项检查：23,717 个段首有引用定义的段落，按钮小于同一文档单次 Comrak 解析的 12 倍）由现有 Phase 11-B
   Release 基线任务运行；实测值连同所用提交与原始
