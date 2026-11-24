@@ -150,3 +150,22 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   Release 基线任务运行；实测值连同所用提交与原始
   输出记录在[报告](../report/2026-11-12-math-button-equals-first.md)末节。
 - Manual：真实按钮在 Windows 与 macOS 上仍为 `NOT TESTED`；Windows 需桌面回归。
+
+<a id="math-known-limits"></a>
+## 2026-11-19 数学按钮已知限制
+
+- Plan / feature：plan 07 `semantic-math-delimiter-conversion` 的“已知限制”（USER 2026-11-19
+  接受；含孤立 `\r` 即整篇放弃，USER 2026-11-24 批准）→ 数学公式 `$` 按钮。
+- Preconditions：含后面不接 `\n` 的 `\r` 的文档：第一个 `\r` 之前的普通 `\(...\)`；混合换行下
+  标题中的公式加下一行行内代码中的 `\(y\)`；以孤立 `\r` 分行、含等号行的 `\[...\]` 与
+  `$$...$$`；普通 `\(...\)`；普通 `\[...\]`；其余全为 `\n`、只在文末有一个孤立 `\r` 的文档；
+  选区只含 `\(x\)`、孤立 `\r` 在选区外（`\r\r\n`）。对照：同样内容改用 `\n` 或 `\r\n`。
+- Action：对整篇或所给选区执行 `$` action 的同一纯函数 `run_math_action`。
+- Expected：含孤立 `\r` 的输入均为完整 no-op，字节不变；对照输入照常转换，行内代码不变。超过
+  大小上限的文本即使含孤立 `\r` 也照旧报 `SourceTooLarge`（由同文件的超限测试锁定）。
+- Failure signals：任何字节被改写；对照输入不转换；panic。
+- Automated entry：`phase11b_` selector 包含 `math_action` 的
+  `phase11b_math_action_leaves_documents_with_an_isolated_cr_unchanged`；文本参数内的等号行
+  （`$$\text{a`、`=`、`b}$$` 三行连接为 `$$\text{a=b}$$`）由
+  `phase11b_math_action_joins_an_equals_line_inside_a_text_argument` 锁定。
+- Manual：不需要。

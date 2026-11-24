@@ -13,7 +13,8 @@
 use super::super::identity;
 use super::output::{self, Executable, Listed, Section};
 use super::{
-    Driver, EXPLICIT, Exit, Explicit, Host, PACKAGES, RECEIPT, RUN, Receipt, Side, Target,
+    DRIVER_TARGET, Driver, EXPLICIT, Exit, Explicit, Host, PACKAGES, RECEIPT, RUN, Receipt, Side,
+    Target,
 };
 use super::{command, driver_command, explicit_command, explicit_target};
 use std::io::{ErrorKind, Read, Write};
@@ -205,10 +206,32 @@ fn driver_path(stdout: &str) -> Result<std::path::PathBuf, String> {
     }
 }
 
-/// Builds the `mac-gui` driver on R as documented and hashes what Cargo built.
+/// Of the explicit run's `tests`, each name the binary's own listing holds, as often as it holds
+/// it: a test registered twice is listed twice (fix round, BLOCKER 5).
+fn listed_of(all: &[String], tests: &[&str]) -> Vec<String> {
+    all.iter()
+        .filter(|name| tests.contains(&name.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// Empties the driver's own build directory: nothing a build of another commit left there can be
+/// reused (fix round, BLOCKER 1).
+fn empty_driver_target(root: &Path) -> Result<(), String> {
+    let directory = root.join(DRIVER_TARGET);
+    if super::refuse_link(&directory)? {
+        std::fs::remove_dir_all(&directory)
+            .map_err(|error| format!("cannot empty {}: {error}", directory.display()))?;
+    }
+    Ok(())
+}
+
+/// Builds the `mac-gui` driver on R as documented, into its own emptied directory, and hashes
+/// what Cargo built there.
 fn driver(root: &Path) -> Driver {
     let command = driver_command();
     let sha256 = (|| -> Result<String, String> {
+        empty_driver_target(root)?;
         let (environment, argv) = command.split_first().ok_or("an empty driver command")?;
         let (key, value) = environment
             .split_once('=')
@@ -369,13 +392,7 @@ fn explicit(
         listed: listings
             .iter()
             .find(|l| l.target == explicit_target())
-            .map(|l| {
-                tests
-                    .iter()
-                    .filter(|test| l.all.iter().any(|name| name == *test))
-                    .map(|test| (*test).to_owned())
-                    .collect()
-            })
+            .map(|l| listed_of(&l.all, tests))
             .unwrap_or_default(),
         exit: Exit::NotStarted,
         temporary_volume: None,
@@ -389,13 +406,12 @@ fn explicit(
     if merged.exit == Exit::NotStarted {
         return entry;
     }
-    let sections: Vec<Section> = match output::sections(&merged.output) {
-        Ok(sections) => sections,
-        Err(error) => {
-            problems.push(format!("the {item} output: {error}"));
-            return entry;
-        }
-    };
+    // What was read before any break is kept: a printed failure counts (fix round, BLOCKER 3).
+    let parsed = output::parse(&merged.output);
+    if let Some(error) = &parsed.error {
+        problems.push(format!("the {item} output: {error}"));
+    }
+    let sections: Vec<Section> = parsed.sections;
     let [only] = sections.as_slice() else {
         problems.push(format!(
             "the {item} run printed {} test results",
@@ -513,20 +529,18 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
     let argv = command();
     let merged = run_merged(root, &argv, None);
     problems.extend(merged.problem);
+    // What was read before any break is kept, attributed to listed names, so a printed failure
+    // survives output cut short; only a whole output can pass (fix round, BLOCKER 3).
     let binaries = if merged.exit == Exit::NotStarted {
         Vec::new()
     } else {
-        match output::sections(&merged.output) {
-            Ok(sections) => {
-                let (runs, more) = output::attribute(&sections, &executables, &doc, &listed);
-                problems.extend(more);
-                runs
-            }
-            Err(error) => {
-                problems.push(format!("the test output: {error}"));
-                Vec::new()
-            }
+        let parsed = output::parse(&merged.output);
+        if let Some(error) = parsed.error {
+            problems.push(format!("the test output: {error}"));
         }
+        let (runs, more) = output::attribute(&parsed.sections, &executables, &doc, &listed);
+        problems.extend(more);
+        runs
     };
     // P18-L08's tests report the volumes they measured into a file of this run's own directory;
     // without one the explicit run records no volumes, and the results already taken are still
@@ -556,10 +570,14 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
         problems.push(error);
     }
     let driver = driver(root);
-    let end = identity::capture(root).unwrap_or_else(|error| identity::Identity {
-        head: "UNKNOWN".to_owned(),
-        clean: false,
-        reason: Some(format!("the end identity could not be read: {error}")),
+    let end = identity::capture(root).unwrap_or_else(|error| {
+        // Kept where the operator reads it (fix round, SHOULD_FIX 8).
+        problems.push(format!("the end identity could not be read: {error}"));
+        identity::Identity {
+            head: "UNKNOWN".to_owned(),
+            clean: false,
+            reason: Some(error),
+        }
     });
     let receipt = Receipt {
         release_source: release,
@@ -603,10 +621,12 @@ mod tests {
         )
         .unwrap();
         assert!(super::recognize(&path).is_ok());
+        // A single valid JSON of another kind alone is refused too (fix round, SHOULD_FIX 10).
         for other in [
             "",
             "{\"kind\":\"automated\"}\n{\"kind\":\"automated\"}\n",
             "{}",
+            "{\"kind\":\"macos-release-source-test\"}",
         ] {
             std::fs::write(&path, other).unwrap();
             assert!(
@@ -644,6 +664,33 @@ mod tests {
                 .unwrap_err()
                 .contains("0 stickymd-smoke")
         );
+        // Fix round, SHOULD_FIX 10: the name alone, and the kind alone, each decide.
+        let lib = format!("{}\n{finished}\n", artifact("stickymd-smoke", "lib"));
+        assert!(super::driver_path(&lib).is_err());
+        let other = format!("{}\n{finished}\n", artifact("stickymd-mac", "bin"));
+        assert!(super::driver_path(&other).is_err());
+    }
+
+    /// Fix round, BLOCKER 5: the listing keeps a name as often as the binary lists it.
+    #[test]
+    fn the_listing_keeps_a_doubled_test_twice() {
+        let all = ["a::b", "a::b", "a::c"].map(str::to_owned);
+        assert_eq!(super::listed_of(&all, &["a::b"]), ["a::b", "a::b"]);
+    }
+
+    /// Fix round, BLOCKER 1: the driver's directory starts empty, whatever a build left there.
+    #[test]
+    fn the_driver_directory_is_emptied_before_the_build() {
+        let scratch = crate::release::temporary::TemporaryDirectory::new("driver-target").unwrap();
+        let root = scratch.path();
+        let stale = root
+            .join(super::DRIVER_TARGET)
+            .join("release/stickymd-smoke");
+        std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+        std::fs::write(&stale, "a build of another commit").unwrap();
+        super::empty_driver_target(root).unwrap();
+        assert!(!root.join(super::DRIVER_TARGET).exists());
+        super::empty_driver_target(root).unwrap();
     }
 
     /// Review round 3, B4: the volume report holds exactly one line for each volume.

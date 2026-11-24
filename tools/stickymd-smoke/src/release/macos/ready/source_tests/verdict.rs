@@ -156,7 +156,8 @@ fn main(receipt: &Receipt, targets: &[Target]) -> Outcome {
     // or a signal is a result, a process that never started or could not be followed is not
     // (review round 4).
     if let Some(run) = receipt.binaries.iter().find(|run| {
-        run.counts.failed > 0 || run.cases.iter().any(|c| c.outcome == CaseOutcome::Failed)
+        run.counts.is_some_and(|counts| counts.failed > 0)
+            || run.cases.iter().any(|c| c.outcome == CaseOutcome::Failed)
     }) {
         return Outcome::Fail(format!("{}: a test failed", named(&run.target)));
     }
@@ -217,20 +218,24 @@ fn main(receipt: &Receipt, targets: &[Target]) -> Outcome {
         return Outcome::NotTested(format!("no test binary of {package} ran"));
     }
     for run in &receipt.binaries {
-        if run.counts.filtered_out > 0 {
+        let Some(counts) = run.counts else {
+            return Outcome::NotTested(format!("{} printed no test result", named(&run.target)));
+        };
+        if counts.filtered_out > 0 {
             return Outcome::NotTested(format!("{} filtered tests out", named(&run.target)));
         }
-        if let Err(reason) = cases_agree(&run.counts, &run.cases) {
+        if let Err(reason) = cases_agree(&counts, &run.cases) {
             return Outcome::NotTested(format!("{}: {reason}", named(&run.target)));
         }
     }
     // Every test a listing marks ignored is classified, whatever form its `ignore` took in the
     // source (review round 4, BLOCKER 3).
     for run in &receipt.binaries {
-        if let Some(case) = run.cases.iter().find(|case| {
-            case.ignored
-                && ignored::role(&run.target.package, &run.target.name, &case.name).is_none()
-        }) {
+        if let Some(case) = run
+            .cases
+            .iter()
+            .find(|case| case.ignored && ignored::role(&run.target, &case.name).is_none())
+        {
             return Outcome::NotTested(format!(
                 "{} is ignored in {} but not classified; classify it first (plan 11)",
                 case.name,
@@ -292,6 +297,13 @@ fn explicit_run(entry: &Explicit, needs_volume: bool) -> Outcome {
     // (Cargo stops at the first failing binary) does not void this one (review round 4).
     let mut listed: Vec<&str> = entry.listed.iter().map(String::as_str).collect();
     listed.sort_unstable();
+    // A test registered twice is listed twice and `--exact` still runs one (fix round, BLOCKER 5).
+    if listed.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Outcome::NotTested(format!(
+            "stickymd-mac's binary lists a test of {} twice: {listed:?}",
+            entry.item
+        ));
+    }
     if listed != wanted {
         return Outcome::NotTested(format!(
             "stickymd-mac's binary lists {listed:?} of {wanted:?}"

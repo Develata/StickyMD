@@ -97,7 +97,7 @@ mod tests {
         let root = scratch.path();
         std::fs::create_dir_all(root.join(RECEIPT).parent().unwrap()).unwrap();
         assert!(matches!(read_receipt(root, false), Ok(Read::Missing(_))));
-        std::fs::write(root.join(RECEIPT), receipt_of("a")).unwrap();
+        std::fs::write(root.join(RECEIPT), receipt_of("3-3")).unwrap();
         assert!(
             matches!(read_receipt(root, false), Ok(Read::Invalid(reason)) if reason.contains("no run lock"))
         );
@@ -116,10 +116,10 @@ mod tests {
         let scratch = stickymd_package::temporary::TemporaryDirectory::new("receipt-run").unwrap();
         let root = scratch.path();
         std::fs::create_dir_all(root.join(RECEIPT).parent().unwrap()).unwrap();
-        std::fs::write(root.join(RECEIPT), receipt_of("old")).unwrap();
+        std::fs::write(root.join(RECEIPT), receipt_of("1-1")).unwrap();
         // The interrupted rerun: it takes the lock and records itself, then stops.
         let run = lock_for_run(root).unwrap().unwrap();
-        std::fs::write(root.join(RUN), "new\n").unwrap();
+        std::fs::write(root.join(RUN), "2-2\n").unwrap();
         drop(run);
         assert!(held(root));
         assert!(
@@ -131,9 +131,31 @@ mod tests {
             matches!(read_receipt(root, true), Ok(Read::Invalid(reason)) if reason.contains("no record"))
         );
         // The rerun that finishes writes its own receipt.
-        std::fs::write(root.join(RUN), "new\n").unwrap();
-        std::fs::write(root.join(RECEIPT), receipt_of("new")).unwrap();
+        std::fs::write(root.join(RUN), "2-2\n").unwrap();
+        std::fs::write(root.join(RECEIPT), receipt_of("2-2")).unwrap();
         assert!(matches!(read_receipt(root, true), Ok(Read::Present(_))));
+    }
+
+    /// Fix round, BLOCKER 2: an old record and its matching receipt, found without a lock; a rerun
+    /// creates the lock and stops before it records itself. The new lock does not make the old
+    /// pair count: the record went before the lock came.
+    #[test]
+    fn a_new_lock_does_not_revive_an_old_pair() {
+        let scratch =
+            stickymd_package::temporary::TemporaryDirectory::new("receipt-revive").unwrap();
+        let root = scratch.path();
+        std::fs::create_dir_all(root.join(RECEIPT).parent().unwrap()).unwrap();
+        std::fs::write(root.join(RUN), "1-1\n").unwrap();
+        std::fs::write(root.join(RECEIPT), receipt_of("1-1")).unwrap();
+        assert!(
+            matches!(read_receipt(root, false), Ok(Read::Invalid(reason)) if reason.contains("no run lock"))
+        );
+        let run = lock_for_run(root).unwrap().unwrap();
+        drop(run);
+        assert!(held(root));
+        assert!(
+            matches!(read_receipt(root, true), Ok(Read::Invalid(reason)) if reason.contains("no record"))
+        );
     }
 
     /// Review round 4: an error inspecting the path, other than its absence, stops the read.

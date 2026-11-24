@@ -96,7 +96,7 @@ pub(in super::super) fn render(receipt: &Receipt) -> String {
             format!(
                 "{{\"target\":{},\"counts\":{},\"cases\":{}}}",
                 target(&run.target),
-                counts(&run.counts),
+                optional(run.counts.as_ref(), counts),
                 cases(&run.cases)
             )
         })
@@ -198,7 +198,9 @@ fn read_exit(value: &Value, key: &str) -> Result<Exit, String> {
 
 fn read_driver(value: &Value) -> Result<Driver, String> {
     let sha256 = if exactly(value, &["command", "sha256"]).is_ok() {
-        Ok(string(value, "sha256")?)
+        let sha256 = string(value, "sha256")?;
+        crate::integrity::validate_hex(&sha256, 64, "the driver's SHA-256")?;
+        Ok(sha256)
     } else {
         exactly(value, &["command", "error"])?;
         Err(string(value, "error")?)
@@ -324,7 +326,7 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
             exactly(run, &["target", "counts", "cases"])?;
             Ok(Run {
                 target: read_target(run.field("target")?)?,
-                counts: read_counts(run.field("counts")?)?,
+                counts: nullable(run, "counts", read_counts)?,
                 cases: read_cases(run.field("cases")?)?,
             })
         })
@@ -349,6 +351,22 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
                     "image_volume",
                 ],
             )?;
+            let volume = |key: &str| -> Result<Option<String>, String> {
+                let found = nullable(entry, key, |v| v.string().map(str::to_owned))?;
+                // Only P18-L08's run measures volumes, and only as one of the two words (fix
+                // round, SHOULD_FIX 9).
+                match &found {
+                    Some(kind) if string(entry, "item")? != "same-key" => {
+                        Err(format!("{key} {kind:?} on a run that measures no volume"))
+                    }
+                    Some(kind)
+                        if !matches!(kind.as_str(), "case-insensitive" | "case-sensitive") =>
+                    {
+                        Err(format!("{key} {kind:?} is not a case behaviour"))
+                    }
+                    _ => Ok(found),
+                }
+            };
             Ok(Explicit {
                 item: string(entry, "item")?,
                 command: strings(entry, "command")?,
@@ -358,16 +376,25 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
                 cases: read_cases(entry.field("cases")?)?,
                 listed: strings(entry, "listed")?,
                 exit: read_exit(entry, "exit")?,
-                temporary_volume: nullable(entry, "temporary_volume", |v| {
-                    v.string().map(str::to_owned)
-                })?,
-                image_volume: nullable(entry, "image_volume", |v| v.string().map(str::to_owned))?,
+                temporary_volume: volume("temporary_volume")?,
+                image_volume: volume("image_volume")?,
             })
         })
         .collect::<Result<_, String>>()?;
     Ok(Receipt {
         release_source: string(&value, "release_source")?,
-        run: string(&value, "run")?,
+        run: {
+            // The runner's own form: start time in nanoseconds and process id (SHOULD_FIX 9).
+            let run = string(&value, "run")?;
+            let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+            if !run
+                .split_once('-')
+                .is_some_and(|(a, b)| digits(a) && digits(b))
+            {
+                return Err(format!("run {run:?} is not a run identity"));
+            }
+            run
+        },
         host: Host {
             product_name: string(host, "product_name")?,
             product_version: string(host, "product_version")?,

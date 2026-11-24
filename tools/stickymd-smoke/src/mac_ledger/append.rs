@@ -61,11 +61,22 @@ fn candidate(
     options: &Options,
     root: &Path,
 ) -> Result<crate::release::macos::promote::Resolved, String> {
+    candidate_with(options, |release| {
+        crate::release::macos::promote::resolve(root, release)
+    })
+}
+
+/// `candidate` with the resolver given: the record names the candidate the resolver gives now,
+/// and only if it is the one named as checked.
+fn candidate_with(
+    options: &Options,
+    resolve: impl Fn(&str) -> Result<crate::release::macos::promote::Resolved, String>,
+) -> Result<crate::release::macos::promote::Resolved, String> {
     let release = options
         .release
         .as_deref()
         .ok_or("--release-source missing")?;
-    let resolved = crate::release::macos::promote::resolve(root, release)
+    let resolved = resolve(release)
         .map_err(|e| format!("the macOS candidate for {release} does not resolve: {e}"))?;
     still_checked(
         release,
@@ -297,5 +308,29 @@ mod checked_tests {
         let error = super::still_checked("R", &b, Some(&a)).unwrap_err();
         assert!(error.contains(&format!("is now {b}, not {a}")), "{error}");
         assert!(super::still_checked("R", &a, Some(&a)).is_ok());
+    }
+
+    /// Fix round, SHOULD_FIX 10: through the entry that resolves the candidate for a record.
+    #[test]
+    fn the_recording_entry_refuses_a_candidate_other_than_the_one_checked() {
+        let resolved = |digest: &str| crate::release::macos::promote::Resolved {
+            app: "StickyMD.app".into(),
+            receipt_sha256: digest.to_owned(),
+            zip_sha256: "c".repeat(64),
+            executable_sha256: "d".repeat(64),
+            bundle_sha256: "e".repeat(64),
+            signing: "AD_HOC".into(),
+        };
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        let options = super::Options {
+            release: Some("1".repeat(40)),
+            candidate_sha256: Some(a.clone()),
+            ..super::Options::default()
+        };
+        let Err(error) = super::candidate_with(&options, |_| Ok(resolved(&b))) else {
+            panic!("another candidate was accepted");
+        };
+        assert!(error.contains(&format!("is now {b}, not {a}")), "{error}");
+        assert!(super::candidate_with(&options, |_| Ok(resolved(&a))).is_ok());
     }
 }

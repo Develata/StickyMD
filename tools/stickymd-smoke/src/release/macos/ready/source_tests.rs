@@ -38,11 +38,23 @@ pub(crate) const LOCK: &str = crate::qualification::reserved_paths::MACOS_SOURCE
 /// restored or left behind, no longer matches.
 pub(crate) const RUN: &str = crate::qualification::reserved_paths::MACOS_SOURCE_TEST_RUN;
 
-/// The run's lock, created if need be, or `None` while another holder keeps it.
+/// The run's lock, created if need be, or `None` while another holder keeps it. A lock that does
+/// not exist yet is created only after the run record is gone (and its removal synced): a record
+/// and receipt left without a lock never counted, and a new lock must not make them count, even
+/// if this run stops before it records itself (fix round, BLOCKER 2).
 #[cfg(target_os = "macos")]
 pub(super) fn lock_for_run(root: &std::path::Path) -> Result<Option<std::fs::File>, String> {
     let path = root.join(LOCK);
-    refuse_link(&path)?;
+    let marker = root.join(RUN);
+    if !refuse_link(&path)? && refuse_link(&marker)? {
+        std::fs::remove_file(&marker)
+            .map_err(|error| format!("cannot remove {}: {error}", marker.display()))?;
+        if let Some(parent) = marker.parent() {
+            std::fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| format!("cannot sync {}: {error}", parent.display()))?;
+        }
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -163,9 +175,15 @@ pub(super) fn command() -> Vec<String> {
     argv
 }
 
-/// How the release workflow and the README build the `mac-gui` driver; the runner builds it the
-/// same way on R and records the SHA-256 of what Cargo built (review round 4, BLOCKER 1). The
-/// first entry is the environment the build is given.
+/// Where the runner builds the `mac-gui` driver: its own directory, emptied before every build, so
+/// no cache another commit left can stand in for R's build (fix round, BLOCKER 1). The path is
+/// fixed because the bytes depend on it (the linker's UUID does): a rerun on the same checkout
+/// builds the same driver, and the VM runs use that file.
+pub(super) const DRIVER_TARGET: &str = "target/macos-driver";
+
+/// How the runner builds the `mac-gui` driver on R: the README's build, into `DRIVER_TARGET`; it
+/// records the SHA-256 of what Cargo built (review round 4, BLOCKER 1). The first entry is the
+/// environment the build is given.
 pub(super) fn driver_command() -> Vec<String> {
     [
         "CARGO_PROFILE_RELEASE_PANIC=unwind",
@@ -175,6 +193,8 @@ pub(super) fn driver_command() -> Vec<String> {
         "--release",
         "-p",
         "stickymd-smoke",
+        "--target-dir",
+        DRIVER_TARGET,
         "--message-format=json",
     ]
     .map(str::to_owned)
@@ -274,7 +294,9 @@ pub(super) struct Case {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Run {
     pub target: Target,
-    pub counts: Counts,
+    /// libtest's summary; `None` when the output stopped before it (a failure printed before
+    /// that is still kept in `cases`, fix round, BLOCKER 3).
+    pub counts: Option<Counts>,
     pub cases: Vec<Case>,
 }
 
@@ -382,12 +404,12 @@ pub(super) fn fixture(release: &str, expected: Vec<Target>) -> Receipt {
             let ignored = cases.iter().filter(|c| c.ignored).count() as u64;
             Run {
                 target: target.clone(),
-                counts: Counts {
+                counts: Some(Counts {
                     ran: cases.len() as u64,
                     passed: cases.len() as u64 - ignored,
                     ignored,
                     ..Counts::default()
-                },
+                }),
                 cases,
             }
         })
