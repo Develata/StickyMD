@@ -96,12 +96,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         hash.zip = Some(checked?);
     }
     // Prevent output from ever targeting the supplied bundle or its canonical note directory.
-    let out = output_path(&options.out)?;
-    if out.starts_with(&app)
-        || out.starts_with(app.parent().ok_or("bundle has no parent")?.join("note"))
-    {
-        return Err("evidence cannot be inside the input bundle or its note directory".into());
-    }
+    let out = crate::mac_common::output::guarded(&options.out, &app)?;
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     let environment = format!(
         "{{\"os\":{},\"architecture\":{},\"hv_vmm_present\":{},\"allow_host\":{},\"permissions\":{{\"accessibility\":{},\"post_event\":{},\"screen_recording\":{}}},\"unix_seconds\":{},\"fixture_config\":{},\"main_display\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}},\"coordinate_space\":\"main-display global CG points (DIP)\",\"keyboard_precondition\":\"ABC/US; not automatically verified\"}}",
@@ -269,31 +264,6 @@ pub(super) fn launch(
 }
 /// `path` made absolute with its existing part canonical; `..` is refused. W12's logout cases use
 /// it too.
-pub(super) fn output_path(path: &Path) -> Result<std::path::PathBuf, String> {
-    let absolute = std::path::absolute(path).map_err(|e| e.to_string())?;
-    if absolute
-        .components()
-        .any(|c| c == std::path::Component::ParentDir)
-    {
-        return Err("--out must not contain '..'".into());
-    }
-    let mut ancestor = absolute.as_path();
-    let mut missing = Vec::new();
-    while !ancestor.exists() {
-        missing.push(
-            ancestor
-                .file_name()
-                .ok_or("invalid output path")?
-                .to_owned(),
-        );
-        ancestor = ancestor.parent().ok_or("output has no existing ancestor")?;
-    }
-    let mut resolved = ancestor.canonicalize().map_err(|e| e.to_string())?;
-    for name in missing.into_iter().rev() {
-        resolved.push(name);
-    }
-    Ok(resolved)
-}
 /// Writes the evidence; `finished` is true only on the write after the last row, so a checkpoint
 /// of an interrupted run is never taken for a finished one (mac-ledger records only finished runs).
 /// Schema 2 is the first whose `finished` only this driver's rules set, and the first that names
@@ -403,20 +373,30 @@ fn one(
     } else {
         &["stderr.log"]
     };
+    // Each attachment this run made is named in its trace with its SHA-256; a file of the same
+    // name that an earlier run left in --out is not removed (it is not provably this tool's),
+    // and the trace says it is not this run's.
     let log = attachments.iter().try_for_each(|name| {
         let target = out.join(format!("{id}-{name}"));
+        let ms = input.backend.started.elapsed().as_millis() as u64;
         match fs::read(session.path().join(name)) {
-            Ok(bytes) => crate::atomic_evidence::write(&target, &bytes),
-            // An R03 attachment this run did not make: one left by an earlier run in the same
-            // --out must not pass for this run's. A removal that fails is recorded, not fatal.
+            Ok(bytes) => {
+                crate::atomic_evidence::write(&target, &bytes)?;
+                row.trace.push(Trace {
+                    ms,
+                    event: format!(
+                        "attachment {} sha256={}",
+                        target.display(),
+                        crate::integrity::sha256_bytes(&bytes)?
+                    ),
+                });
+                Ok(())
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                if id == "R03"
-                    && let Err(e) = fs::remove_file(&target)
-                    && e.kind() != std::io::ErrorKind::NotFound
-                {
+                if target.exists() {
                     row.trace.push(Trace {
-                        ms: input.backend.started.elapsed().as_millis() as u64,
-                        event: format!("stale {} not removed: {e}", target.display()),
+                        ms,
+                        event: format!("{} is from an earlier run, not this one", target.display()),
                     });
                 }
                 Ok(())

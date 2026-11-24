@@ -32,7 +32,8 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         return Err("Accessibility permission missing: Hidden chooses the menu-bar item through Accessibility; grant it to this binary, then measure".into());
     }
     let fixture = model::fixture();
-    let out = options.out.clone();
+    // The output may not reach the input bundle, its note directory or the mac-gui ledger.
+    let out = crate::mac_common::output::guarded(&options.out, &app)?;
     let [pixel_width, pixel_height, point_width, point_height] = native::display()?;
     let mut evidence = Evidence {
         environment: environment()?,

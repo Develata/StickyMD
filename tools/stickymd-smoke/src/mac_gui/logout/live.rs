@@ -282,12 +282,7 @@ fn coordinate(options: &Options) -> Result<(), String> {
             options.case
         ))
     });
-    let out = crate::mac_gui::runner::output_path(&out)?;
-    if out.starts_with(&app)
-        || out.starts_with(app.parent().ok_or("bundle has no parent")?.join("note"))
-    {
-        return Err("evidence cannot be inside the input bundle or its note directory".into());
-    }
+    let out = crate::mac_common::output::guarded(&out, &app)?;
     if out.join("mac-gui.json").exists() {
         return Err(format!(
             "{} already holds a mac-gui.json; each run needs its own --out",
