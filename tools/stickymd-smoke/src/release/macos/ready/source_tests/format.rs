@@ -84,7 +84,7 @@ pub(in super::super) fn render(receipt: &Receipt) -> String {
         .iter()
         .map(|entry| {
             format!(
-                "{{\"item\":{},\"command\":{},\"tests\":{},\"target\":{},\"counts\":{},\"cases\":{},\"exit_code\":{},\"temporary_volume\":{}}}",
+                "{{\"item\":{},\"command\":{},\"tests\":{},\"target\":{},\"counts\":{},\"cases\":{},\"exit_code\":{},\"temporary_volume\":{},\"image_volume\":{}}}",
                 text(&entry.item),
                 list(&entry.command),
                 list(&entry.tests),
@@ -93,6 +93,7 @@ pub(in super::super) fn render(receipt: &Receipt) -> String {
                 cases(&entry.cases),
                 code(entry.exit_code),
                 optional(entry.temporary_volume.as_ref(), |v: &String| text(v)),
+                optional(entry.image_volume.as_ref(), |v: &String| text(v)),
             )
         })
         .collect();
@@ -299,6 +300,7 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
                     "cases",
                     "exit_code",
                     "temporary_volume",
+                    "image_volume",
                 ],
             )?;
             Ok(Explicit {
@@ -312,6 +314,7 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
                 temporary_volume: nullable(entry, "temporary_volume", |v| {
                     v.string().map(str::to_owned)
                 })?,
+                image_volume: nullable(entry, "image_volume", |v| v.string().map(str::to_owned))?,
             })
         })
         .collect::<Result<_, String>>()?;

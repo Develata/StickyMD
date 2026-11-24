@@ -36,7 +36,40 @@ pub(super) fn hides_changes(listing: &str) -> bool {
     })
 }
 
+/// Environment entries that point Git at another repository, work tree, index or object store
+/// than the checkout the tools read (review round 3, B1).
+const REDIRECTIONS: [&str; 6] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+];
+
+/// The first redirection `set` reports as present in the environment.
+fn redirection(set: impl Fn(&str) -> bool) -> Option<&'static str> {
+    REDIRECTIONS.into_iter().find(|name| set(name))
+}
+
 pub(super) fn capture(root: &Path) -> Result<Identity, String> {
+    if let Some(set) = redirection(|name| std::env::var_os(name).is_some()) {
+        return Err(format!(
+            "the environment sets {set}, which points Git elsewhere than this checkout; unset it"
+        ));
+    }
+    let top = git(root, &["rev-parse", "--show-toplevel"])?;
+    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if !same(Path::new(top.trim()), root) {
+        return Err(format!(
+            "Git's work tree is {}, not {}",
+            top.trim(),
+            root.display()
+        ));
+    }
     let head = git(root, &["rev-parse", "--verify", "HEAD^{commit}"])?
         .trim()
         .to_ascii_lowercase();
@@ -87,5 +120,18 @@ mod tests {
         assert!(!super::hides_changes("H Cargo.toml\nH src/lib.rs\n"));
         assert!(super::hides_changes("H Cargo.toml\nh src/lib.rs\n"));
         assert!(super::hides_changes("S src/lib.rs\n"));
+    }
+
+    /// Review round 3, B1: each variable that points Git at another repository, work tree, index
+    /// or object store is refused on its own; others are not.
+    #[test]
+    fn each_git_redirection_is_refused_alone() {
+        for name in super::REDIRECTIONS {
+            assert_eq!(super::redirection(|set| set == name), Some(name));
+        }
+        assert_eq!(
+            super::redirection(|set| set == "GIT_NO_REPLACE_OBJECTS"),
+            None
+        );
     }
 }

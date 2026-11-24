@@ -135,8 +135,31 @@ pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
                 ),
             )
         }
-        (Read::Missing(reason) | Read::Invalid(reason), _)
-        | (_, Read::Missing(reason) | Read::Invalid(reason)) => (
+        // Without R's target list the receipt cannot be shown complete, but a failure it records
+        // is still a failure (review round 3, S2); the explicit runs do not need the list.
+        (Read::Present(receipt), Read::Missing(reason) | Read::Invalid(reason)) => {
+            let verdicts = source_tests::judge(receipt, inputs.release, &[]);
+            let tests = match verdicts.tests {
+                source_tests::Outcome::Fail(failure) => {
+                    line("source-tests", Verdict::Fail, failure)
+                }
+                _ => line("source-tests", Verdict::NotTested, reason.clone()),
+            };
+            (
+                tests,
+                from_outcome(
+                    "same-key",
+                    verdicts.same_key,
+                    "both same-key tests passed on R: the case-insensitive temporary volume and the case-sensitive image",
+                ),
+                from_outcome(
+                    "P16-S06",
+                    verdicts.s06,
+                    "the exFAT test passed on R in its explicit run",
+                ),
+            )
+        }
+        (Read::Missing(reason) | Read::Invalid(reason), _) => (
             line("source-tests", Verdict::NotTested, reason.clone()),
             line("same-key", Verdict::NotTested, reason.clone()),
             line("P16-S06", Verdict::NotTested, reason.clone()),
@@ -404,7 +427,13 @@ fn translocation(inputs: &Inputs<'_>, item: &str, row: &str) -> Line {
         Ok(found) => found,
         Err(line) => return line,
     };
-    let found = match ledger(&scope(inputs, records, candidate), row) {
+    let scope = scope(inputs, records, candidate);
+    // A FAIL recorded on the candidate's bytes in this batch, under any identity, stays a FAIL,
+    // whatever another group shows (review round 3, S1).
+    if let Some(reason) = failure(&scope, row) {
+        return line(item, Verdict::Fail, reason);
+    }
+    let found = match ledger(&scope, row) {
         Ledger::Fail(reason) => return line(item, Verdict::Fail, reason),
         Ledger::Clean(..) => "a PASS on the candidate's bundle exists, but",
         Ledger::None(_) => "no evidence binds it:",

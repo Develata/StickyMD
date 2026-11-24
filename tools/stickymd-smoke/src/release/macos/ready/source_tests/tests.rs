@@ -129,9 +129,9 @@ fn the_output_is_read_per_binary_and_doc_test() {
             .map(|section| section.header.clone())
             .collect::<Vec<_>>(),
         [
-            Header::Binary("stickymd_package-492cd95c54ae281b".into()),
-            Header::Binary("stickymd_package-8fbe866c61699946".into()),
-            Header::Binary("cli_exit-837ce8600e84f4d0".into()),
+            Header::Binary("target/debug/deps/stickymd_package-492cd95c54ae281b".into()),
+            Header::Binary("target/debug/deps/stickymd_package-8fbe866c61699946".into()),
+            Header::Binary("target/debug/deps/cli_exit-837ce8600e84f4d0".into()),
             Header::Doc("stickymd_package".into()),
         ]
     );
@@ -173,12 +173,10 @@ fn sections_are_named_by_what_cargo_listed_and_nothing_else() {
     let executables = vec![
         output::Executable {
             target: target("stickymd-package", "lib", "stickymd_package"),
-            file: "stickymd_package-492cd95c54ae281b".into(),
             path: "target/debug/deps/stickymd_package-492cd95c54ae281b".into(),
         },
         output::Executable {
             target: target("stickymd-package", "bin", "stickymd-package"),
-            file: "stickymd_package-8fbe866c61699946".into(),
             path: "target/debug/deps/stickymd_package-8fbe866c61699946".into(),
         },
     ];
@@ -321,6 +319,10 @@ fn a_recorded_failure_is_a_fail() {
     let mut killed = good();
     killed.exit_code = None;
     failed(&verdicts(&killed).0, "None");
+    // Review round 3, NEEDS_VERIFICATION: a failed test alone, the counts left as they are.
+    let mut case = good();
+    case.binaries[2].cases[0].outcome = CaseOutcome::Failed;
+    failed(&verdicts(&case).0, "a test failed");
 }
 
 #[test]
@@ -371,7 +373,7 @@ fn the_same_key_run_must_be_stickymd_mac_s_two_tests_on_the_probed_volume() {
     );
     let mut volume = good();
     volume.explicit[0].temporary_volume = None;
-    not_tested(&verdicts(&volume).1, "not shown case-insensitive");
+    not_tested(&verdicts(&volume).1, "did not measure");
 }
 
 /// Decision (a): P16-S06 holds on its explicit run of the exFAT test, exactly one pass.
@@ -442,7 +444,10 @@ test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fini
         &sections[0].tests,
     );
     assert_eq!(cases[1].outcome, CaseOutcome::NotRun);
-    assert_eq!(unlisted, ["a::c", "a::d"]);
+    assert_eq!(
+        unlisted,
+        ["a::c ran but is not listed", "a::d ran but is not listed"]
+    );
 }
 
 fn root() -> std::path::PathBuf {
@@ -515,29 +520,37 @@ fn contradictory_or_overflowing_counts_are_refused() {
         ..Counts::default()
     };
     not_tested(&verdicts(&wrapped).0, "are not the");
+    // Review round 3, NEEDS_VERIFICATION: a measured test alone breaks only the sum.
+    let mut measured = good();
+    measured.binaries[0].counts.measured = 1;
+    not_tested(&verdicts(&measured).0, "are not the");
 }
 
+/// Review round 3, NEEDS_VERIFICATION: each count condition of an explicit run alone, the
+/// cases left as they are. An ignored or measured test needs no check of its own: with
+/// `ran == passed == 2` the sum leaves none, so those samples break the sum alone.
 #[test]
 fn the_same_key_run_is_exactly_its_two_tests() {
-    for counts in [
-        Counts {
-            ran: 3,
-            passed: 2,
-            ignored: 1,
-            filtered_out: 40,
-            ..Counts::default()
-        },
-        Counts {
-            ran: 3,
-            passed: 2,
-            measured: 1,
-            filtered_out: 40,
-            ..Counts::default()
-        },
+    let counts = |ran, passed, ignored, measured| Counts {
+        ran,
+        passed,
+        ignored,
+        measured,
+        filtered_out: 40,
+        ..Counts::default()
+    };
+    for (counts, breaks) in [
+        (counts(3, 2, 1, 0), "ran"),
+        (counts(2, 1, 1, 0), "passed"),
+        (counts(2, 2, 1, 0), "the sum, by an ignored test"),
+        (counts(2, 2, 0, 1), "the sum, by a measured test"),
     ] {
         let mut receipt = good();
         receipt.explicit[0].counts = Some(counts);
-        not_tested(&verdicts(&receipt).1, "not exactly");
+        assert!(
+            matches!(verdicts(&receipt).1, Outcome::NotTested(ref reason) if reason.contains("not exactly")),
+            "{breaks}"
+        );
     }
 }
 
@@ -941,7 +954,11 @@ fn every_ignored_test_of_the_eight_packages_is_classified() {
                 .to_string_lossy()
                 .replace('\\', "/");
             for (at, line) in lines.iter().enumerate() {
-                if !line.trim_start().starts_with("#[ignore") {
+                // Plain `#[ignore]` and a conditional `#[cfg_attr(…, ignore…)]` (review round 3, S5).
+                let attribute = line.trim_start();
+                let ignores = attribute.starts_with("#[ignore")
+                    || (attribute.starts_with("#[cfg_attr(") && attribute.contains("ignore"));
+                if !ignores {
                     continue;
                 }
                 let name = lines[at..lines.len().min(at + 6)]
@@ -965,19 +982,21 @@ fn every_ignored_test_of_the_eight_packages_is_classified() {
         found, listed,
         "classify every ignored test before changing this list"
     );
+    // Each ignored test an explicit run carries has exactly its role (review round 3, S5).
     for (item, tests) in EXPLICIT {
-        for test in tests {
+        let role = match item {
+            "same-key" => "P18-L08, explicit run",
+            "P16-S06" => "P16-S06, explicit run",
+            other => panic!("no role for {other}"),
+        };
+        for test in tests.iter().filter(|test| **test != SAME_KEY_TESTS[0]) {
             let name = test.rsplit("::").next().unwrap();
-            let role = IGNORED
+            let found: Vec<&str> = IGNORED
                 .iter()
-                .find(|(_, n, _)| *n == name)
-                .map(|(_, _, r)| *r);
-            if *test != SAME_KEY_TESTS[0] {
-                assert!(
-                    role.is_some_and(|r| r.contains(item.trim_start_matches("same-key"))),
-                    "{test}"
-                );
-            }
+                .filter(|(_, n, _)| *n == name)
+                .map(|(_, _, r)| *r)
+                .collect();
+            assert_eq!(found, [role], "{test}");
         }
     }
 }
@@ -1004,4 +1023,72 @@ fn the_same_key_tests_exist_where_the_command_names_them() {
             .unwrap()
             .starts_with("#[ignore")
     );
+}
+
+/// Review round 3, B3: a test printed twice (first ok, then FAILED), listed twice, or listed
+/// ignored without being listed is a problem, never folded into its first entry.
+#[test]
+fn duplicate_or_unknown_names_are_problems_not_first_entries() {
+    let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+    let printed = vec![
+        ("a::b".to_owned(), CaseOutcome::Ok),
+        ("a::b".to_owned(), CaseOutcome::Failed),
+    ];
+    let (_, problems) = output::cases(&names(&["a::b"]), &[], &printed);
+    assert_eq!(problems, ["a::b is printed twice"]);
+    let (_, problems) = output::cases(&names(&["a::b", "a::b"]), &[], &[]);
+    assert_eq!(problems, ["a::b is listed twice"]);
+    let (_, problems) = output::cases(&names(&["a::b"]), &names(&["a::z"]), &[]);
+    assert_eq!(problems, ["a::z is listed ignored but not listed"]);
+}
+
+/// Review round 3, B4: P18-L08 holds only on both volumes as its tests measured them; each
+/// volume alone decides.
+#[test]
+fn the_same_key_run_needs_both_measured_volumes() {
+    let mut no_image = good();
+    no_image.explicit[0].image_volume = None;
+    not_tested(&verdicts(&no_image).1, "did not measure");
+    let mut sensitive_temporary = good();
+    sensitive_temporary.explicit[0].temporary_volume = Some("case-sensitive".into());
+    not_tested(&verdicts(&sensitive_temporary).1, "did not measure");
+    let mut insensitive_image = good();
+    insensitive_image.explicit[0].image_volume = Some("case-insensitive".into());
+    not_tested(&verdicts(&insensitive_image).1, "did not measure");
+}
+
+/// Review round 3, S2 and the single-fact rule: an explicit run fails on its exit code alone, on
+/// a failed test alone, and on a failure count alone.
+#[test]
+fn an_explicit_run_fails_on_each_recorded_failure_alone() {
+    let mut exited = good();
+    exited.explicit[1].exit_code = Some(101);
+    assert!(matches!(s06(&exited), Outcome::Fail(_)));
+    let mut case = good();
+    case.explicit[1].cases[0].outcome = CaseOutcome::Failed;
+    assert!(matches!(s06(&case), Outcome::Fail(_)));
+    let mut counted = good();
+    if let Some(counts) = &mut counted.explicit[1].counts {
+        counts.failed = 1;
+    }
+    assert!(matches!(s06(&counted), Outcome::Fail(_)));
+}
+
+/// Review round 3, S4: a binary is matched by its whole printed path, and a summary line cut
+/// short is not a result.
+#[test]
+fn a_same_named_binary_elsewhere_or_a_cut_summary_is_refused() {
+    let sections = output::sections(OUTPUT).unwrap();
+    let elsewhere = vec![output::Executable {
+        target: target("stickymd-package", "lib", "stickymd_package"),
+        path: "/other/target/release/stickymd_package-492cd95c54ae281b".into(),
+    }];
+    assert!(output::target_of(&sections[0], &elsewhere, &[]).is_none());
+    let here = vec![output::Executable {
+        target: target("stickymd-package", "lib", "stickymd_package"),
+        path: "/repo/target/debug/deps/stickymd_package-492cd95c54ae281b".into(),
+    }];
+    assert!(output::target_of(&sections[0], &here, &[]).is_some());
+    let cut = OUTPUT.replace("finished in 0.52s", "finished in 0.");
+    assert!(output::sections(&cut).unwrap_err().contains("unreadable"));
 }

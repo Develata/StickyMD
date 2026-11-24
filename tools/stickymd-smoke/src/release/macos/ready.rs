@@ -103,23 +103,8 @@ pub(in super::super) fn ready_command(
     let run_lock = source_tests::lock_for_reading(root)?;
     let receipt = match &run_lock {
         source_tests::Reading::Busy => Read::Missing("a source-test run is in progress".to_owned()),
-        source_tests::Reading::Free { .. } => {
-            let path = root.join(source_tests::RECEIPT);
-            source_tests::refuse_link(&path)?;
-            match std::fs::read_to_string(&path) {
-                Ok(text) => match source_tests::parse(&text) {
-                    Ok(receipt) => Read::Present(receipt),
-                    Err(error) => {
-                        Read::Invalid(format!("the source-test receipt is invalid: {error}"))
-                    }
-                },
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Read::Missing(
-                    "no source-test receipt: run release macos-source-tests on R".to_owned(),
-                ),
-                Err(error) => {
-                    Read::Invalid(format!("cannot read the source-test receipt: {error}"))
-                }
-            }
+        source_tests::Reading::Free { held, .. } => {
+            read_receipt(&root.join(source_tests::RECEIPT), *held)?
         }
     };
     let ledger_path = root
@@ -127,7 +112,7 @@ pub(in super::super) fn ready_command(
         .join("records.jsonl");
     // The same checks the ledger's writers and `plan` apply: every line, every revocation's
     // target, and one system per VM image (plan 11 #phase-16-macos-host).
-    let (ledger, _ledger_lock) = match crate::mac_ledger::read_whole(&ledger_path) {
+    let (ledger, _ledger_lock) = match crate::mac_ledger::read_whole(root, &ledger_path) {
         Ok((Some(text), held)) => (
             match crate::mac_ledger::record::read_all(&text).and_then(|records| {
                 crate::mac_ledger::decide::check_system(&records)?;
@@ -192,15 +177,23 @@ pub(in super::super) fn ready_command(
     if identity::capture(root)? != start {
         return Err("the checkout changed while it was checked; check again".to_owned());
     }
-    if let Read::Present(candidate) = &candidate {
-        let still = super::promote::resolve(root, &release)
-            .is_ok_and(|now| now.receipt_sha256 == candidate.receipt_sha256);
-        if !still {
-            return Err(
-                "the candidate changed or stopped resolving while it was checked; check again"
-                    .to_owned(),
-            );
-        }
+    // The candidate's whole state (absent, not resolving, or resolving to this receipt) must be
+    // the one judged; a promotion or repair meanwhile voids this check (review round 3, S6).
+    let state = |read: &Read<judge::Candidate>| match read {
+        Read::Present(candidate) => format!("present {}", candidate.receipt_sha256),
+        Read::Missing(_) => "missing".to_owned(),
+        Read::Invalid(_) => "invalid".to_owned(),
+    };
+    let now = match super::promote::receipt_present(root) {
+        Ok(true) => match super::promote::resolve(root, &release) {
+            Ok(resolved) => format!("present {}", resolved.receipt_sha256),
+            Err(_) => "invalid".to_owned(),
+        },
+        Ok(false) => "missing".to_owned(),
+        Err(_) => "invalid".to_owned(),
+    };
+    if now != state(&candidate) {
+        return Err("the candidate changed while it was checked; check again".to_owned());
     }
     drop(run_lock);
     let ready = judge::ready(&lines);
@@ -248,5 +241,77 @@ fn borrow<T>(read: &judge::Read<T>) -> judge::Read<&T> {
         judge::Read::Present(value) => judge::Read::Present(value),
         judge::Read::Missing(reason) => judge::Read::Missing(reason.clone()),
         judge::Read::Invalid(reason) => judge::Read::Invalid(reason.clone()),
+    }
+}
+
+/// The source-test receipt at `path`, read under the run lock when `held`. A receipt is written
+/// only under that lock, so one without the lock beside it is not read unlocked (review round 3,
+/// B5).
+#[cfg(target_os = "macos")]
+fn read_receipt(path: &Path, held: bool) -> Result<judge::Read<source_tests::Receipt>, String> {
+    use judge::Read;
+    source_tests::refuse_link(path)?;
+    Ok(match std::fs::read_to_string(path) {
+        Ok(_) if !held => Read::Invalid(
+            "the source-test receipt has no run lock beside it; run release macos-source-tests on R again"
+                .to_owned(),
+        ),
+        Ok(text) => match source_tests::parse(&text) {
+            Ok(receipt) => Read::Present(receipt),
+            Err(error) => Read::Invalid(format!("the source-test receipt is invalid: {error}")),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Read::Missing(
+            "no source-test receipt: run release macos-source-tests on R".to_owned(),
+        ),
+        Err(error) => Read::Invalid(format!("cannot read the source-test receipt: {error}")),
+    })
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod reading_tests {
+    use super::{judge::Read, read_receipt, source_tests};
+
+    /// Review round 3, B5: no lock file means no run ever held it, and then a receipt found
+    /// there is not consumed; a held lock reads it; a lock another holder keeps is busy.
+    #[test]
+    fn a_receipt_is_read_only_under_its_lock() {
+        let scratch = stickymd_package::temporary::TemporaryDirectory::new("receipt-lock").unwrap();
+        let root = scratch.path();
+        let receipt = root.join(source_tests::RECEIPT);
+        std::fs::create_dir_all(receipt.parent().unwrap()).unwrap();
+        assert!(matches!(
+            read_receipt(&receipt, false),
+            Ok(Read::Missing(_))
+        ));
+        std::fs::write(&receipt, "{}").unwrap();
+        assert!(
+            matches!(read_receipt(&receipt, false), Ok(Read::Invalid(reason)) if reason.contains("no run lock"))
+        );
+        assert!(
+            matches!(read_receipt(&receipt, true), Ok(Read::Invalid(reason)) if reason.contains("invalid"))
+        );
+        assert!(matches!(
+            source_tests::lock_for_reading(root),
+            Ok(source_tests::Reading::Free { held: false, .. })
+        ));
+        let run = source_tests::lock_for_run(root).unwrap().unwrap();
+        assert!(matches!(
+            source_tests::lock_for_reading(root),
+            Ok(source_tests::Reading::Busy)
+        ));
+        drop(run);
+        // A child another test forks meanwhile shares the lock until its exec closes it, so the
+        // release may lag briefly (as in the ledger's writer-lock test).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !matches!(
+            source_tests::lock_for_reading(root),
+            Ok(source_tests::Reading::Free { held: true, .. })
+        ) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the run lock was not released"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 }

@@ -90,9 +90,23 @@ pub(super) fn downloads<'a>(
     }
 }
 
-/// The macOS major version in a `sw_vers` text (`ProductVersion: 27.2` gives 27).
+/// The macOS major version in a `sw_vers` text (`ProductVersion: 27.2` gives 27): exactly one
+/// `ProductVersion`, of one to three dot-separated numbers (review round 3, S7). A format check
+/// of what was recorded, not a proof of the machine.
 pub(super) fn major_version(system: &str) -> Option<u32> {
-    let mut words = system.split_whitespace();
-    words.find(|word| *word == "ProductVersion:")?;
-    words.next()?.split('.').next()?.parse().ok()
+    let words: Vec<&str> = system.split_whitespace().collect();
+    let versions: Vec<&str> = words
+        .windows(2)
+        .filter(|pair| pair[0] == "ProductVersion:")
+        .map(|pair| pair[1])
+        .collect();
+    let [version] = versions.as_slice() else {
+        return None;
+    };
+    let parts: Vec<&str> = version.split('.').collect();
+    let numeric = (1..=3).contains(&parts.len())
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()));
+    numeric.then(|| parts[0].parse().ok()).flatten()
 }

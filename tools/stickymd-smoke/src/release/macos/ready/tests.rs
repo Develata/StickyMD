@@ -907,3 +907,59 @@ fn a_fail_of_another_driver_still_counts() {
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-W02", Verdict::Fail, "a FAIL of P16-W02");
 }
+
+/// Review round 3, S1: R03's FAIL in this batch stays a FAIL beside another group's clean run, in
+/// either order of import.
+#[test]
+fn an_r03_fail_beside_a_clean_group_is_a_fail_in_either_order() {
+    let candidate = candidate();
+    let fail = record("R03", "FAIL", '1', &candidate.built, '8');
+    let pass = record_on_image("R03", "PASS", "sha256:other-image", &candidate.built, '7');
+    for (first, second) in [(fail.clone(), pass.clone()), (pass, fail)] {
+        let mut records: Vec<Record> = ledger()
+            .into_iter()
+            .filter(|r| !matches!(r, Record::Automated { row, .. } if row == "R03"))
+            .collect();
+        records.push(first);
+        records.push(second);
+        let lines = run(Read::Present(&candidate), &records, &receipt());
+        assert_line(&lines, "P16-R03", Verdict::Fail, "a FAIL of P16-R03");
+    }
+}
+
+/// Review round 3, S2: a failure the receipt records is a FAIL even when R's target list
+/// cannot be read.
+#[test]
+fn a_recorded_failure_beats_a_missing_target_list() {
+    let candidate = candidate();
+    let mut failing = receipt();
+    failing.exit_code = Some(101);
+    let lines = judge(&Inputs {
+        release: R,
+        batch: Some("rc1"),
+        macos_major: 27,
+        driver: &hex('1'),
+        candidate: Read::Present(&candidate),
+        ledger: Read::Present(&ledger()),
+        source_tests: Read::Present(&failing),
+        targets: Read::Invalid("cannot list R's test targets".into()),
+    });
+    assert_line(&lines, "source-tests", Verdict::Fail, "exited");
+}
+
+/// Review round 3, S7: one complete ProductVersion, or no major version at all.
+#[test]
+fn the_major_version_needs_one_complete_product_version() {
+    use super::receipts::major_version;
+    assert_eq!(
+        major_version("ProductName: macOS ProductVersion: 27.2.1"),
+        Some(27)
+    );
+    assert_eq!(major_version("ProductVersion: 27"), Some(27));
+    assert_eq!(major_version("ProductVersion: 27.bad"), None);
+    assert_eq!(
+        major_version("ProductVersion: 27.2 ProductVersion: 28.0"),
+        None
+    );
+    assert_eq!(major_version("ProductVersion:"), None);
+}

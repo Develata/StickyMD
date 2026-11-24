@@ -55,8 +55,10 @@ pub(super) fn lock_for_run(root: &std::path::Path) -> Result<Option<std::fs::Fil
 pub(super) enum Reading {
     /// No run holds it; the shared lock (if the file exists) keeps one from starting meanwhile.
     Free {
+        /// Whether the lock file exists (and is now held shared).
+        held: bool,
         /// Held to keep a run from starting meanwhile; never read.
-        _held: Option<std::fs::File>,
+        _lock: Option<std::fs::File>,
     },
     /// A run is in progress: it has retired the old receipt and not published its own.
     Busy,
@@ -71,12 +73,18 @@ pub(super) fn lock_for_reading(root: &std::path::Path) -> Result<Reading, String
     let file = match std::fs::File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Reading::Free { _held: None });
+            return Ok(Reading::Free {
+                held: false,
+                _lock: None,
+            });
         }
         Err(error) => return Err(format!("cannot open {}: {error}", path.display())),
     };
     match file.try_lock_shared() {
-        Ok(()) => Ok(Reading::Free { _held: Some(file) }),
+        Ok(()) => Ok(Reading::Free {
+            held: true,
+            _lock: Some(file),
+        }),
         Err(std::fs::TryLockError::WouldBlock) => Ok(Reading::Busy),
         Err(std::fs::TryLockError::Error(error)) => {
             Err(format!("cannot lock {}: {error}", path.display()))
@@ -266,9 +274,11 @@ pub(super) struct Explicit {
     pub counts: Option<Counts>,
     pub cases: Vec<Case>,
     pub exit_code: Option<i32>,
-    /// The temporary volume's case behaviour the runner probed (`case-insensitive`); P18-L08's
-    /// other volume is the case-sensitive image its own test mounts and asserts.
+    /// P18-L08's two volumes as its tests measured them on the directories their assertions use
+    /// (`case-insensitive` or `case-sensitive`), reported through `STICKYMD_VOLUME_REPORT`;
+    /// `None` when not reported, and for P16-S06.
     pub temporary_volume: Option<String>,
+    pub image_volume: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -348,6 +358,7 @@ pub(super) fn fixture(release: &str, expected: Vec<Target>) -> Receipt {
                 .collect(),
             exit_code: Some(0),
             temporary_volume: (*item == "same-key").then(|| "case-insensitive".to_owned()),
+            image_volume: (*item == "same-key").then(|| "case-sensitive".to_owned()),
         })
         .collect();
     Receipt {
