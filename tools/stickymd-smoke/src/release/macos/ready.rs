@@ -4,6 +4,7 @@
 //! candidate and running the tests happen on a Mac.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
+mod groups;
 mod judge;
 mod receipts;
 mod rows;
