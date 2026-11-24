@@ -106,7 +106,8 @@ pub(crate) enum CommandLine {
     MacLogout(crate::mac_gui::logout::Options),
     MacLatency(crate::mac_gui::latency::Options),
     MacResources(crate::mac_resources::Options),
-    MacLedger(crate::mac_ledger::Options),
+    // Boxed: the ledger's options outgrow the other commands' (clippy::large_enum_variant).
+    MacLedger(Box<crate::mac_ledger::Options>),
     PhaseEntryPlan(Vec<String>),
     Release(crate::release::Command),
     Smoke(Options),
@@ -459,7 +460,7 @@ impl CommandLine {
             Some("mac-logout") => crate::mac_gui::logout::parse(&args[1..]).map(Self::MacLogout),
             Some("mac-latency") => crate::mac_gui::latency::parse(&args[1..]).map(Self::MacLatency),
             Some("mac-resources") => crate::mac_resources::parse(&args[1..]).map(Self::MacResources),
-            Some("mac-ledger") => crate::mac_ledger::parse(&args[1..]).map(Self::MacLedger),
+            Some("mac-ledger") => crate::mac_ledger::parse(&args[1..]).map(|options| Self::MacLedger(Box::new(options))),
             Some("timings") => crate::timing_summary::parse(&args[1..]).map(Self::Timings),
             Some("startup-details") => crate::startup_details::parse(&args[1..]).map(Self::StartupDetails),
             Some("acceptance") => match args.get(1).map(String::as_str) {

@@ -30,6 +30,8 @@ pub(crate) mod release;
 mod resources;
 #[cfg(target_os = "macos")]
 mod run;
+#[cfg(target_os = "macos")]
+pub(crate) use run::read_whole;
 #[cfg(test)]
 mod tests;
 

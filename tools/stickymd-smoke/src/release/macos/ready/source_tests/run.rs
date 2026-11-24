@@ -1,51 +1,52 @@
 //! Runs the source tests on R on a Mac and writes the receipt (plan 11 #macos-readiness-check).
-//! It starts only on a clean checkout of R, takes the run lock and removes any old receipt before
-//! anything else can fail, so an interrupted, refused or failed run never leaves an earlier PASS
-//! standing. Everything after the start is recorded as it happened; the gate, not this runner,
-//! decides what the receipt proves.
+//! It starts only on a clean checkout of R (as committed, no index flag hiding a change) with no
+//! obvious Cargo runner or wrapper in the environment (USER 2026-11-24, decision (d)); it then
+//! takes the run lock and retires any old receipt (synced to disk) before anything else can
+//! fail, so a run that fails after its start never leaves an earlier PASS standing. Everything
+//! after the start is recorded as it happened; the gate, not this runner, decides what the
+//! receipt proves.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
-use super::output::{self, Executable};
-use super::{Host, Receipt, SameKey, Side, Target};
-use super::{PACKAGES, RECEIPT, SAME_KEY_TESTS, command, same_key_command};
-use crate::evidence::SourceIdentity;
-use std::io::{Read, Write};
+use super::super::identity;
+use super::output::{self, Executable, Listed, Section};
+use super::{EXPLICIT, Explicit, Host, PACKAGES, RECEIPT, Receipt, Side, Target};
+use super::{command, explicit_command, explicit_target};
+use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// More output than any test run here prints; beyond it the run is stopped and recorded.
 const OUTPUT_LIMIT: usize = 64 << 20;
 
-/// Whether the Git index hides a change from `git status`: an entry marked assume-unchanged
-/// (a lowercase tag in `git ls-files -v`) or skip-worktree (`S`) can differ from the tree.
-fn hidden_changes(root: &Path) -> Result<bool, String> {
-    let listing = query(root, "git", &["ls-files", "-v"])?;
-    Ok(listing.lines().any(|line| {
-        line.chars()
-            .next()
-            .is_some_and(|tag| tag.is_ascii_lowercase() || tag == 'S')
-    }))
-}
-
-fn side(root: &Path, identity: &SourceIdentity) -> Side {
-    Side {
-        head: identity.commit.to_ascii_lowercase(),
-        clean: !identity.worktree_dirty && matches!(hidden_changes(root), Ok(false)),
-    }
+/// The environment entries that would put another program between Cargo and the tests or the
+/// compiler (decision (d)); the rest of Cargo's configuration (its home and the parent
+/// directories' files) is a precondition this runner does not prove.
+fn runner_entries() -> Vec<String> {
+    std::env::vars_os()
+        .filter_map(|(key, _)| key.into_string().ok())
+        .filter(|key| {
+            (key.starts_with("CARGO_TARGET_") && key.ends_with("_RUNNER"))
+                || matches!(
+                    key.as_str(),
+                    "CARGO_BUILD_RUSTC_WRAPPER"
+                        | "RUSTC_WRAPPER"
+                        | "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER"
+                        | "RUSTC_WORKSPACE_WRAPPER"
+                )
+        })
+        .collect()
 }
 
 /// P18-L08's default-set test checks a name differing only in case on the temporary volume and
-/// skips that check on a case-sensitive one; the release proof needs it run, so the temporary
-/// volume must be case-insensitive (the case-sensitive side has its own image test).
+/// skips that check on a case-sensitive one, so the temporary volume must be case-insensitive.
+/// The probe uses a directory it creates exclusively and removes it, reporting a failed removal.
 fn temporary_volume_is_case_insensitive() -> Result<bool, String> {
-    let directory =
-        std::env::temp_dir().join(format!("stickymd-case-probe-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let probe = std::fs::write(directory.join("case-probe"), b"")
-        .map(|()| directory.join("CASE-PROBE").exists())
+    let directory = crate::release::temporary::TemporaryDirectory::new("case-probe")?;
+    let insensitive = std::fs::write(directory.path().join("case-probe"), b"")
+        .map(|()| directory.path().join("CASE-PROBE").exists())
         .map_err(|error| error.to_string());
-    let _ = std::fs::remove_dir_all(&directory);
-    probe
+    directory.close()?;
+    insensitive
 }
 
 /// The trimmed stdout of a short query that must succeed.
@@ -85,7 +86,9 @@ fn host(root: &Path) -> Result<Host, String> {
 }
 
 /// Runs `argv` in `root` with stdout and stderr on one pipe, echoing it to this process's
-/// stderr; returns the exit code (`None` for a signal) and the output.
+/// stderr; returns the exit code (`None` for a signal) and the output. A read that fails for any
+/// reason but an interruption ends the child before waiting for it, so the pipe cannot fill
+/// while this process waits.
 fn run_merged(root: &Path, argv: &[String]) -> Result<(Option<i32>, String), String> {
     let (mut reader, writer) =
         std::io::pipe().map_err(|error| format!("cannot open a pipe: {error}"))?;
@@ -117,17 +120,25 @@ fn run_merged(root: &Path, argv: &[String]) -> Result<(Option<i32>, String), Str
                 let _ = echo.write_all(&buffer[..count]);
                 bytes.extend_from_slice(&buffer[..count]);
                 if bytes.len() > OUTPUT_LIMIT {
-                    let _ = child.kill();
                     break Err(format!("{argv:?} printed more than {OUTPUT_LIMIT} bytes"));
                 }
             }
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
             Err(error) => break Err(format!("cannot read {argv:?}: {error}")),
         }
     };
+    if let Err(error) = read {
+        drop(reader);
+        let killed = child.kill().err();
+        let _ = child.wait();
+        return Err(match killed {
+            Some(kill) => format!("{error}; it could not be stopped: {kill}"),
+            None => error,
+        });
+    }
     let status = child
         .wait()
         .map_err(|error| format!("cannot wait for {argv:?}: {error}"))?;
-    read?;
     Ok((status.code(), String::from_utf8_lossy(&bytes).into_owned()))
 }
 
@@ -156,64 +167,155 @@ fn discover(root: &Path) -> Result<(Vec<Executable>, Vec<Target>), String> {
     Ok((executables, output::doc_libraries(&metadata)?))
 }
 
-/// The same-key run: one binary, one result.
-fn same_key(root: &Path, problems: &mut Vec<String>) -> SameKey {
-    let argv = same_key_command();
-    let (exit_code, counts) = match run_merged(root, &argv) {
-        Ok((exit, text)) => match output::sections(&text) {
-            Ok(sections) => match sections.as_slice() {
-                [only] => (exit, only.counts),
-                _ => {
-                    problems.push(format!(
-                        "the same-key run printed {} test results",
-                        sections.len()
-                    ));
-                    (exit, None)
-                }
-            },
-            Err(error) => {
-                problems.push(format!("the same-key output: {error}"));
-                (exit, None)
-            }
-        },
+/// One listing: `argv` with `--list --format terse`, and again with `--ignored` added.
+fn list(root: &Path, program: &Path, argv: &[&str]) -> Result<(Vec<String>, Vec<String>), String> {
+    let once = |ignored: bool| -> Result<Vec<String>, String> {
+        let mut arguments: Vec<&str> = argv.to_vec();
+        arguments.extend(["--list", "--format", "terse"]);
+        if ignored {
+            arguments.push("--ignored");
+        }
+        let output = Command::new(program)
+            .args(&arguments)
+            .current_dir(root)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|error| format!("cannot list {}: {error}", program.display()))?;
+        if !output.status.success() {
+            return Err(format!("listing {} failed", program.display()));
+        }
+        output::listing(std::str::from_utf8(&output.stdout).map_err(|_| "a listing is not UTF-8")?)
+    };
+    Ok((once(false)?, once(true)?))
+}
+
+/// Every target's own listing of its tests: each test executable's `--list`, and each
+/// doc-tested library's `cargo test --doc -- --list`.
+fn listings(
+    root: &Path,
+    executables: &[Executable],
+    doc: &[Target],
+) -> Result<Vec<Listed>, String> {
+    let mut out = Vec::new();
+    for executable in executables {
+        let (all, ignored) = list(root, &executable.path, &[])?;
+        out.push(Listed {
+            target: executable.target.clone(),
+            all,
+            ignored,
+        });
+    }
+    for library in doc {
+        let (all, ignored) = list(
+            root,
+            Path::new("cargo"),
+            &["test", "--locked", "-p", &library.package, "--doc", "--"],
+        )?;
+        out.push(Listed {
+            target: library.clone(),
+            all,
+            ignored,
+        });
+    }
+    Ok(out)
+}
+
+/// One explicit run: one section, of stickymd-mac's binary, with its printed tests named.
+fn explicit(
+    root: &Path,
+    item: &str,
+    tests: &[&str],
+    executables: &[Executable],
+    listings: &[Listed],
+    temporary_volume: Option<&str>,
+    problems: &mut Vec<String>,
+) -> Explicit {
+    let argv = explicit_command(tests);
+    let mut entry = Explicit {
+        item: item.to_owned(),
+        command: argv.clone(),
+        tests: tests.iter().map(|test| (*test).to_owned()).collect(),
+        target: None,
+        counts: None,
+        cases: Vec::new(),
+        exit_code: None,
+        temporary_volume: temporary_volume.map(str::to_owned),
+    };
+    let (exit, text) = match run_merged(root, &argv) {
+        Ok(found) => found,
         Err(error) => {
-            problems.push(error);
-            (None, None)
+            problems.push(format!("the {item} run: {error}"));
+            return entry;
         }
     };
-    SameKey {
-        command: argv,
-        tests: SAME_KEY_TESTS.map(str::to_owned).to_vec(),
-        counts,
-        exit_code,
+    entry.exit_code = exit;
+    let sections: Vec<Section> = match output::sections(&text) {
+        Ok(sections) => sections,
+        Err(error) => {
+            problems.push(format!("the {item} output: {error}"));
+            return entry;
+        }
+    };
+    let [only] = sections.as_slice() else {
+        problems.push(format!(
+            "the {item} run printed {} test results",
+            sections.len()
+        ));
+        return entry;
+    };
+    entry.target = output::target_of(only, executables, &[]).cloned();
+    entry.counts = only.counts;
+    let listed = listings.iter().find(|l| l.target == explicit_target());
+    let printed_names: Vec<String> = only.tests.iter().map(|(name, _)| name.clone()).collect();
+    let (cases, _) = output::cases(
+        &printed_names,
+        listed.map_or(&[][..], |l| l.ignored.as_slice()),
+        &only.tests,
+    );
+    entry.cases = cases;
+    entry
+}
+
+fn side(identity: &identity::Identity) -> Side {
+    Side {
+        head: identity.head.clone(),
+        clean: identity.clean,
     }
+}
+
+/// Removes the old receipt and syncs its directory, so the removal survives a crash that follows.
+fn retire(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => eprintln!("removed the previous receipt; it stands for no run from now on"),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("cannot remove {}: {error}", path.display())),
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("cannot sync {}: {error}", parent.display()))?;
+    }
+    Ok(())
 }
 
 /// The whole run; returns the receipt it wrote.
 pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, String> {
     crate::integrity::validate_hex(release, 40, "release commit")?;
     let release = release.to_ascii_lowercase();
-    let start = SourceIdentity::capture(root);
-    if start.commit.to_ascii_lowercase() != release || start.worktree_dirty {
+    let start = identity::require(root, &release, "macos-source-tests")?;
+    let entries = runner_entries();
+    if !entries.is_empty() {
         return Err(format!(
-            "the source tests run on a clean checkout of {release}; HEAD is {} (dirty {})",
-            start.commit, start.worktree_dirty
+            "the environment sets {entries:?}, which would run the tests or the compiler through another program; unset it"
         ));
     }
-    let _lock = super::lock(root, true)?.ok_or(
+    let _lock = super::lock_for_run(root)?.ok_or(
         "another source-test run or a readiness check holds the lock; wait for it to finish",
     )?;
     let path = root.join(RECEIPT);
-    match std::fs::remove_file(&path) {
-        Ok(()) => eprintln!("removed the previous receipt; it stands for no run from now on"),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("cannot remove {}: {error}", path.display())),
-    }
-    if hidden_changes(root)? {
-        return Err(
-            "the Git index marks files assume-unchanged or skip-worktree, so a clean status proves nothing; clear the flags".to_owned(),
-        );
-    }
+    super::refuse_link(&path)?;
+    retire(&path)?;
     if !temporary_volume_is_case_insensitive()? {
         return Err(
             "the temporary volume is case-sensitive, so P18-L08's case-insensitive check would be skipped; run with TMPDIR on a case-insensitive volume".to_owned(),
@@ -225,11 +327,15 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
         problems.push(error);
         (Vec::new(), Vec::new())
     });
+    let listed = listings(root, &executables, &doc).unwrap_or_else(|error| {
+        problems.push(error);
+        Vec::new()
+    });
     let argv = command();
     let (exit_code, binaries) = match run_merged(root, &argv) {
         Ok((exit, text)) => match output::sections(&text) {
             Ok(sections) => {
-                let (runs, more) = output::attribute(&sections, &executables, &doc);
+                let (runs, more) = output::attribute(&sections, &executables, &doc, &listed);
                 problems.extend(more);
                 (exit, runs)
             }
@@ -243,18 +349,31 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
             (None, Vec::new())
         }
     };
-    let same_key = same_key(root, &mut problems);
-    let end = SourceIdentity::capture(root);
+    let explicit = EXPLICIT
+        .iter()
+        .map(|(item, tests)| {
+            let volume = (*item == "same-key").then_some("case-insensitive");
+            explicit(
+                root,
+                item,
+                tests,
+                &executables,
+                &listed,
+                volume,
+                &mut problems,
+            )
+        })
+        .collect();
+    let end = identity::capture(root).unwrap_or(identity::Identity {
+        head: "UNKNOWN".to_owned(),
+        clean: false,
+        reason: Some("the end identity could not be read".to_owned()),
+    });
     let receipt = Receipt {
         release_source: release,
         host,
-        // The index flags were refused before the run, so the start is clean exactly when Git
-        // said so; the end is checked again.
-        start: Side {
-            head: start.commit.to_ascii_lowercase(),
-            clean: !start.worktree_dirty,
-        },
-        end: side(root, &end),
+        start: side(&start),
+        end: side(&end),
         command: argv,
         exit_code,
         expected: executables
@@ -263,7 +382,7 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
             .chain(doc)
             .collect(),
         binaries,
-        same_key,
+        explicit,
         problems,
     };
     crate::atomic_evidence::write(&path, super::render(&receipt).as_bytes())?;

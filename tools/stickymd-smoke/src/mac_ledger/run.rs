@@ -28,20 +28,11 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
         root.join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
             .join("records.jsonl")
     });
+    refuse_links(&ledger)?;
     if command == Command::Plan {
         let existing = record::read_all(&read(&ledger)?)?;
         decide::check_system(&existing)?;
         return plan(options, &existing, &rows(root)?);
-    }
-    // The ledger and its lock are replaced or locked by name: through a link the lock would name
-    // the link and the publish would replace the link, not the ledger.
-    for path in [ledger.clone(), lock_path(&ledger)] {
-        if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-            return Err(format!(
-                "{} is a symbolic link; name the ledger itself",
-                path.display()
-            ));
-        }
     }
     let _lock = lock(&ledger)?;
     let text = read(&ledger)?;
@@ -87,6 +78,56 @@ fn read(ledger: &Path) -> Result<String, String> {
 
 /// Another writer holding the lock refuses this one; the lock is released when the file closes,
 /// at exit too, so a crash leaves nothing to clean up.
+/// The ledger and its lock are read, locked and replaced by name: through a link the lock would
+/// name the link and a publish would replace the link, not the ledger, and a reader could follow
+/// it to another file. Every entry point refuses them. Nor may the ledger occupy the release
+/// gate's own files.
+fn refuse_links(ledger: &Path) -> Result<(), String> {
+    for path in [ledger.to_path_buf(), lock_path(ledger)] {
+        if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err(format!(
+                "{} is a symbolic link; name the ledger itself",
+                path.display()
+            ));
+        }
+    }
+    if let Ok(root) = crate::governance::find_repository_root(ledger.parent().unwrap_or(ledger))
+        && [ledger.to_path_buf(), lock_path(ledger)]
+            .iter()
+            .any(|path| {
+                crate::qualification::reserved_paths::is_macos_source_test_path(&root, path)
+            })
+    {
+        return Err(format!(
+            "{} would occupy the macOS source-test receipt or its lock",
+            ledger.display()
+        ));
+    }
+    Ok(())
+}
+
+/// The ledger's text for a reader that must see it whole: links refused, read under a shared
+/// hold of the writers' lock (opened read-only, never created), `None` when nothing was ever
+/// recorded. A writer at work makes this an error rather than a half-seen ledger. The returned
+/// lock keeps writers out until the caller drops it.
+pub(crate) fn read_whole(ledger: &Path) -> Result<(Option<String>, Option<fs::File>), String> {
+    refuse_links(ledger)?;
+    let lock = match fs::File::open(lock_path(ledger)) {
+        Ok(file) => Some(file),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("{}: {e}", lock_path(ledger).display())),
+    };
+    if let Some(file) = &lock {
+        file.try_lock_shared()
+            .map_err(|e| format!("a mac-ledger writer holds the ledger: {e}"))?;
+    }
+    match fs::read_to_string(ledger) {
+        Ok(text) => Ok((Some(text), lock)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, lock)),
+        Err(e) => Err(format!("{}: {e}", ledger.display())),
+    }
+}
+
 fn lock_path(ledger: &Path) -> PathBuf {
     let mut path = ledger.as_os_str().to_owned();
     path.push(".lock");

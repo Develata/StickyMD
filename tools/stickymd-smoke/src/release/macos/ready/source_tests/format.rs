@@ -1,8 +1,9 @@
-//! The receipt as JSON (schema 1): written whole by the runner, read whole and strictly by the
+//! The receipt as JSON (schema 2): written whole by the runner, read whole and strictly by the
 //! gate. Every object has exactly its fields; a missing, extra or mistyped one rejects the file.
+//! Schema 1 (counts only, no test names) is refused, not migrated.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
-use super::{Counts, Host, Receipt, Run, SameKey, Side, Target};
+use super::{Case, CaseOutcome, Counts, Explicit, Host, Receipt, Run, Side, Target};
 use crate::evidence::escape_json;
 use crate::release::json::{self, Value};
 
@@ -40,8 +41,27 @@ fn target(target: &Target) -> String {
     )
 }
 
+fn cases(cases: &[Case]) -> String {
+    let items: Vec<String> = cases
+        .iter()
+        .map(|case| {
+            format!(
+                "{{\"name\":{},\"ignored\":{},\"outcome\":\"{}\"}}",
+                text(&case.name),
+                case.ignored,
+                case.outcome.label()
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
 fn side(side: &Side) -> String {
     format!("{{\"head\":{},\"clean\":{}}}", text(&side.head), side.clean)
+}
+
+fn optional<T>(value: Option<&T>, render: impl Fn(&T) -> String) -> String {
+    value.map_or_else(|| "null".to_owned(), render)
 }
 
 pub(in super::super) fn render(receipt: &Receipt) -> String {
@@ -52,15 +72,32 @@ pub(in super::super) fn render(receipt: &Receipt) -> String {
         .iter()
         .map(|run| {
             format!(
-                "{{\"target\":{},\"counts\":{}}}",
+                "{{\"target\":{},\"counts\":{},\"cases\":{}}}",
                 target(&run.target),
-                counts(&run.counts)
+                counts(&run.counts),
+                cases(&run.cases)
             )
         })
         .collect();
-    let same = &receipt.same_key;
+    let explicit: Vec<String> = receipt
+        .explicit
+        .iter()
+        .map(|entry| {
+            format!(
+                "{{\"item\":{},\"command\":{},\"tests\":{},\"target\":{},\"counts\":{},\"cases\":{},\"exit_code\":{},\"temporary_volume\":{}}}",
+                text(&entry.item),
+                list(&entry.command),
+                list(&entry.tests),
+                optional(entry.target.as_ref(), target),
+                optional(entry.counts.as_ref(), counts),
+                cases(&entry.cases),
+                code(entry.exit_code),
+                optional(entry.temporary_volume.as_ref(), |v: &String| text(v)),
+            )
+        })
+        .collect();
     format!(
-        "{{\"schema_version\":1,\"kind\":\"macos-release-source-tests\",\"release_source\":{},\"host\":{{\"product_name\":{},\"product_version\":{},\"build_version\":{},\"arch\":{},\"virtual_machine\":{},\"cargo\":{},\"rustc\":{}}},\"start\":{},\"end\":{},\"command\":{},\"exit_code\":{},\"expected\":[{}],\"binaries\":[{}],\"same_key\":{{\"command\":{},\"tests\":{},\"counts\":{},\"exit_code\":{}}},\"problems\":{}}}\n",
+        "{{\"schema_version\":2,\"kind\":\"macos-release-source-tests\",\"release_source\":{},\"host\":{{\"product_name\":{},\"product_version\":{},\"build_version\":{},\"arch\":{},\"virtual_machine\":{},\"cargo\":{},\"rustc\":{}}},\"start\":{},\"end\":{},\"command\":{},\"exit_code\":{},\"expected\":[{}],\"binaries\":[{}],\"explicit\":[{}],\"problems\":{}}}\n",
         text(&receipt.release_source),
         text(&host.product_name),
         text(&host.product_version),
@@ -75,12 +112,7 @@ pub(in super::super) fn render(receipt: &Receipt) -> String {
         code(receipt.exit_code),
         expected.join(","),
         binaries.join(","),
-        list(&same.command),
-        list(&same.tests),
-        same.counts
-            .as_ref()
-            .map_or_else(|| "null".to_owned(), counts),
-        code(same.exit_code),
+        explicit.join(","),
         list(&receipt.problems),
     )
 }
@@ -165,12 +197,40 @@ fn read_target(value: &Value) -> Result<Target, String> {
     })
 }
 
+fn read_cases(value: &Value) -> Result<Vec<Case>, String> {
+    value
+        .array()?
+        .iter()
+        .map(|case| {
+            exactly(case, &["name", "ignored", "outcome"])?;
+            let label = string(case, "outcome")?;
+            Ok(Case {
+                name: string(case, "name")?,
+                ignored: boolean(case, "ignored")?,
+                outcome: CaseOutcome::from_label(&label)
+                    .ok_or_else(|| format!("unknown test outcome {label:?}"))?,
+            })
+        })
+        .collect()
+}
+
 fn read_side(value: &Value) -> Result<Side, String> {
     exactly(value, &["head", "clean"])?;
     Ok(Side {
         head: string(value, "head")?,
         clean: boolean(value, "clean")?,
     })
+}
+
+fn nullable<T>(
+    value: &Value,
+    key: &str,
+    read: impl Fn(&Value) -> Result<T, String>,
+) -> Result<Option<T>, String> {
+    match value.field(key)? {
+        Value::Null => Ok(None),
+        present => read(present).map(Some),
+    }
 }
 
 pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
@@ -188,14 +248,14 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
             "exit_code",
             "expected",
             "binaries",
-            "same_key",
+            "explicit",
             "problems",
         ],
     )?;
-    if value.field("schema_version")?.unsigned()? != 1
+    if value.field("schema_version")?.unsigned()? != 2
         || string(&value, "kind")? != "macos-release-source-tests"
     {
-        return Err("not a schema 1 macOS source-test receipt".to_owned());
+        return Err("not a schema 2 macOS source-test receipt".to_owned());
     }
     let host = value.field("host")?;
     exactly(
@@ -210,17 +270,48 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
             "rustc",
         ],
     )?;
-    let same = value.field("same_key")?;
-    exactly(same, &["command", "tests", "counts", "exit_code"])?;
     let binaries = value
         .field("binaries")?
         .array()?
         .iter()
         .map(|run| {
-            exactly(run, &["target", "counts"])?;
+            exactly(run, &["target", "counts", "cases"])?;
             Ok(Run {
                 target: read_target(run.field("target")?)?,
                 counts: read_counts(run.field("counts")?)?,
+                cases: read_cases(run.field("cases")?)?,
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    let explicit = value
+        .field("explicit")?
+        .array()?
+        .iter()
+        .map(|entry| {
+            exactly(
+                entry,
+                &[
+                    "item",
+                    "command",
+                    "tests",
+                    "target",
+                    "counts",
+                    "cases",
+                    "exit_code",
+                    "temporary_volume",
+                ],
+            )?;
+            Ok(Explicit {
+                item: string(entry, "item")?,
+                command: strings(entry, "command")?,
+                tests: strings(entry, "tests")?,
+                target: nullable(entry, "target", read_target)?,
+                counts: nullable(entry, "counts", read_counts)?,
+                cases: read_cases(entry.field("cases")?)?,
+                exit_code: exit(entry, "exit_code")?,
+                temporary_volume: nullable(entry, "temporary_volume", |v| {
+                    v.string().map(str::to_owned)
+                })?,
             })
         })
         .collect::<Result<_, String>>()?;
@@ -246,15 +337,7 @@ pub(in super::super) fn parse(text: &str) -> Result<Receipt, String> {
             .map(read_target)
             .collect::<Result<_, _>>()?,
         binaries,
-        same_key: SameKey {
-            command: strings(same, "command")?,
-            tests: strings(same, "tests")?,
-            counts: match same.field("counts")? {
-                Value::Null => None,
-                counts => Some(read_counts(counts)?),
-            },
-            exit_code: exit(same, "exit_code")?,
-        },
+        explicit,
         problems: strings(&value, "problems")?,
     })
 }

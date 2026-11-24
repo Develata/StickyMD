@@ -199,8 +199,8 @@ waiver；R03 的 ZIP 摘要不参与分组。`11` #macos-readiness-check 的状�
 | NICE P18-L13 错链 | 已修复 |
 | NEEDS_VERIFICATION 正式候选的端到端判定 | 未变：需要真实晋升的候选与 R 上的正式收据 |
 
-**需要 Develata 决定（新）：** 代码对以下四项都 fail closed：S06 判 `NOT TESTED`；临时卷大小写敏感时运行器拒绝；下载路径只认本候选、签名方式一致、
-五行同一大版本；登记与 Cargo runner 维持现状（核对结束时会再解析一次候选）。
+**需要 Develata 决定（新）：** 当时写“代码对以下四项都 fail closed”，对 (b) 并不成立：没有 D04/D05 结果的五条下载记录仍能使下载路径 PASS
+（第二次复审 finding 4）。S06、L08 与登记确实 fail closed，Cargo runner 维持现状。四项已于下文“第二次复审与 USER 决定”中决定并实现。
 
 **(a) P16-S06（exFAT，`#[ignore]`）与 P18-L08 大小写敏感一半在 R 上的证据格式。**
 - A1（建议）：把收据的 `same_key` 一节推广为 `explicit` 列表，每项含门的条目（`same-key`、`P16-S06`）、规定命令（`--exact --include-ignored` 加测试名）、
@@ -227,3 +227,67 @@ waiver；R03 的 ZIP 摘要不参与分组。`11` #macos-readiness-check 的状�
   环境中的 `CARGO_TARGET_*_RUNNER`、`CARGO_BUILD_RUSTC_WRAPPER`、`RUSTC_WRAPPER`。
 - D2：读取 Cargo home 与各级祖先目录的配置文件，拒绝任何 `runner`。更完整，但要自己实现 Cargo 的配置合并规则（`include`、`cfg(...)` 表等）。
 - D3：不处理。
+
+## 第二次复审与 USER 决定（2026-11-24）
+
+**USER 决定**（Develata 在发起会话中的回答，由该会话“Develata 回收完成”转达，原词照录；四项都选了推荐方案）：
+
+- (a) “并入源码测试收据（推荐）”：`same_key` 推广为 `explicit` 列表（门的条目、精确的 `--exact --include-ignored` 命令、测试名、计数、退出码）；
+  L08 另记两种卷的大小写属性；S06 须恰有一项通过。
+- (b) “outcome + --macos-major（推荐）”：D04 的结果为 `gatekeeper-blocked`、`translocated-prompt-exit`、`portable-start` 之一，D05 为 `blocked` 或
+  `not-blocked`，经 `mac-ledger receipt --outcome` 记录，其他行不得带；`macos-ready` 必须给 `--macos-major <N>`，五行 `sw_vers` 的大版本须等于它。
+- (c) “必填 --candidate-sha256（推荐）”：`receipt`/`waive` 必须给 `--candidate-sha256`，须等于登记时 resolver 给出的摘要；`release macos-candidate`
+  打印它。USER 同意据此修改“摘要不手工输入”的写法。
+- (d) “写成前提并拒明显入口（推荐）”：写进合同，作为运行器不证明的前提（与 workflow 的 Cargo home 同一类），并拒绝环境中的 `CARGO_TARGET_*_RUNNER`、
+  `CARGO_BUILD_RUSTC_WRAPPER`、`RUSTC_WRAPPER`（实现另拒两个 workspace wrapper 变量）。
+
+另：发起会话转达的规则——证据尚未定义的行不得能打印 PASS 或 `WAIVED`，每条都要坏样本——写进了 `11` #macos-readiness-check 的“一般规则”。
+
+**复审**（Codex，审于 `2405b20`，原文在发起会话的 scratchpad）：10 项 BLOCKER、10 项 SHOULD_FIX、2 项 NICE_TO_HAVE、2 项 NEEDS_VERIFICATION。逐项核实后处理如下，
+修复分六个提交（`e471b4a` 纯移动的拆分，`5c7071c`、`c6aac0c`、`bdb054b`、`1cf0a12`、`ae047b0`），每个守卫都去掉一次，看着它的坏样本变红再放回。
+
+| 发现 | 处理 |
+| --- | --- |
+| 1 ZIP、checksum 与暂存 bundle 可互相矛盾 | 已修复：resolver 核对 checksum 文件内容、在暂存 ZIP 上跑包检查并比对 bundle、可执行文件、产品输入、签名方式与构建来源、核对 SBOM |
+| 2 零项执行的二进制仍 PASS | 已修复：收据逐个测试记录各目标 `--list` 的清单与运行结果；Cargo runner 部分按决定 (d) |
+| 3 L08 可用任意两个测试证明 | 已修复（决定 (a)）：显式运行须归属 stickymd-mac 的二进制，按名恰为其测试，且在主运行清单中；记录临时卷属性 |
+| 4 下载路径没有 D04/D05 结果也 PASS | 已修复（决定 (b)） |
+| 5 登记可把对 A 的观察绑给 B | 已修复（决定 (c)） |
+| 6 人工行的 FAIL 被另一身份的 PASS 隐藏 | 已修复：人工行在收据前先看任何身份的 FAIL |
+| 7 W12 在每个完整环境都失败时仍可 WAIVED | 已修复：先在每个身份内判定四行，没有完整干净组而有失败组即 FAIL |
+| 8 V03 已登记的失败可被 waiver 覆盖 | 已修复：所有 `NOT TESTED` 行经同一个守卫，任一 FAIL 先判为 FAIL |
+| 9 replacement ref 与核对端跳过索引标志 | 已修复：运行器与核对端共用按提交读取的严格身份，核对结束时复核 |
+| 10 大小写探针截断文件、删除别的目录 | 已修复：独占创建临时目录，清理失败如实报告 |
+| S1 旧驱动的 PASS 仍证明受影响的门 | **推迟**，待决（见下） |
+| S2 账本与收据可能从未同时有效 | 已修复：两者在各自锁下作为一个快照读取；候选或检出在核对中改变则不打印结论 |
+| S3 公共写入口可替换运行锁 | 已修复：收据与锁登记为保留路径，账本的目的地也拒绝它们 |
+| S4 只读入口写文件、读账本绕过链接检查 | 已修复：读者只读打开锁、不创建；`plan` 与核对端都拒绝链接；身份查询不取可选索引锁 |
+| S5 没有候选时跳过 `origin/main` 前提 | 已修复：入口即核对 |
+| S6 按候选撤销接受未知字段 | 已修复：撤销恰有其字段 |
+| S7 读管道出错可能占锁互等 | 已修复：重试中断，其他错误先结束子进程 |
+| S8 坏样本不能区分其条件 | 已修复：各加只改一个事实的样本，R03 样本按本分支实际证明的内容改名 |
+| S9 忽略测试守卫只扫六个包、按行数 | 已修复：八个包、按测试名归类 |
+| S10 P18-P04 的链接错位 | 已修复：按测试名重新生成 |
+| N1 测试模块缺 plan_ref | 已修复 |
+| N2 `judge.rs` 502 行 | 已修复：按“同一身份内的结果”（`groups.rs`）与“每行如何使用”（`judge.rs`）拆分 |
+| V1 断电后的持久性 | 部分：删除旧收据后同步目录；原子写入后的目录同步属打包 crate，未改；合同写明保证的范围 |
+| V2 正式候选的端到端证据 | 未变：需要冻结的 R 与真实晋升的候选 |
+
+没有驳回的发现。资源行：发起会话转达“证据尚未定义的行不得 WAIVED”，而 `11` 已批准“资源行可由 USER 逐行 waiver”（USER 2026-11-24）；本分支保留后者
+（waiver 是已定义的证据），只加了 FAIL 优先。请 Develata 确认。
+
+**需要 Develata 决定（第二次复审之后）：**
+
+1. **SHOULD_FIX 1：门要不要只认 R 的验证驱动。** 现在不同驱动、镜像、系统的干净运行各自都算（已批准的规则）；若 R 修正了某行的检查，旧驱动的 PASS
+   仍可沿用。
+   - A（建议）：`macos-ready` 增加必填 `--driver <stickymd-smoke 二进制>`，`mac-gui` 行只认该驱动 SHA-256 的组，与 `mac-ledger plan` 的复用规则一致；
+     FAIL 仍不论驱动都算。
+   - B：只对驱动输入指纹变了的行要求新驱动（需要按行的驱动输入登记，工作量大）。
+   - C：维持现状，在合同中写明旧驱动的 PASS 可沿用。
+2. **核对取自何处**（`11` #macos-readiness-check 中标为提议的一条）：写明门在 R 上重算什么、取自本地记录的是什么、不证明什么，使下一次复审有边界可依。
+   建议批准原文。
+
+**验证**（本机 macOS 27.2.1 arm64）：`stickymd-smoke` 692 + 20 个测试通过；clippy 在八个 macOS 包上与 `stickymd-smoke --target x86_64-pc-windows-msvc`
+都无警告；fmt 通过。运行器的真实演练（`ae047b0`，不是正式收据）：schema 2 收据中 23 个目标的 1991 个测试逐个对上清单（1958 通过、33 忽略、0 未运行），
+same-key 2/2 与 S06 1/1 通过，三项判定都为 PASS，开始与结束都干净。`macos-ready` 在同一提交上因 R 不在 `origin/main` 中而在判定前拒绝——这正是 S5 的
+守卫；分支上无法给出逐行结果，逐行判定由坏样本测试覆盖，真实的逐行输出要等 R 进入 `main`。

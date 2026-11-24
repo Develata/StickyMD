@@ -4,6 +4,8 @@
 //! candidate and running the tests happen on a Mac.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
+mod groups;
+mod identity;
 mod judge;
 mod receipts;
 mod rows;
@@ -20,17 +22,22 @@ use std::path::Path;
 #[cfg(target_os = "macos")]
 pub(in super::super) fn source_tests_command(root: &Path, release: &str) -> Result<(), String> {
     let receipt = source_tests::run::run(root, release)?;
-    let (tests, same_key) = source_tests::judge(&receipt, release, &listed_targets(root)?);
+    let verdicts = source_tests::judge(&receipt, release, &listed_targets(root)?);
     println!(
-        "{{\"release_source\":\"{}\",\"source_tests\":\"{}\",\"same_key\":\"{}\"}}",
+        "{{\"release_source\":\"{}\",\"source_tests\":\"{}\",\"same_key\":\"{}\",\"s06\":\"{}\"}}",
         receipt.release_source,
-        label(&tests),
-        label(&same_key)
+        label(&verdicts.tests),
+        label(&verdicts.same_key),
+        label(&verdicts.s06)
     );
-    match (tests, same_key) {
-        (source_tests::Outcome::Pass, source_tests::Outcome::Pass) => Ok(()),
-        (tests, same_key) => Err(format!(
-            "the receipt does not establish the rows: source tests {tests:?}, same key {same_key:?}"
+    match verdicts {
+        source_tests::Verdicts {
+            tests: source_tests::Outcome::Pass,
+            same_key: source_tests::Outcome::Pass,
+            s06: source_tests::Outcome::Pass,
+        } => Ok(()),
+        verdicts => Err(format!(
+            "the receipt does not establish its rows: {verdicts:?}"
         )),
     }
 }
@@ -68,6 +75,7 @@ pub(in super::super) fn ready_command(
     root: &Path,
     release: &str,
     batch: Option<&str>,
+    macos_major: u32,
 ) -> Result<(), String> {
     use judge::Read;
     crate::integrity::validate_hex(release, 40, "release commit")?;
@@ -76,17 +84,63 @@ pub(in super::super) fn ready_command(
         return Err(format!("batch {name:?} is not 1-64 of [A-Za-z0-9._-]"));
     }
     // The gate is judged with R's own tools (plan 11 #platform-artifact-reuse, after reuse): its
-    // row table and rules are those of a clean checkout of R.
-    let here = crate::evidence::SourceIdentity::capture(root);
-    if here.commit.to_ascii_lowercase() != release || here.worktree_dirty {
-        return Err(format!(
-            "macOS readiness is checked on a clean checkout of {release}; HEAD is {} (dirty {})",
-            here.commit, here.worktree_dirty
-        ));
-    }
+    // row table and rules are those of a clean checkout of R, read as committed.
+    let start = identity::require(root, &release, "macos-ready")?;
+    // R must be one the release authorization can name, before any row is judged, with or
+    // without a candidate (review round 2, SHOULD_FIX 5).
+    super::promote::check_release(root, &release)?;
     let matrix = std::fs::read_to_string(root.join("docs/acceptance-cases/phase-16.md"))
         .map_err(|error| format!("cannot read the Phase 16 matrix: {error}"))?;
     rows::check_against(&crate::governance::phase16_modes(&matrix)?)?;
+    // One snapshot: the source-test receipt under the run lock and the ledger under its writers'
+    // lock, both held until the verdicts are made, so no run or record lands between the reads.
+    let run_lock = source_tests::lock_for_reading(root)?;
+    let receipt = match &run_lock {
+        source_tests::Reading::Busy => Read::Missing("a source-test run is in progress".to_owned()),
+        source_tests::Reading::Free { .. } => {
+            let path = root.join(source_tests::RECEIPT);
+            source_tests::refuse_link(&path)?;
+            match std::fs::read_to_string(&path) {
+                Ok(text) => match source_tests::parse(&text) {
+                    Ok(receipt) => Read::Present(receipt),
+                    Err(error) => {
+                        Read::Invalid(format!("the source-test receipt is invalid: {error}"))
+                    }
+                },
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Read::Missing(
+                    "no source-test receipt: run release macos-source-tests on R".to_owned(),
+                ),
+                Err(error) => {
+                    Read::Invalid(format!("cannot read the source-test receipt: {error}"))
+                }
+            }
+        }
+    };
+    let ledger_path = root
+        .join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
+        .join("records.jsonl");
+    // The same checks the ledger's writers and `plan` apply: every line, every revocation's
+    // target, and one system per VM image (plan 11 #phase-16-macos-host).
+    let (ledger, _ledger_lock) = match crate::mac_ledger::read_whole(&ledger_path) {
+        Ok((Some(text), held)) => (
+            match crate::mac_ledger::record::read_all(&text).and_then(|records| {
+                crate::mac_ledger::decide::check_system(&records)?;
+                Ok(records)
+            }) {
+                Ok(records) => Read::Present(records),
+                Err(error) => Read::Invalid(format!("the ledger is unreadable: {error}")),
+            },
+            held,
+        ),
+        Ok((None, held)) => (
+            Read::Missing("no ledger has been recorded".to_owned()),
+            held,
+        ),
+        Err(error) => (
+            Read::Invalid(format!("cannot read the ledger: {error}")),
+            None,
+        ),
+    };
     let candidate = match super::promote::receipt_present(root) {
         Ok(true) => match super::promote::resolve(root, &release) {
             Ok(resolved) => Read::Present(judge::Candidate {
@@ -103,50 +157,15 @@ pub(in super::super) fn ready_command(
         Ok(false) => Read::Missing("no macOS candidate has been promoted".to_owned()),
         Err(error) => Read::Invalid(error),
     };
-    let ledger_path = root
-        .join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
-        .join("records.jsonl");
-    // The same checks the ledger's writers and `plan` apply: every line, every revocation's
-    // target, and one system per VM image (plan 11 #phase-16-macos-host).
-    let ledger = match std::fs::read_to_string(&ledger_path) {
-        Ok(text) => match crate::mac_ledger::record::read_all(&text).and_then(|records| {
-            crate::mac_ledger::decide::check_system(&records)?;
-            Ok(records)
-        }) {
-            Ok(records) => Read::Present(records),
-            Err(error) => Read::Invalid(format!("the ledger is unreadable: {error}")),
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Read::Missing("no ledger has been recorded".to_owned())
-        }
-        Err(error) => Read::Invalid(format!("cannot read the ledger: {error}")),
-    };
-    // Read under the run lock (shared): a run in progress has retired the old receipt and has not
-    // published its own, so it reads as not tested.
-    let run_lock = source_tests::lock(root, false)?;
-    let receipt = if run_lock.is_none() {
-        Read::Missing("a source-test run is in progress".to_owned())
-    } else {
-        match std::fs::read_to_string(root.join(source_tests::RECEIPT)) {
-            Ok(text) => match source_tests::parse(&text) {
-                Ok(receipt) => Read::Present(receipt),
-                Err(error) => Read::Invalid(format!("the source-test receipt is invalid: {error}")),
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Read::Missing(
-                "no source-test receipt: run release macos-source-tests on R".to_owned(),
-            ),
-            Err(error) => Read::Invalid(format!("cannot read the source-test receipt: {error}")),
-        }
-    };
     // R's test targets, listed apart from the receipt (plan 11 #macos-readiness-check).
-    let targets = listed_targets(root);
-    let targets = match targets {
+    let targets = match listed_targets(root) {
         Ok(targets) => Read::Present(targets),
         Err(error) => Read::Invalid(format!("cannot list R's test targets: {error}")),
     };
     let inputs = judge::Inputs {
         release: &release,
         batch,
+        macos_major,
         candidate: borrow(&candidate),
         ledger: match &ledger {
             Read::Present(records) => Read::Present(records.as_slice()),
@@ -161,17 +180,23 @@ pub(in super::super) fn ready_command(
         },
     };
     let lines = judge::judge(&inputs);
-    let mut ready = judge::ready(&lines);
-    drop(run_lock);
-    // The verdicts hold for the candidate read at the start; one promoted meanwhile is another.
+    // The verdicts stand only for what was read: the same checkout and the same candidate at
+    // the end, or nothing is printed as a verdict (review round 2, finding 9, SHOULD_FIX 2).
+    if identity::capture(root)? != start {
+        return Err("the checkout changed while it was checked; check again".to_owned());
+    }
     if let Read::Present(candidate) = &candidate {
         let still = super::promote::resolve(root, &release)
             .is_ok_and(|now| now.receipt_sha256 == candidate.receipt_sha256);
         if !still {
-            eprintln!("the candidate changed or stopped resolving while it was checked");
-            ready = false;
+            return Err(
+                "the candidate changed or stopped resolving while it was checked; check again"
+                    .to_owned(),
+            );
         }
     }
+    drop(run_lock);
+    let ready = judge::ready(&lines);
     let rows: Vec<String> = lines
         .iter()
         .map(|line| {
@@ -188,7 +213,7 @@ pub(in super::super) fn ready_command(
         _ => "null".to_owned(),
     };
     println!(
-        "{{\"release_source\":\"{release}\",\"candidate_receipt_sha256\":{digest},\"batch\":{},\"ready\":{ready},\"rows\":[\n{}\n]}}",
+        "{{\"release_source\":\"{release}\",\"candidate_receipt_sha256\":{digest},\"batch\":{},\"macos_major\":{macos_major},\"ready\":{ready},\"rows\":[\n{}\n]}}",
         batch.map_or_else(|| "null".to_owned(), |name| format!("\"{name}\"")),
         rows.join(",\n")
     );

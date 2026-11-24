@@ -53,6 +53,8 @@ pub(crate) enum Command {
     MacosReady {
         release: String,
         batch: Option<String>,
+        /// The macOS major version the download paths must have run on (decision (b)).
+        macos_major: u32,
     },
     PlatformInputs {
         platform: super::platform::Platform,
@@ -218,6 +220,10 @@ pub(crate) fn parse(args: &[String]) -> Result<Command, String> {
         "macos-ready" => Command::MacosReady {
             release: tokens.take("--release-source")?,
             batch: tokens.optional("--batch"),
+            macos_major: tokens
+                .take("--macos-major")?
+                .parse()
+                .map_err(|_| "invalid --macos-major")?,
         },
         "platform-inputs" => Command::PlatformInputs {
             platform: super::platform::Platform::parse(&tokens.take("--platform")?)?,

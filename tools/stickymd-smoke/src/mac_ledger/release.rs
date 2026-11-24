@@ -9,6 +9,21 @@ use crate::release::json::Value;
 
 /// The download-path rows of the Phase 18 matrix, stored with their prefix (Phase 16 rows are
 /// stored without theirs).
+/// What the USER records for the download paths whose result has more than one form (USER
+/// 2026-11-24, decision (b)): P18-D04, which of the three first-open cases happened, and P18-D05,
+/// whether Gatekeeper blocked the first open. Every other download row records none.
+pub(crate) fn outcomes(row: &str) -> Option<&'static [&'static str]> {
+    match row {
+        "P18-D04" => Some(&[
+            "gatekeeper-blocked",
+            "translocated-prompt-exit",
+            "portable-start",
+        ]),
+        "P18-D05" => Some(&["blocked", "not-blocked"]),
+        _ => None,
+    }
+}
+
 pub(crate) const DOWNLOAD_ROWS: [&str; 5] = ["P18-D01", "P18-D02", "P18-D03", "P18-D04", "P18-D05"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,7 +34,12 @@ pub(crate) enum ReleaseKind {
     Waiver,
     /// The USER walked one download path with this candidate's ZIP: the signing the candidate
     /// carries and the `sw_vers` of the system it ran on, kept to judge when it must be redone.
-    Download { signing: String, system: String },
+    Download {
+        signing: String,
+        system: String,
+        /// The observed result, for P18-D04 and P18-D05 only (see [`outcomes`]).
+        outcome: Option<String>,
+    },
 }
 
 impl ReleaseKind {
@@ -52,13 +72,18 @@ fn quote(s: &str) -> String {
 impl ReleaseRecord {
     pub fn line(&self) -> String {
         let download = match &self.kind {
-            ReleaseKind::Download { signing, system } => {
-                format!(
-                    ",\"signing\":{},\"system\":{}",
-                    quote(signing),
-                    quote(system)
-                )
-            }
+            ReleaseKind::Download {
+                signing,
+                system,
+                outcome,
+            } => format!(
+                ",\"signing\":{},\"system\":{}{}",
+                quote(signing),
+                quote(system),
+                outcome
+                    .as_ref()
+                    .map_or_else(String::new, |o| format!(",\"outcome\":{}", quote(o)))
+            ),
             _ => String::new(),
         };
         let batch = self
@@ -100,12 +125,24 @@ impl ReleaseRecord {
         // recorder refuses.
         let download_row = DOWNLOAD_ROWS.contains(&self.row.as_str());
         match &self.kind {
-            ReleaseKind::Download { signing, system } => {
+            ReleaseKind::Download {
+                signing,
+                system,
+                outcome,
+            } => {
                 if !download_row {
                     return Err(format!("{} is not a download-path row", self.row));
                 }
                 nonempty("signing", signing)?;
-                nonempty("system", system)
+                nonempty("system", system)?;
+                match (outcomes(&self.row), outcome) {
+                    (None, None) => Ok(()),
+                    (Some(allowed), Some(found)) if allowed.contains(&found.as_str()) => Ok(()),
+                    (Some(allowed), _) => {
+                        Err(format!("{} records one outcome of {allowed:?}", self.row))
+                    }
+                    (None, Some(_)) => Err(format!("{} records no outcome", self.row)),
+                }
             }
             _ if download_row || self.row.starts_with("P18-") => Err(format!(
                 "{} takes a download record, not a {}",
@@ -137,7 +174,7 @@ impl ReleaseRecord {
             "recorded_unix",
         ];
         if kind == "download" {
-            allowed.extend(["signing", "system"]);
+            allowed.extend(["signing", "system", "outcome"]);
         }
         if let (true, Value::Object(fields)) = (
             matches!(kind, "release-receipt" | "release-waiver" | "download"),
@@ -152,6 +189,10 @@ impl ReleaseRecord {
             "download" => ReleaseKind::Download {
                 signing: text("signing")?,
                 system: text("system")?,
+                outcome: match value.field("outcome") {
+                    Ok(member) => Some(member.string()?.to_owned()),
+                    Err(_) => None,
+                },
             },
             _ => return Ok(None),
         };
@@ -198,6 +239,7 @@ mod tests {
             ReleaseKind::Download {
                 signing: "AD_HOC".into(),
                 system: "ProductName: macOS ProductVersion: 27.2".into(),
+                outcome: outcomes(row).map(|o| o[0].to_owned()),
             },
             row,
         )
@@ -240,6 +282,7 @@ mod tests {
         unsigned.kind = ReleaseKind::Download {
             signing: " ".into(),
             system: "macOS".into(),
+            outcome: None,
         };
         assert!(unsigned.validate().is_err());
         let mut short = record(ReleaseKind::Receipt, "W01");
@@ -266,6 +309,83 @@ mod tests {
         assert!(read_all(&source).is_err());
     }
 
+    /// Decision (b): D04 and D05 carry one of their outcomes, every other download row none.
+    #[test]
+    fn only_d04_and_d05_record_an_outcome_and_only_one_of_theirs() {
+        let with = |row: &str, outcome: Option<&str>| {
+            record(
+                ReleaseKind::Download {
+                    signing: "AD_HOC".into(),
+                    system: "ProductName: macOS ProductVersion: 27.2".into(),
+                    outcome: outcome.map(str::to_owned),
+                },
+                row,
+            )
+            .validate()
+        };
+        assert!(with("P18-D04", Some("translocated-prompt-exit")).is_ok());
+        assert!(with("P18-D05", Some("not-blocked")).is_ok());
+        assert!(with("P18-D04", None).unwrap_err().contains("one outcome"));
+        assert!(with("P18-D04", Some("blocked")).is_err(), "a D05 outcome");
+        assert!(with("P18-D05", Some("looked fine")).is_err());
+        assert!(
+            with("P18-D01", Some("blocked"))
+                .unwrap_err()
+                .contains("no outcome")
+        );
+        assert!(with("P18-D01", None).is_ok());
+    }
+
+    /// Decision (c): a release receipt or waiver names the candidate the USER checked.
+    #[test]
+    fn release_records_name_the_candidate_checked() {
+        let args = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
+        let r = "1".repeat(40);
+        let c = hex('C');
+        assert!(
+            parse(&args(&format!(
+                "receipt --release-source {r} --rows W01 --quote=q"
+            )))
+            .is_err()
+        );
+        assert!(
+            parse(&args(&format!(
+                "waive --release-source {r} --rows R01 --quote=q"
+            )))
+            .is_err()
+        );
+        let receipt = parse(&args(&format!(
+            "receipt --release-source {r} --candidate-sha256 {c} --rows P18-D04 --system s --outcome portable-start --quote=q"
+        )))
+        .unwrap();
+        assert_eq!(receipt.candidate_sha256.as_deref(), Some(hex('c').as_str()));
+        assert_eq!(receipt.outcome.as_deref(), Some("portable-start"));
+        assert!(
+            parse(&args(
+                "receipt --app a.app --rows W01 --outcome blocked --quote=q"
+            ))
+            .is_err(),
+            "--outcome belongs to release records"
+        );
+    }
+
+    /// Review round 2, SHOULD_FIX 6: a revocation is read with exactly its fields.
+    #[test]
+    fn a_revocation_with_another_field_is_refused() {
+        let held = Record::Release(record(ReleaseKind::Waiver, "R01")).line();
+        let revocation = Record::Revocation {
+            row: "R01".into(),
+            revoked: Revoked::Candidate(hex('c')),
+            quote: "撤回".into(),
+            recorded_unix: 6,
+        }
+        .line();
+        assert!(read_all(&format!("{held}\n{revocation}\n")).is_ok());
+        let widened = revocation.replacen("\"quote\"", "\"batch\":\"rc0\",\"quote\"", 1);
+        let error = read_all(&format!("{held}\n{widened}\n")).unwrap_err();
+        assert!(error.contains("no field batch"), "{error}");
+    }
+
     #[test]
     fn a_candidate_revocation_needs_a_release_record_of_its_row_before_it() {
         let held = [Record::Release(record(ReleaseKind::Waiver, "R01"))];
@@ -287,7 +407,8 @@ mod tests {
         let args = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
         let r = "1".repeat(40);
         let receipt = parse(&args(&format!(
-            "receipt --release-source {r} --rows W01,P18-D02 --system s.txt --quote=q"
+            "receipt --release-source {r} --candidate-sha256 {} --rows W01,P18-D02 --system s.txt --quote=q",
+            hex('c')
         )))
         .unwrap();
         assert_eq!(receipt.rows, ["W01", "P18-D02"]);
@@ -304,7 +425,8 @@ mod tests {
             "--system belongs to release records"
         );
         let waive = parse(&args(&format!(
-            "waive --release-source {r} --rows R01 --quote=q --batch rc1"
+            "waive --release-source {r} --candidate-sha256 {} --rows R01 --quote=q --batch rc1",
+            hex('c')
         )))
         .unwrap();
         assert_eq!(waive.command, Some(Command::Waive));

@@ -16,6 +16,11 @@ pub(super) const MANUAL_LOCK: &str = "dist/evidence/manual.lock";
 pub(super) const MANUAL_ARCHIVE: &str = "dist/evidence/manual-archive";
 /// The macOS GUI ledger (`mac-ledger`); only that command appends to it.
 pub(crate) const MAC_GUI_LEDGER: &str = "dist/evidence/mac-gui-ledger";
+/// The macOS source-test receipt and its run lock (`release macos-source-tests`); only that
+/// command writes them, and a replaced lock would let two runs overlap (plan 11
+/// #macos-readiness-check).
+pub(crate) const MACOS_SOURCE_TEST_RECEIPT: &str = "dist/evidence/release-source-tests-macos.json";
+pub(crate) const MACOS_SOURCE_TEST_LOCK: &str = "dist/evidence/.release-source-tests-macos.lock";
 
 /// Exclusive for any change to the store or to the candidate it is bound to (Promote,
 /// Source Freeze); shared for reading a consistent target and log. Taken before the
@@ -33,6 +38,14 @@ pub(super) fn lock_manual_store(root: &Path, exclusive: bool) -> Result<SidecarG
 /// Public writers refuse them: only the store, under its lock, may replace or archive them.
 pub(super) fn is_manual_store_path(root: &Path, path: &Path) -> bool {
     [OBSERVATION_LOG, TARGET_RECEIPT, MANUAL_LOCK, MANUAL_ARCHIVE]
+        .iter()
+        .any(|reserved| path_identity::reaches(root, path, reserved))
+}
+
+/// Whether `path` names the macOS source-test receipt or its lock. Public writers, and the
+/// ledger's configurable destination, refuse them.
+pub(crate) fn is_macos_source_test_path(root: &Path, path: &Path) -> bool {
+    [MACOS_SOURCE_TEST_RECEIPT, MACOS_SOURCE_TEST_LOCK]
         .iter()
         .any(|reserved| path_identity::reaches(root, path, reserved))
 }

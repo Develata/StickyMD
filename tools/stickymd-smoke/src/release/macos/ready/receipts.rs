@@ -61,18 +61,24 @@ pub(super) fn standing<'a>(
         })
 }
 
-/// The standing download-path records for `candidate` as `(row, signing, system)`, or the rows
-/// that have none.
+/// One standing download-path record: its row, signing, system and outcome.
+pub(super) type Download<'a> = (&'static str, &'a str, &'a str, Option<&'a str>);
+
+/// The standing download-path records for `candidate`, or the rows that have none.
 pub(super) fn downloads<'a>(
     records: &'a [Record],
     candidate: &str,
-) -> Result<Vec<(&'static str, &'a str, &'a str)>, Vec<&'static str>> {
+) -> Result<Vec<Download<'a>>, Vec<&'static str>> {
     let mut found = Vec::new();
     let mut missing = Vec::new();
     for row in DOWNLOAD_ROWS {
         match standing(records, Wanted::Download, row, candidate, None).map(|r| &r.kind) {
-            Some(ReleaseKind::Download { signing, system }) => {
-                found.push((row, signing.as_str(), system.as_str()));
+            Some(ReleaseKind::Download {
+                signing,
+                system,
+                outcome,
+            }) => {
+                found.push((row, signing.as_str(), system.as_str(), outcome.as_deref()));
             }
             _ => missing.push(row),
         }

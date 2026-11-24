@@ -72,10 +72,12 @@ pub(super) fn promote_command(
 
 #[cfg(target_os = "macos")]
 pub(super) fn candidate_command(root: &Path, release: &str) -> Result<(), String> {
-    let app = promote::resolve(root, release)?.app;
+    let resolved = promote::resolve(root, release)?;
+    // The digest a USER release receipt or waiver names as checked (decision (c)).
     println!(
-        "{{\"app\":\"{}\"}}",
-        crate::evidence::escape_json(&app.display().to_string())
+        "{{\"app\":\"{}\",\"candidate_receipt_sha256\":\"{}\"}}",
+        crate::evidence::escape_json(&resolved.app.display().to_string()),
+        resolved.receipt_sha256
     );
     Ok(())
 }
@@ -96,6 +98,6 @@ pub(super) fn source_tests_command(_: &Path, _: &str) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(super) fn ready_command(_: &Path, _: &str, _: Option<&str>) -> Result<(), String> {
+pub(super) fn ready_command(_: &Path, _: &str, _: Option<&str>, _: u32) -> Result<(), String> {
     Err("macOS readiness is checked on macOS".to_owned())
 }

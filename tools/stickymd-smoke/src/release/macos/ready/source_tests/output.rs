@@ -3,11 +3,13 @@
 //! stdout and stderr share a pipe, so each Cargo header precedes its binary's output.
 //!
 //! A section opens at Cargo's `Running <description> (<path>)` or `Doc-tests <crate>` line and
-//! holds libtest's `running <n> tests` and `test result: …` lines. Anything else is ignored, so a
-//! stray line can only make a section incomplete or doubled, which is reported, never a PASS.
+//! holds libtest's `running <n> tests` line, one `test <name> ... <outcome>` line per test, and
+//! its `test result: …` line. Anything else is ignored, so a stray line can only make a section
+//! incomplete, doubled or self-contradictory, which is reported, never a PASS. Each binary's own
+//! `--list` names the tests it holds; a run is checked against that listing test by test.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
-use super::{Counts, PACKAGES, Run, Target};
+use super::{Case, CaseOutcome, Counts, PACKAGES, Run, Target};
 use crate::release::json::{self, Value};
 
 /// Who printed a section: a test binary (its file name) or a library's doc-tests (its crate).
@@ -21,6 +23,65 @@ pub(in super::super) enum Header {
 pub(in super::super) struct Section {
     pub header: Header,
     pub counts: Option<Counts>,
+    /// Each `test <name> ... <outcome>` line, in order.
+    pub tests: Vec<(String, CaseOutcome)>,
+}
+
+/// `test <name> ... ok|FAILED|ignored[, <reason>]`, with libtest's ` - should panic` suffix
+/// taken off the name.
+fn test_line(line: &str) -> Option<(String, CaseOutcome)> {
+    let rest = line.strip_prefix("test ")?;
+    let (name, outcome) = rest.rsplit_once(" ... ")?;
+    let outcome = match outcome {
+        "ok" => CaseOutcome::Ok,
+        "FAILED" => CaseOutcome::Failed,
+        "ignored" => CaseOutcome::Ignored,
+        other if other.starts_with("ignored, ") => CaseOutcome::Ignored,
+        _ => return None,
+    };
+    let name = name.strip_suffix(" - should panic").unwrap_or(name);
+    (!name.is_empty()).then(|| (name.to_owned(), outcome))
+}
+
+/// The test names of a `--list --format terse` listing (`<name>: test`); any other line is an
+/// error, so a listing cannot be misread as shorter than it is.
+pub(in super::super) fn listing(output: &str) -> Result<Vec<String>, String> {
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            line.strip_suffix(": test")
+                .map(str::to_owned)
+                .ok_or_else(|| format!("unreadable test listing line {line:?}"))
+        })
+        .collect()
+}
+
+/// The cases of one binary: every listed test, with whether it is listed as ignored and the
+/// outcome the run printed for it (`NotRun` when it printed none); a printed test the listing
+/// does not hold is returned apart.
+pub(in super::super) fn cases(
+    all: &[String],
+    ignored: &[String],
+    printed: &[(String, CaseOutcome)],
+) -> (Vec<Case>, Vec<String>) {
+    let cases = all
+        .iter()
+        .map(|name| Case {
+            name: name.clone(),
+            ignored: ignored.contains(name),
+            outcome: printed
+                .iter()
+                .find(|(printed, _)| printed == name)
+                .map_or(CaseOutcome::NotRun, |(_, outcome)| *outcome),
+        })
+        .collect();
+    let unlisted = printed
+        .iter()
+        .filter(|(name, _)| !all.contains(name))
+        .map(|(name, _)| name.clone())
+        .collect();
+    (cases, unlisted)
 }
 
 fn header(line: &str) -> Option<Header> {
@@ -93,11 +154,19 @@ pub(in super::super) fn sections(output: &str) -> Result<Vec<Section>, String> {
             sections.push(Section {
                 header,
                 counts: None,
+                tests: Vec::new(),
             });
             ran = None;
         } else if let Some(count) = running(line) {
             match sections.last() {
                 Some(open) if open.counts.is_none() && ran.is_none() => ran = Some(count),
+                _ => return Err(format!("{line:?} outside a test binary's output")),
+            }
+        } else if !line.starts_with("test result: ")
+            && let Some(test) = test_line(line)
+        {
+            match sections.last_mut() {
+                Some(open) if open.counts.is_none() && ran.is_some() => open.tests.push(test),
                 _ => return Err(format!("{line:?} outside a test binary's output")),
             }
         } else if line.starts_with("test result: ") {
@@ -121,6 +190,8 @@ pub(in super::super) fn sections(output: &str) -> Result<Vec<Section>, String> {
 pub(in super::super) struct Executable {
     pub target: Target,
     pub file: String,
+    /// Where Cargo built it, to ask it for its own test listing.
+    pub path: std::path::PathBuf,
 }
 
 /// The test executables of the eight packages from `cargo test … --no-run
@@ -147,6 +218,7 @@ pub(in super::super) fn executables(stdout: &str) -> Result<Vec<Executable>, Str
                 name: artifact.name,
             },
             file,
+            path: artifact.executable,
         });
     }
     Ok(found)
@@ -224,32 +296,72 @@ pub(in super::super) fn listed_targets(metadata: &str) -> Result<Vec<Target>, St
     Ok(found)
 }
 
-/// Names each section by the binary or library it ran; a section that matches nothing Cargo
-/// listed, or matches twice, is a problem rather than a guess.
+/// The target a section ran, by what Cargo listed: an executable's file name, or a doc-tested
+/// library's name. `None` when it matches nothing or more than one.
+pub(in super::super) fn target_of<'a>(
+    section: &Section,
+    executables: &'a [Executable],
+    doc: &'a [Target],
+) -> Option<&'a Target> {
+    let matches: Vec<&Target> = match &section.header {
+        Header::Binary(file) => executables
+            .iter()
+            .filter(|e| &e.file == file)
+            .map(|e| &e.target)
+            .collect(),
+        Header::Doc(name) => doc.iter().filter(|t| &t.name == name).collect(),
+    };
+    match matches.as_slice() {
+        [one] => Some(one),
+        _ => None,
+    }
+}
+
+/// A target's listing: all its tests and those of them listed as ignored.
+pub(in super::super) struct Listed {
+    pub target: Target,
+    pub all: Vec<String>,
+    pub ignored: Vec<String>,
+}
+
+/// Names each section by the target it ran and joins it with that target's listing; a section
+/// that matches nothing Cargo listed, a target without a listing, or a printed test the listing
+/// does not hold is a problem rather than a guess.
 pub(in super::super) fn attribute(
     sections: &[Section],
     executables: &[Executable],
     doc: &[Target],
+    listings: &[Listed],
 ) -> (Vec<Run>, Vec<String>) {
     let mut runs = Vec::new();
     let mut problems = Vec::new();
     for section in sections {
-        let matches: Vec<&Target> = match &section.header {
-            Header::Binary(file) => executables
-                .iter()
-                .filter(|e| &e.file == file)
-                .map(|e| &e.target)
-                .collect(),
-            Header::Doc(name) => doc.iter().filter(|t| &t.name == name).collect(),
+        let (Some(target), Some(counts)) = (target_of(section, executables, doc), section.counts)
+        else {
+            problems.push(format!(
+                "{:?} is not one listed test target",
+                section.header
+            ));
+            continue;
         };
-        match (matches.as_slice(), section.counts) {
-            ([target], Some(counts)) => runs.push(Run {
-                target: (*target).clone(),
-                counts,
-            }),
-            ([], _) => problems.push(format!("{:?} is not a listed test", section.header)),
-            _ => problems.push(format!("{:?} is ambiguous", section.header)),
-        }
+        let Some(listed) = listings.iter().find(|l| &l.target == target) else {
+            problems.push(format!(
+                "{} {} {} has no test listing",
+                target.package, target.kind, target.name
+            ));
+            continue;
+        };
+        let (cases, unlisted) = cases(&listed.all, &listed.ignored, &section.tests);
+        problems.extend(
+            unlisted
+                .into_iter()
+                .map(|name| format!("{name} ran but {} does not list it", target.name)),
+        );
+        runs.push(Run {
+            target: target.clone(),
+            counts,
+            cases,
+        });
     }
     (runs, problems)
 }

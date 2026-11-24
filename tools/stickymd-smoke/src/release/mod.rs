@@ -114,9 +114,11 @@ pub(crate) fn execute(root: &Path, command: &Command) -> Result<(), String> {
         } => macos::promote_command(root, *run_id, *attempt, release, zip),
         Command::MacosCandidate { release } => macos::candidate_command(root, release),
         Command::MacosSourceTests { release } => macos::source_tests_command(root, release),
-        Command::MacosReady { release, batch } => {
-            macos::ready_command(root, release, batch.as_deref())
-        }
+        Command::MacosReady {
+            release,
+            batch,
+            macos_major,
+        } => macos::ready_command(root, release, batch.as_deref(), *macos_major),
         Command::WorkspaceVersion => {
             println!("{}", crate::repository::workspace_version(root)?);
             Ok(())
