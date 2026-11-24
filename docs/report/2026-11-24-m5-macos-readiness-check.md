@@ -337,3 +337,13 @@ schema 1 与 2 被拒，须在 R 上重跑。
 
 此后的复审若在本轮没有改动的代码中发现问题，追加到这里。
 
+**验证**（本机 macOS 27.2.1 arm64）：`stickymd-smoke` 718 + 20 个测试、`stickymd-mac` 124 个测试通过；clippy 在八个 macOS 包上与
+`stickymd-smoke --target x86_64-pc-windows-msvc` 都无警告；fmt 通过。运行器的真实演练：
+- `4b6980f`：S06 为 FAIL，见上表 S06 一行（修复本身使卷卸载失败）；演练留下的 exFAT 映像已卸载、其临时目录已删除。
+- `e4e4891`（不是正式收据）：schema 3 收据中 23 个目标的 2017 个测试逐个对上清单（1984 通过、33 忽略且都在归类表中、0 未运行），`problems` 为空，
+  收据的 `run` 等于运行记录；same-key 2/2 与 S06 1/1 通过，两个测试自己测得临时卷 `case-insensitive`、映像 `case-sensitive`；驱动的摘要
+  `34d619e1…` 等于 `target/release/stickymd-smoke` 的（与 `4b6980f` 上的相同：`stickymd-smoke` 的源码两者之间没有变）；三项判定都为 PASS，开始与
+  结束都干净。六个文档测试目标在本仓库中都没有文档测试，rustdoc 的多组输出只由临时 crate 的真实输出验证。
+
+另见：本机还挂着一个约五天前的映像 `stickymd-test-root-case-sensitive-62516-…`，不是本轮的运行留下的，未动。
+
