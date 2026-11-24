@@ -145,6 +145,15 @@ fn standalone_parser_never_needs_an_existing_app() {
     assert!(parse(&["--app", "x", "--only", "W02,R03", "--zip", "c.zip"]).is_ok());
     let error = parse(&["--app", "x", "--only", "W02", "--zip", "c.zip"]).unwrap_err();
     assert!(error.contains("only for R03"), "{error}");
+    // The write watch calibration goes with R03 alone, and is off unless asked for.
+    assert!(!o.r03_write_restore);
+    let o = parse(&["--app", "x", "--only", "R03", "--r03-write-restore"]).unwrap();
+    assert!(o.r03_write_restore);
+    let error = parse(&["--app", "x", "--only", "W02", "--r03-write-restore"]).unwrap_err();
+    assert!(
+        error.contains("--r03-write-restore is only for R03"),
+        "{error}"
+    );
     for args in [
         vec!["--app", "x", "--zip"],
         vec!["--app", "x", "--zip", "a.zip", "--zip", "b.zip"],
@@ -1285,7 +1294,24 @@ fn a_success_first_seen_after_the_deadline_is_late() {
 /// R03 from observations: the bad samples a check must refuse, and what it cannot tell.
 #[test]
 fn translocation_checks_refuse_bad_samples() {
-    use super::translocation::{EXIT_ONE, GENERIC_ADVICE, Observed, TRANSLOCATED_ADVICE, judge};
+    use super::translocation::{
+        EXIT_ONE, GENERIC_ADVICE, NOTE_ATTRIB, NOTE_EXTEND, NOTE_REVOKE, NOTE_WRITE, Observed,
+        TRANSLOCATED_ADVICE, Watched, judge,
+    };
+    let plist = "StickyMD.app/Contents/Info.plist";
+    let tree = vec![
+        "dir . mtime=1".to_owned(),
+        "dir StickyMD.app mtime=2".to_owned(),
+        "dir StickyMD.app/Contents mtime=3".to_owned(),
+        format!("file {plist} bytes=10 sha256=ab mtime=4"),
+    ];
+    let entries = [".", "StickyMD.app", "StickyMD.app/Contents", plist].map(str::to_owned);
+    let watched = |events: Vec<(String, u32)>| {
+        Some(Watched {
+            entries: entries.to_vec(),
+            events,
+        })
+    };
     let good = || Observed {
         zip: None,
         quarantine: Some("00c3;6afec4a5;Safari;".into()),
@@ -1307,35 +1333,36 @@ fn translocation_checks_refuse_bad_samples() {
         unanswered: None,
         exited: Some(true),
         termination: Some(EXIT_ONE.into()),
-        before: vec!["StickyMD.app".into(), "StickyMD.zip".into()],
-        after: vec!["StickyMD.app".into(), "StickyMD.zip".into()],
+        before: tree.clone(),
+        after: tree.clone(),
+        // Gatekeeper's own quarantine attribute change is not a write.
+        watch: watched(vec![("StickyMD.app".into(), NOTE_ATTRIB)]),
     };
     let verdict = |o: Observed| {
         let mut row = Row::new("R03");
         judge(&o, &mut row);
         (aggregate(&row.checks), row)
     };
-    // Fail closed (review #24 B9): every observation holds, but equal snapshots do not prove that
-    // nothing was written, so the row is NOT_TESTED, never PASS.
+    // Every observation holds: equal snapshots and a watch with no write (USER 2026-11-24, A).
     let (v, row) = verdict(good());
-    assert_eq!(v, Verdict::NotTested, "{}", row.json());
+    assert_eq!(v, Verdict::Pass, "{}", row.json());
     assert_eq!(row.checks.len(), 6);
     let unwritten = row
         .checks
         .iter()
         .find(|c| c.name == super::translocation::UNWRITTEN)
         .unwrap();
-    assert_eq!(unwritten.verdict, Verdict::NotTested);
-    assert!(unwritten.observation.contains("review #24 B9"));
     assert!(
-        row.checks
-            .iter()
-            .filter(|c| c.name != super::translocation::UNWRITTEN)
-            .all(|c| c.verdict == Verdict::Pass)
+        unwritten
+            .observation
+            .contains("attributes changed: [\"StickyMD.app: ATTRIB\"]"),
+        "{}",
+        unwritten.observation
     );
     // Bad samples: gone before a prompt, a prompt about something else, the advice for any other
-    // unwritable folder, still running after Return, another exit, a file written beside the
-    // package.
+    // unwritable folder, still running after Return, another exit, a folder written beside the
+    // package, and writes the snapshots cannot see: a file rewritten in place (its bytes and
+    // time restored), a file grown and shrunk back, a file created and removed in the folder.
     for bad in [
         Observed {
             window: None,
@@ -1360,7 +1387,24 @@ fn translocation_checks_refuse_bad_samples() {
             ..good()
         },
         Observed {
-            after: vec!["StickyMD.app".into(), "StickyMD.zip".into(), "note".into()],
+            after: [tree.clone(), vec!["dir note mtime=9".to_owned()]].concat(),
+            ..good()
+        },
+        Observed {
+            watch: watched(vec![(plist.into(), NOTE_WRITE | NOTE_ATTRIB)]),
+            ..good()
+        },
+        Observed {
+            watch: watched(vec![(plist.into(), NOTE_EXTEND)]),
+            ..good()
+        },
+        Observed {
+            watch: watched(vec![(".".into(), NOTE_WRITE | NOTE_ATTRIB)]),
+            ..good()
+        },
+        // A write and a revoked entry: the write is still observed.
+        Observed {
+            watch: watched(vec![(".".into(), NOTE_REVOKE), (plist.into(), NOTE_WRITE)]),
             ..good()
         },
     ] {
@@ -1426,6 +1470,22 @@ fn translocation_checks_refuse_bad_samples() {
             termination: None,
             ..good()
         },
+        // No watch read; a watch that did not cover what the snapshot lists; an entry revoked.
+        Observed {
+            watch: None,
+            ..good()
+        },
+        Observed {
+            watch: Some(Watched {
+                entries: entries[..3].to_vec(),
+                events: Vec::new(),
+            }),
+            ..good()
+        },
+        Observed {
+            watch: watched(vec![(plist.into(), NOTE_REVOKE)]),
+            ..good()
+        },
     ] {
         let (v, row) = verdict(unknown);
         assert_eq!(v, Verdict::NotTested, "{}", row.json());
@@ -1457,13 +1517,57 @@ fn translocation_checks_refuse_bad_samples() {
                 .into(),
         ..good()
     });
-    // The prompt check passes; the row stays NOT_TESTED only for the unproven "nothing written".
-    assert_eq!(v, Verdict::NotTested, "{}", row.json());
+    assert_eq!(v, Verdict::Pass, "{}", row.json());
     assert!(
         row.checks
             .iter()
             .any(|c| c.name == super::translocation::PROMPTED && c.verdict == Verdict::Pass)
     );
+}
+
+/// R03's facts are what its rule reads, written and read back unchanged; read strictly; and
+/// judged again to the same checks.
+#[test]
+fn r03_facts_round_trip_and_rejudge_alike() {
+    use super::translocation::{NOTE_ATTRIB, NOTE_WRITE, facts, judge};
+    use crate::release::json;
+    for events in [
+        vec![],
+        vec![("StickyMD.app", NOTE_ATTRIB)],
+        vec![(".", NOTE_WRITE)],
+    ] {
+        for zip in [None, Some("f".repeat(64))] {
+            let text = facts::sample(zip.as_deref(), &events);
+            let observed = facts::parse(&json::parse(&text).unwrap()).unwrap();
+            assert_eq!(facts::json(&observed), text);
+            let mut row = Row::new("R03");
+            judge(&observed, &mut row);
+            let rejudged = facts::rejudge(&json::parse(&text).unwrap()).unwrap();
+            assert_eq!(rejudged.zip, zip);
+            assert_eq!(
+                rejudged.checks,
+                row.checks
+                    .iter()
+                    .map(|c| (
+                        c.name.clone(),
+                        c.verdict.name().to_owned(),
+                        c.observation.clone()
+                    ))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    // A watch without its events, an event without its flags, a flag beyond 32 bits.
+    let text = facts::sample(None, &[(".", NOTE_WRITE)]);
+    for (from, to) in [
+        (",\"events\":[{\"entry\":\".\",\"flags\":2}]", ""),
+        (",\"flags\":2", ""),
+        ("\"flags\":2", "\"flags\":4294967296"),
+    ] {
+        assert!(text.contains(from), "{from}");
+        let bad = text.replace(from, to);
+        assert!(facts::parse(&json::parse(&bad).unwrap()).is_err(), "{bad}");
+    }
 }
 
 fn image(width: usize, height: usize, fill: [u8; 3]) -> super::pixels::Image {

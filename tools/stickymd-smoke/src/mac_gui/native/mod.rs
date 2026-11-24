@@ -4,4 +4,5 @@ pub(in crate::mac_gui) mod accessibility;
 mod cf;
 pub(in crate::mac_gui) mod events;
 pub(in crate::mac_gui) mod permissions;
+pub(in crate::mac_gui) mod vnodes;
 pub(in crate::mac_gui) mod windows;

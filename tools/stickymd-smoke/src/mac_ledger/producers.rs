@@ -2,7 +2,8 @@
 //! run only the rows they run, and an R03 PASS only with every check R03 makes — the
 //! quarantine preset, translocation, the prompt, the exit and its status, and the observation
 //! that nothing was written — plus, when the run opened a candidate ZIP, the check naming that
-//! ZIP's digest. R01 and R02 come only from `mac-resources` evidence (`resources`).
+//! ZIP's digest, all recomputed from the facts R03 recorded. R01 and R02 come only from
+//! `mac-resources` evidence (`resources`).
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
 use crate::release::json::Value;
@@ -32,10 +33,64 @@ pub(super) fn gui_row(row: &str, case: Option<&str>) -> bool {
     }
 }
 
-/// An R03 PASS holds exactly R03's checks, in order, and with a ZIP the first names it. Even
-/// then it is not recorded while "nothing written" cannot be proven (review #24 B9): the driver
-/// writes that check NOT_TESTED, so an R03 PASS is an older driver's or none at all.
-pub(super) fn r03_pass(checks: &[Value], zip: Option<&str>) -> Result<(), String> {
+/// R03 judged again from its facts (review #24 S4): the checks the evidence states must be the
+/// ones the driver's rule gives for the facts it recorded — name, verdict and observation
+/// alike — and the row's verdict theirs; the facts name the same ZIP as the evidence. A row
+/// without facts (a driver older than the write watch) is recorded only when it does not PASS:
+/// it can then only keep the row from holding.
+pub(super) fn r03(
+    scenario: &Value,
+    verdict: &str,
+    checks: &[Value],
+    zip: Option<&str>,
+) -> Result<(), String> {
+    let stated = checks
+        .iter()
+        .map(|check| {
+            let text = |key: &str| check.field(key).and_then(Value::string).map(str::to_owned);
+            Ok((text("name")?, text("verdict")?, text("observation")?))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let Ok(facts) = scenario.field("facts") else {
+        if verdict == "PASS" {
+            return Err("an R03 PASS without its facts is not recorded: its checks cannot be recomputed (a driver older than the write watch; review #24 B9, S4)".into());
+        }
+        return Ok(());
+    };
+    let rejudged = crate::mac_gui::r03_rejudge(facts)?;
+    if rejudged.zip.as_deref() != zip {
+        return Err(format!(
+            "R03's facts name the ZIP {:?}, the evidence {zip:?}",
+            rejudged.zip
+        ));
+    }
+    if rejudged.checks != stated {
+        return Err(format!(
+            "R03's checks do not follow from its facts: recomputed {:?}, stated {stated:?}",
+            rejudged.checks
+        ));
+    }
+    let verdicts: Vec<&str> = stated.iter().map(|(_, v, _)| v.as_str()).collect();
+    let aggregate = if verdicts.contains(&"FAIL") {
+        "FAIL"
+    } else if verdicts.is_empty() || verdicts.contains(&"NOT_TESTED") {
+        "NOT_TESTED"
+    } else {
+        "PASS"
+    };
+    if aggregate != verdict {
+        return Err(format!(
+            "R03 is stated {verdict} but its checks make it {aggregate}"
+        ));
+    }
+    if verdict == "PASS" {
+        r03_pass(checks, zip)?;
+    }
+    Ok(())
+}
+
+/// An R03 PASS holds exactly R03's checks, in order, and with a ZIP the first names it.
+fn r03_pass(checks: &[Value], zip: Option<&str>) -> Result<(), String> {
     let mut expected: Vec<&str> = Vec::new();
     if zip.is_some() {
         expected.push(crate::mac_gui::R03_ZIP_CHECK);
@@ -58,8 +113,5 @@ pub(super) fn r03_pass(checks: &[Value], zip: Option<&str>) -> Result<(), String
             ));
         }
     }
-    Err(format!(
-        "an R03 PASS is not recorded: {}",
-        crate::mac_gui::R03_WRITE_UNPROVEN
-    ))
+    Ok(())
 }
