@@ -4,7 +4,7 @@
 
 use super::model::SCENARIOS;
 use super::report::Evidence;
-use super::rows::{CPU_HARD_FAILURE_PERCENT, RowVerdict, VIEW_UNCONFIRMED, from_evidence};
+use super::rows::{RowVerdict, VIEW_UNCONFIRMED, from_evidence};
 use super::tests::{BUSY_TICKS, evidence, measured};
 use crate::release::json;
 
@@ -116,7 +116,6 @@ fn a_median_idle_cpu_above_the_hard_line_fails_r02_and_a_single_spike_does_not()
     assert_eq!(with_ticks(1, &|_| AT_THE_LINE, 60.0).0, "MEASURED");
     assert_eq!(with_ticks(1, &|_| AT_THE_LINE + 1, 60.0).0, "FAIL");
     assert_eq!(with_ticks(1, &|_| AT_THE_LINE, 60.000012).0, "MEASURED");
-    assert!(CPU_HARD_FAILURE_PERCENT == 0.1);
 }
 
 #[test]

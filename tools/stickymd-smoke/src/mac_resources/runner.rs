@@ -411,7 +411,12 @@ mod tests {
             .unwrap()
             .unwrap();
         let mut run = super::Run::new(1);
-        super::measure(&mut session, &mut run, (1, 1), false, [1.0; 4]).unwrap();
+        let screen = super::Screen {
+            dimensions: [1.0; 4],
+            main: 1,
+            active: vec![1],
+        };
+        super::measure(&mut session, &mut run, (1, 1), false, &screen).unwrap();
         assert_eq!(run.status, "EXITED_EARLY");
         assert!(run.samples.is_empty() && run.metrics.is_none());
         assert!(run.exit_status.as_deref().unwrap().contains('1'));
