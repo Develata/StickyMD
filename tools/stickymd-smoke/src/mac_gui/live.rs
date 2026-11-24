@@ -553,7 +553,7 @@ impl Backend for Live<'_> {
                 } else {
                     let w = windows::window(self.pid, Some(self.window_id))?;
                     let path = self.out.join("F01.ppm");
-                    crate::atomic_evidence::write(&path, &windows::screenshot(&w)?)?;
+                    crate::atomic_evidence::write_new(&path, &windows::screenshot(&w)?)?;
                     Value::Text(format!(
                         "screenshot {} sha256={}",
                         path.display(),

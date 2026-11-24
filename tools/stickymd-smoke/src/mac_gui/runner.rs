@@ -97,10 +97,10 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     }
     // Prevent output from ever targeting the supplied bundle or its canonical note directory.
     let out = crate::mac_common::output::guarded(&options.out, &app)?;
-    fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-    // Review B7: nothing of an earlier run (or a file named like one, such as the --zip input) is
-    // replaced; the first checkpoint is created exclusively.
-    refuse_earlier_evidence(&out)?;
+    // Review B7 and round 3 B2: nothing of an earlier run, nor a file named like one, nor the
+    // --zip input, is replaced; every file below is created exclusively.
+    let inputs: Vec<&Path> = options.zip.iter().map(|z| z.as_path()).collect();
+    crate::mac_common::output::prepare(&out, &written_here, &inputs)?;
     let environment = format!(
         "{{\"os\":{},\"architecture\":{},\"hv_vmm_present\":{},\"allow_host\":{},\"permissions\":{{\"accessibility\":{},\"post_event\":{},\"screen_recording\":{}}},\"unix_seconds\":{},\"fixture_config\":{},\"main_display\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}},\"coordinate_space\":\"main-display global CG points (DIP)\",\"keyboard_precondition\":\"ABC/US; not automatically verified\"}}",
         quote(&command("/usr/bin/sw_vers", &[])?),
@@ -156,6 +156,12 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             }));
             match result {
                 Ok(Ok(())) => {}
+                // Review round 3, B4: an error around R03 (its session directory, attachments,
+                // cleanup) is the machine's, not the product's: untested, and the run unfinished.
+                Ok(Err(error)) if id == "R03" => {
+                    row.skip("execution", &error);
+                    input.stopped = Some(format!("R03 could not complete: {error}"));
+                }
                 Ok(Err(error)) => row.check("execution", false, error),
                 Err(payload) => {
                     std::mem::forget(payload);
@@ -274,19 +280,13 @@ pub(super) fn launch(
 /// of an interrupted run is never taken for a finished one (mac-ledger records only finished runs).
 /// Schema 2 is the first whose `finished` only this driver's rules set, and the first that names
 /// the batch the run was started for; mac-ledger records no older schema.
-/// Refuses an --out holding a `mac-gui.json` or an attachment name this driver writes.
-fn refuse_earlier_evidence(out: &Path) -> Result<(), String> {
-    for entry in fs::read_dir(out).map_err(|e| format!("{}: {e}", out.display()))? {
-        let name = entry.map_err(|e| e.to_string())?.file_name();
-        let name = name.to_string_lossy();
-        if name == "mac-gui.json" || name.ends_with("-stderr.log") || name.starts_with("R03-") {
-            return Err(format!(
-                "{} already holds {name}; each run needs an --out of its own",
-                out.display()
-            ));
-        }
-    }
-    Ok(())
+/// Whether `name` (lowercased) is one `mac-gui` may write into --out: the evidence, each row's
+/// `<id>-stderr.log`, R03's attachments and F01's screenshot.
+pub(crate) fn written_here(name: &str) -> bool {
+    name == "mac-gui.json"
+        || name == "f01.ppm"
+        || name.ends_with("-stderr.log")
+        || name.starts_with("r03-")
 }
 
 /// `first`: the run's first checkpoint, created exclusively; later ones replace only it.

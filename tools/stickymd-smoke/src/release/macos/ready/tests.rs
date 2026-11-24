@@ -33,7 +33,7 @@ fn identity(driver: char) -> Identity {
     Identity {
         inputs: Some(hex('a')),
         driver: hex(driver),
-        image: "sha256:image".into(),
+        image: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into(),
         system: "ProductName: macOS ProductVersion: 27.2".into(),
     }
 }
@@ -244,12 +244,45 @@ fn a_fail_spoils_its_identity_and_another_identity_can_still_hold() {
     records.push(record_on_image(
         "W03",
         "PASS",
-        "sha256:other-image",
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         &built,
         '7',
     ));
     let lines = run(Read::Present(&candidate), &records, &receipt());
     assert_line(&lines, "P16-W03", Verdict::Pass, "run-7");
+}
+
+/// Review round 3, B5: a record whose VM image names no digest (an old line's tag) cannot be
+/// placed in or apart from a group, so beside it no group is shown clean; its FAIL still counts.
+#[test]
+fn a_record_of_unknown_image_blocks_the_row_and_its_fail_still_counts() {
+    let candidate = candidate();
+    let built = candidate.built.clone();
+    let mut records = ledger();
+    records.push(record_on_image(
+        "W03",
+        "PASS",
+        "mac-test:latest",
+        &built,
+        '8',
+    ));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(
+        &lines,
+        "P16-W03",
+        Verdict::NotTested,
+        "its identity is unknown",
+    );
+    records.pop();
+    records.push(record_on_image(
+        "W03",
+        "FAIL",
+        "mac-test:latest",
+        &built,
+        '8',
+    ));
+    let lines = run(Read::Present(&candidate), &records, &receipt());
+    assert_line(&lines, "P16-W03", Verdict::Fail, "a FAIL of P16-W03");
 }
 
 #[test]
@@ -292,7 +325,7 @@ fn w12_needs_its_three_logout_cases_in_one_identity() {
     records.push(record_on_image(
         "W12-logout-dialog",
         "PASS",
-        "sha256:other-image",
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         &built,
         '6',
     ));
@@ -767,7 +800,7 @@ fn over_every_row_a_recorded_fail_is_never_waived_and_never_hidden_from_a_manual
             records.push(record_on_image(
                 member,
                 "PASS",
-                "sha256:other-image",
+                "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                 &candidate.built,
                 '7',
             ));
@@ -956,7 +989,13 @@ fn a_fail_of_another_driver_still_counts() {
 fn an_r03_fail_beside_a_clean_group_is_a_fail_in_either_order() {
     let candidate = candidate();
     let fail = record("R03", "FAIL", '1', &candidate.built, '8');
-    let pass = record_on_image("R03", "PASS", "sha256:other-image", &candidate.built, '7');
+    let pass = record_on_image(
+        "R03",
+        "PASS",
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        &candidate.built,
+        '7',
+    );
     for (first, second) in [(fail.clone(), pass.clone()), (pass, fail)] {
         let mut records: Vec<Record> = ledger()
             .into_iter()

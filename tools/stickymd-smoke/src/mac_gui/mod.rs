@@ -73,6 +73,9 @@ mod visual;
 #[cfg(any(target_os = "macos", test))]
 pub(crate) use options::IDS;
 pub(crate) use options::{Options, parse};
+/// The names `mac-gui` may write into --out, for the shared --out rule's tests.
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use runner::written_here;
 /// R03's checks, which mac-ledger requires of an R03 PASS.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) use translocation::{

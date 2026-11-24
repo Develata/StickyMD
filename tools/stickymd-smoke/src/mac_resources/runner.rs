@@ -34,6 +34,9 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     let fixture = model::fixture();
     // The output may not reach the input bundle, its note directory or the mac-gui ledger.
     let out = crate::mac_common::output::guarded(&options.out, &app)?;
+    // A first run creates its directory; an earlier campaign's evidence is never replaced
+    // (review round 3, B2 and its first-run finding).
+    crate::mac_common::output::prepare(&out, &|name| name == "mac-resources.json", &[])?;
     // One reading of the environment gives both the evidence and the conditions it is judged
     // under (review B3); every sample checks the display is still this one.
     let display = native::display()?;

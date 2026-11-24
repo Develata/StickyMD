@@ -81,7 +81,12 @@ fn with_scenarios(scenarios: &[String], extra: &str) -> String {
 }
 
 fn record(bytes: &str) -> Result<Vec<Record>, String> {
-    from_evidence(bytes.as_bytes(), "/e.json", "sha256:image", 3)
+    from_evidence(
+        bytes.as_bytes(),
+        "/e.json",
+        "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        3,
+    )
 }
 
 fn zip_of(record: &Record) -> Option<&str> {
@@ -180,7 +185,8 @@ fn a_finished_resources_run_in_the_vm_records_r01_and_r02_with_both_digests() {
             Identity {
                 inputs: Some(hex('e')),
                 driver: hex('d'),
-                image: "sha256:image".into(),
+                image: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                    .into(),
                 // From sw_vers, as for a mac-gui run: one image names one system across both.
                 system: "ProductName: macOS ProductVersion: 27.2 BuildVersion: 26B123".into(),
             }
@@ -292,16 +298,37 @@ fn an_r03_pass_needs_every_r03_check_and_the_zip_it_names() {
             .unwrap_err()
             .contains("review #24 B9")
     );
-    // A FAIL is recorded whatever checks it holds: it can only keep the row from holding.
-    let failed = with_scenarios(
+    // A FAIL of R03's own checks is recorded; one that only says its execution failed (the
+    // session directory could not be made, an attachment could not be written) is the machine's,
+    // not the product's, and is not (review round 3, B4).
+    let failed = |checks: &[(String, String)]| {
+        record(&with_scenarios(&[scenario("R03", "FAIL", checks)], &top))
+    };
+    assert!(failed(&r03_checks(Some(&zip))).is_ok());
+    for error in [
+        "stickymd-mac-session: No space left on device (os error 28)",
+        "R03-stderr.log: Permission denied (os error 13)",
+    ] {
+        let error = failed(&[("execution".into(), error.into())]).unwrap_err();
+        assert!(
+            error.contains("an R03 row needs exactly the checks"),
+            "{error}"
+        );
+    }
+    // Nor a NOT_TESTED that holds other checks than R03's.
+    let error = record(&with_scenarios(
         &[scenario(
             "R03",
-            "FAIL",
-            &[("execution".into(), "refused".into())],
+            "NOT_TESTED",
+            &[("execution".into(), "stopped".into())],
         )],
         &top,
+    ))
+    .unwrap_err();
+    assert!(
+        error.contains("an R03 row needs exactly the checks"),
+        "{error}"
     );
-    assert!(record(&failed).is_ok());
 }
 
 /// Review A5/F3: each producer writes only its own rows.
@@ -395,7 +422,29 @@ fn one_image_digest_is_one_identity_whatever_its_name() {
     let other_system = gui_evidence(&["W03"], "").replace("27.2", "27.3");
     both.extend(from_evidence(other_system.as_bytes(), "/f.json", &bare, 4).unwrap());
     assert!(check_system(&both).is_err());
-    assert_eq!(super::record::image_key("sha256:image"), "sha256:image");
+    // Old lines are read with the same grammar (review round 3, B5): a tag, or a malformed
+    // reference that merely ends like a digest, keeps its bytes and names no identity.
+    let digest = format!("sha256:{}", hex('e'));
+    for (written, key) in [
+        (
+            format!("ghcr.io/x/y@{}", digest.to_uppercase()),
+            Some(digest.as_str()),
+        ),
+        (digest.clone(), Some(digest.as_str())),
+        ("mac-test:latest".to_owned(), None),
+        (format!("garbage {digest}"), None),
+        (format!("tag:{digest}"), None),
+        ("sha256:image".to_owned(), None),
+    ] {
+        let found = super::record::image_key(&written);
+        match key {
+            Some(key) => assert_eq!(found, key, "{written}"),
+            None => {
+                assert_eq!(found, written, "{written} keeps its bytes");
+                assert!(!super::record::image_attributable(&found), "{written}");
+            }
+        }
+    }
 }
 
 /// Review F10: one image, one spelling, so its records group together.
@@ -421,9 +470,12 @@ fn image_digests_are_validated_and_kept_in_one_spelling() {
     // A record written with another case of the same image reads as the same identity, and the
     // ledger keeps the bytes it was written with.
     let records = record(&gui_evidence(&["W02"], "")).unwrap();
-    let line = records[0]
-        .line()
-        .replace("\"image\":\"sha256:image\"", "\"image\":\"SHA256:IMAGE\"");
-    assert!(line.contains("SHA256:IMAGE"));
+    let line = records[0].line().replace(
+        "\"image\":\"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"",
+        "\"image\":\"SHA256:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE\"",
+    );
+    assert!(
+        line.contains("SHA256:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
+    );
     assert_eq!(read_all(&line).unwrap(), records);
 }

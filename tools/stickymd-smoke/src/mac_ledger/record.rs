@@ -94,13 +94,20 @@ const VERDICTS: [&str; 3] = ["PASS", "FAIL", "NOT_TESTED"];
 /// content, whatever repository name precedes it), lowercased; a value without one is kept
 /// lowercased as written.
 pub(crate) fn image_key(image: &str) -> String {
-    let lower = image.to_ascii_lowercase();
-    match lower.rsplit_once("sha256:") {
-        Some((_, hex)) if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) => {
-            format!("sha256:{hex}")
-        }
-        _ => lower,
+    match super::options::image_digest(image) {
+        Ok(reference) => reference
+            .rsplit_once('@')
+            .map_or(reference.clone(), |(_, digest)| digest.to_owned()),
+        Err(_) => image.to_owned(),
     }
+}
+
+/// Whether an image key names a content digest; one that does not (an old line's tag, a
+/// malformed reference) leaves its record's identity unknown (review round 3, B5).
+pub(crate) fn image_attributable(key: &str) -> bool {
+    key.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
 }
 
 /// `sw_vers` text with every run of whitespace made one space, so the VM's own report and the
@@ -631,8 +638,8 @@ pub(super) fn from_evidence(
         }
         let verdict = field(scenario, "verdict")?;
         let checks = scenario.field("checks")?.array()?;
-        if row == "R03" && verdict == "PASS" {
-            super::producers::r03_pass(checks, zip.as_deref())?;
+        if row == "R03" {
+            super::producers::r03(checks, &verdict, zip.as_deref())?;
         }
         // A row stopped by the run's shared stop, or never started, means the run was cut short;
         // an older driver could still mark such a run finished, so the rows themselves decide.

@@ -32,10 +32,12 @@ pub(super) fn gui_row(row: &str, case: Option<&str>) -> bool {
     }
 }
 
-/// An R03 PASS holds exactly R03's checks, in order, and with a ZIP the first names it. Even
-/// then it is not recorded while "nothing written" cannot be proven (review #24 B9): the driver
-/// writes that check NOT_TESTED, so an R03 PASS is an older driver's or none at all.
-pub(super) fn r03_pass(checks: &[Value], zip: Option<&str>) -> Result<(), String> {
+/// An R03 row holds exactly R03's checks, in order, and with a ZIP the first names it, whatever
+/// its verdict: a row with an `execution` check is an error of the machine (review round 3, B4),
+/// which the driver now leaves untested in an unfinished run. Even then an R03 PASS is not
+/// recorded while "nothing written" cannot be proven (review #24 B9): the driver writes that
+/// check NOT_TESTED, so an R03 PASS is an older driver's or none at all.
+pub(super) fn r03(checks: &[Value], verdict: &str, zip: Option<&str>) -> Result<(), String> {
     let mut expected: Vec<&str> = Vec::new();
     if zip.is_some() {
         expected.push(crate::mac_gui::R03_ZIP_CHECK);
@@ -47,7 +49,7 @@ pub(super) fn r03_pass(checks: &[Value], zip: Option<&str>) -> Result<(), String
         .collect::<Result<Vec<_>, String>>()?;
     if names != expected {
         return Err(format!(
-            "an R03 PASS needs exactly the checks {expected:?}; the evidence has {names:?}"
+            "an R03 row needs exactly the checks {expected:?}; the evidence has {names:?}"
         ));
     }
     if let Some(digest) = zip {
@@ -58,8 +60,11 @@ pub(super) fn r03_pass(checks: &[Value], zip: Option<&str>) -> Result<(), String
             ));
         }
     }
-    Err(format!(
-        "an R03 PASS is not recorded: {}",
-        crate::mac_gui::R03_WRITE_UNPROVEN
-    ))
+    if verdict == "PASS" {
+        return Err(format!(
+            "an R03 PASS is not recorded: {}",
+            crate::mac_gui::R03_WRITE_UNPROVEN
+        ));
+    }
+    Ok(())
 }

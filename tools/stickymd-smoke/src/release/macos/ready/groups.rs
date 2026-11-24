@@ -5,7 +5,7 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 use crate::mac_ledger::decide::NEVER_REUSED;
-use crate::mac_ledger::record::{Built, Record, Revoked};
+use crate::mac_ledger::record::{Built, Record, Revoked, image_attributable};
 
 /// The ledger's verdict on one or more rows for the candidate's bytes.
 pub(super) enum Ledger {
@@ -147,6 +147,19 @@ pub(super) fn failure(scope: &Scope<'_>, row: &str) -> Option<String> {
 /// holds a clean PASS in it; with no such group, a group in which any row failed makes the
 /// verdict FAIL; otherwise the evidence is missing.
 pub(super) fn joint(scope: &Scope<'_>, rows: &[String]) -> Ledger {
+    // A record whose VM image names no digest (an old line's tag) cannot be placed in or apart
+    // from any group, so no group of these rows is shown clean while it stands; a FAIL still
+    // counts (review round 3, B5).
+    let unknown = rows.iter().find_map(|row| {
+        scoped(scope, row)
+            .into_iter()
+            .find_map(|record| match record {
+                Record::Automated { identity, .. } if !image_attributable(&identity.image) => {
+                    Some((row, identity.image.clone()))
+                }
+                _ => None,
+            })
+    });
     let per_row: Vec<Vec<(Group, Status)>> = rows.iter().map(|row| statuses(scope, row)).collect();
     let mut keys: Vec<&Group> = Vec::new();
     for statuses in &per_row {
@@ -176,12 +189,17 @@ pub(super) fn joint(scope: &Scope<'_>, rows: &[String]) -> Ledger {
                 .map(|i| &rows[i]);
         }
     }
-    if !clean.is_empty() {
+    if !clean.is_empty() && unknown.is_none() {
         return Ledger::Clean(evidence);
     }
     if let Some(row) = failed {
         return Ledger::Fail(format!(
             "a FAIL of P16-{row} is recorded on the candidate's bytes, and no identity holds a clean run of every row it needs"
+        ));
+    }
+    if let Some((row, image)) = unknown {
+        return Ledger::None(format!(
+            "a record of P16-{row} on the candidate's bytes names the VM image {image:?}, not a digest: its identity is unknown, so no group can be shown clean"
         ));
     }
     let lacking = rows.iter().zip(&per_row).find(|(_, statuses)| {
