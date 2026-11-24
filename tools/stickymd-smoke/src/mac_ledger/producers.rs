@@ -32,7 +32,9 @@ pub(super) fn gui_row(row: &str, case: Option<&str>) -> bool {
     }
 }
 
-/// An R03 PASS holds exactly R03's checks, in order, and with a ZIP the first names it.
+/// An R03 PASS holds exactly R03's checks, in order, and with a ZIP the first names it. Even
+/// then it is not recorded while "nothing written" cannot be proven (review #24 B9): the driver
+/// writes that check NOT_TESTED, so an R03 PASS is an older driver's or none at all.
 pub(super) fn r03_pass(checks: &[Value], zip: Option<&str>) -> Result<(), String> {
     let mut expected: Vec<&str> = Vec::new();
     if zip.is_some() {
@@ -56,5 +58,8 @@ pub(super) fn r03_pass(checks: &[Value], zip: Option<&str>) -> Result<(), String
             ));
         }
     }
-    Ok(())
+    Err(format!(
+        "an R03 PASS is not recorded: {}",
+        crate::mac_gui::R03_WRITE_UNPROVEN
+    ))
 }

@@ -1315,9 +1315,24 @@ fn translocation_checks_refuse_bad_samples() {
         judge(&o, &mut row);
         (aggregate(&row.checks), row)
     };
+    // Fail closed (review #24 B9): every observation holds, but equal snapshots do not prove that
+    // nothing was written, so the row is NOT_TESTED, never PASS.
     let (v, row) = verdict(good());
-    assert_eq!(v, Verdict::Pass, "{}", row.json());
+    assert_eq!(v, Verdict::NotTested, "{}", row.json());
     assert_eq!(row.checks.len(), 6);
+    let unwritten = row
+        .checks
+        .iter()
+        .find(|c| c.name == super::translocation::UNWRITTEN)
+        .unwrap();
+    assert_eq!(unwritten.verdict, Verdict::NotTested);
+    assert!(unwritten.observation.contains("review #24 B9"));
+    assert!(
+        row.checks
+            .iter()
+            .filter(|c| c.name != super::translocation::UNWRITTEN)
+            .all(|c| c.verdict == Verdict::Pass)
+    );
     // Bad samples: gone before a prompt, a prompt about something else, the advice for any other
     // unwritable folder, still running after Return, another exit, a file written beside the
     // package.
@@ -1442,7 +1457,13 @@ fn translocation_checks_refuse_bad_samples() {
                 .into(),
         ..good()
     });
-    assert_eq!(v, Verdict::Pass, "{}", row.json());
+    // The prompt check passes; the row stays NOT_TESTED only for the unproven "nothing written".
+    assert_eq!(v, Verdict::NotTested, "{}", row.json());
+    assert!(
+        row.checks
+            .iter()
+            .any(|c| c.name == super::translocation::PROMPTED && c.verdict == Verdict::Pass)
+    );
 }
 
 fn image(width: usize, height: usize, fill: [u8; 3]) -> super::pixels::Image {

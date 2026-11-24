@@ -55,6 +55,9 @@ pub(crate) const EXITS: &str = "exits after the prompt is answered";
 pub(crate) const STATUS: &str = "exit status 1";
 pub(crate) const UNWRITTEN: &str = "nothing written beside the package";
 pub(crate) const CHECKS: [&str; 6] = [PRESET, TRANSLOCATED, PROMPTED, EXITS, STATUS, UNWRITTEN];
+/// Why equal snapshots are not yet "nothing written" (review #24 B9): they show the listed
+/// attributes unchanged at the end, not that no write happened and was undone in between.
+pub(crate) const WRITE_UNPROVEN: &str = "a write undone between the two snapshots, or a change to permissions or extended attributes, is not excluded (review #24 B9; awaiting Develata's decision)";
 /// The release ZIP R03 opened as given (`mac-gui --zip`); its observation is `sha256=<digest>`.
 pub(crate) const ZIP_CHECK: &str = "opened the candidate ZIP as given";
 
@@ -225,16 +228,16 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
     record(
         row,
         UNWRITTEN,
-        if !ended {
+        // Fail closed (review #24 B9): a difference is an observed write; equal snapshots do
+        // not prove that nothing was written while the product ran.
+        if !ended || o.before == o.after {
             Verdict::NotTested
-        } else if o.before == o.after {
-            Verdict::Pass
         } else {
             Verdict::Fail
         },
         if o.before == o.after {
             format!(
-                "{} entries under the folder holding the bundle unchanged (sizes, SHA-256, times)",
+                "{} entries under the folder holding the bundle unchanged (sizes, SHA-256, times), but {WRITE_UNPROVEN}",
                 o.before.len()
             )
         } else {

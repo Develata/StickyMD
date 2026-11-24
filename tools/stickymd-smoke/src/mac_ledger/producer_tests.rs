@@ -49,7 +49,8 @@ fn scenario(row: &str, verdict: &str, checks: &[(String, String)]) -> String {
 }
 
 /// A finished `mac-gui` run in the VM with these passing rows (R03 with all its checks, naming
-/// the ZIP when `extra` names one) and these extra top-level members.
+/// the ZIP when `extra` names one, NOT_TESTED as the driver writes it while "nothing written" is
+/// unproven, review #24 B9) and these extra top-level members.
 fn gui_evidence(rows: &[&str], extra: &str) -> String {
     let zip = extra
         .split_once("\"zip_sha256\":\"")
@@ -58,12 +59,11 @@ fn gui_evidence(rows: &[&str], extra: &str) -> String {
     let scenarios = rows
         .iter()
         .map(|row| {
-            let checks = if *row == "R03" {
-                r03_checks(zip)
+            if *row == "R03" {
+                scenario(row, "NOT_TESTED", &r03_checks(zip))
             } else {
-                vec![("a".to_owned(), "seen".to_owned())]
-            };
-            scenario(row, "PASS", &checks)
+                scenario(row, "PASS", &[("a".to_owned(), "seen".to_owned())])
+            }
         })
         .collect::<Vec<_>>();
     with_scenarios(&scenarios, extra)
@@ -255,7 +255,9 @@ fn an_r03_pass_needs_every_r03_check_and_the_zip_it_names() {
     let pass = |checks: &[(String, String)], extra: &str| {
         record(&with_scenarios(&[scenario("R03", "PASS", checks)], extra))
     };
-    assert!(pass(&r03_checks(Some(&zip)), &top).is_ok());
+    // Fail closed (review #24 B9): even the full check set naming the ZIP is not recorded as PASS.
+    let error = pass(&r03_checks(Some(&zip)), &top).unwrap_err();
+    assert!(error.contains("review #24 B9"), "{error}");
     let error = pass(&[("a".into(), "seen".into())], &top).unwrap_err();
     assert!(error.contains("exactly the checks"), "{error}");
     // One observation missing: here, that nothing was written.
@@ -284,8 +286,12 @@ fn an_r03_pass_needs_every_r03_check_and_the_zip_it_names() {
             .unwrap_err()
             .contains("exactly the checks")
     );
-    // A run zipped from the .app passes with the six checks and names no ZIP.
-    assert!(pass(&r03_checks(None), "").is_ok());
+    // Nor a run zipped from the .app with its six checks.
+    assert!(
+        pass(&r03_checks(None), "")
+            .unwrap_err()
+            .contains("review #24 B9")
+    );
     // A FAIL is recorded whatever checks it holds: it can only keep the row from holding.
     let failed = with_scenarios(
         &[scenario(

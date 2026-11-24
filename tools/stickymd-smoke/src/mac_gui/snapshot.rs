@@ -124,27 +124,56 @@ mod tests {
             "nothing changed, nothing differs"
         );
         assert!(changed(&before, &before).is_empty());
-        let samples: [(&str, Change); 4] = [
-            ("rewritten", |root| {
-                fs::write(root.join("README.txt"), "other").unwrap()
-            }),
-            ("nested", |root| {
-                fs::write(root.join("licenses/B.txt"), "new").unwrap()
-            }),
-            ("transient", |root| {
-                fs::write(root.join("note.tmp"), "x").unwrap();
-                fs::remove_file(root.join("note.tmp")).unwrap();
-            }),
-            ("link", |root| {
-                std::os::unix::fs::symlink("/tmp", root.join("note")).unwrap();
-            }),
+        // Review #24 S5: each sample changes one thing, and the difference names it.
+        let samples: [(&str, Change, &[&str]); 4] = [
+            // Same length, time put back: only the content digest tells.
+            (
+                "rewritten",
+                |root| {
+                    let path = root.join("README.txt");
+                    let time = fs::metadata(&path).unwrap().modified().unwrap();
+                    fs::write(&path, "READMEXtxt").unwrap();
+                    fs::File::open(&path).unwrap().set_modified(time).unwrap();
+                },
+                &[
+                    "- file README.txt bytes=10 sha256=",
+                    "+ file README.txt bytes=10 sha256=",
+                ],
+            ),
+            (
+                "nested",
+                |root| fs::write(root.join("licenses/B.txt"), "new").unwrap(),
+                &["+ file licenses/B.txt", "+ dir licenses mtime="],
+            ),
+            // Written and removed: only the folder's time tells.
+            (
+                "transient",
+                |root| {
+                    fs::write(root.join("note.tmp"), "x").unwrap();
+                    fs::remove_file(root.join("note.tmp")).unwrap();
+                },
+                &["- dir . mtime=", "+ dir . mtime="],
+            ),
+            (
+                "link",
+                |root| std::os::unix::fs::symlink("/tmp", root.join("note")).unwrap(),
+                &["+ link note -> /tmp"],
+            ),
         ];
-        for (name, change) in samples {
+        for (name, change, expected) in samples {
             layout(&root);
             let before = tree(&root).unwrap();
             change(&root);
             let diff = changed(&before, &tree(&root).unwrap());
-            assert!(!diff.is_empty(), "{name}: no difference seen");
+            for line in expected {
+                assert!(
+                    diff.iter().any(|d| d.starts_with(line)),
+                    "{name}: {line:?} not in {diff:?}"
+                );
+            }
+            if name == "rewritten" || name == "transient" {
+                assert_eq!(diff.len(), 2, "{name}: {diff:?}");
+            }
             let _ = fs::remove_file(root.join("licenses/B.txt"));
             let _ = fs::remove_file(root.join("note"));
         }
