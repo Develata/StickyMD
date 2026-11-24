@@ -224,9 +224,15 @@ fn resources_evidence_outside_the_vm_unfinished_old_or_inconsistent_is_refused()
         ),
         ("\"finished\":true", "\"finished\":false", "not finished"),
         (
-            "\"schema_version\":5",
+            "\"schema_version\":6",
             "\"schema_version\":4",
-            "before schema 5",
+            "before schema 6",
+        ),
+        // Schema 5 took no sample before 60 s (review round 3, B3).
+        (
+            "\"schema_version\":6",
+            "\"schema_version\":5",
+            "before schema 6",
         ),
         // A run's status changed while the rows still say PASS.
         (
@@ -243,8 +249,8 @@ fn resources_evidence_outside_the_vm_unfinished_old_or_inconsistent_is_refused()
     // Schema 4 evidence carried no tool member: it is neither mac-gui's nor this one's schema.
     let old = good.replacen("\"tool\":\"mac-resources\",", "", 1);
     let error =
-        record(&old.replacen("\"schema_version\":5", "\"schema_version\":4", 1)).unwrap_err();
-    assert!(error.contains("schema 5 of mac-resources"), "{error}");
+        record(&old.replacen("\"schema_version\":6", "\"schema_version\":4", 1)).unwrap_err();
+    assert!(error.contains("schema 6 of mac-resources"), "{error}");
     // Without the bundle digest or the driver it cannot be recorded.
     for member in ["\"app_bundle_manifest_sha256\"", "\"driver_sha256\""] {
         let renamed = good.replacen(member, "\"other\"", 1);

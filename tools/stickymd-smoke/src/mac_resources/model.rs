@@ -134,6 +134,12 @@ impl Run {
 /// dilute the average a hard line is judged on.
 pub(super) const WINDOW_TOLERANCE_SECONDS: f64 = 0.5;
 
+/// When, after the first sample, the middle sample is taken (USER 2026-11-24, option A of review
+/// round 3 B3): just before `10`'s 60 s, so the CPU between the first two samples is a lower
+/// bound of the first 60 s window's whenever the middle sample lands at or before 60 s. The VM's
+/// sleeps overshoot by at most 20 ms, so 0.1 s leaves room.
+pub(super) const LOWER_SAMPLE_SECONDS: f64 = 59.9;
+
 /// The readings between two samples. The window must be `10`'s 60 s, overshooting by at most
 /// [`WINDOW_TOLERANCE_SECONDS`].
 pub(super) fn metrics(

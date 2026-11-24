@@ -291,18 +291,23 @@ fn measure(
     if hidden {
         stays_hidden(run, pid)?;
     }
-    let deadline = started
-        + Duration::from_secs_f64(run.samples[0].elapsed_seconds)
-        + Duration::from_secs(crate::resource_plan::CPU_SECONDS);
-    if !wait(session, run, started, deadline)? || !capture(session, run, started, screen)? {
-        return Ok(());
-    }
-    if hidden {
-        stays_hidden(run, pid)?;
+    // Just before 60 s, then just after: the CPU between the first two bounds the first 60 s
+    // window from below, between the first and the last from above (review round 3, B3, A).
+    let first = started + Duration::from_secs_f64(run.samples[0].elapsed_seconds);
+    for deadline in [
+        first + Duration::from_secs_f64(model::LOWER_SAMPLE_SECONDS),
+        first + Duration::from_secs(crate::resource_plan::CPU_SECONDS),
+    ] {
+        if !wait(session, run, started, deadline)? || !capture(session, run, started, screen)? {
+            return Ok(());
+        }
+        if hidden {
+            stays_hidden(run, pid)?;
+        }
     }
     run.metrics = Some(model::metrics(
         &run.samples[0],
-        &run.samples[1],
+        &run.samples[2],
         timebase.0,
         timebase.1,
     )?);

@@ -260,8 +260,22 @@ fn the_reader_recomputes_readings_from_raw_samples() {
     refused(&text, "differ from those its samples give");
     // A window past 60.5 s is no `10` reading, however the readings were written.
     let mut late = evidence();
-    late.scenarios[1][2].samples[1].elapsed_seconds = 150.0;
+    late.scenarios[1][2].samples[2].elapsed_seconds = 150.0;
     refused(&late.json(), "give no reading");
+    // The middle sample as the driver takes it: not before 59.9 s, before the last one, its
+    // counters between the others; two samples are not a run of this tool.
+    let mut early = evidence();
+    early.scenarios[1][2].samples[1].elapsed_seconds -= 1.0;
+    refused(&early.json(), "middle sample is not one the driver takes");
+    let mut after = evidence();
+    after.scenarios[1][2].samples[1].elapsed_seconds = 31.5 + 60.25;
+    refused(&after.json(), "middle sample is not one the driver takes");
+    let mut counters = evidence();
+    counters.scenarios[1][2].samples[1].user_ticks += 1_000_000;
+    refused(&counters.json(), "counters do not sit between the others");
+    let mut two = evidence();
+    two.scenarios[1][2].samples.remove(1);
+    refused(&two.json(), "the tool takes exactly three");
     // A run's status changed: the rows no longer hold.
     let errored = good.replacen("\"status\":\"VALID\"", "\"status\":\"ERROR\"", 1);
     refused(&errored, "its runs give");
@@ -449,16 +463,38 @@ fn a_late_sample_cannot_turn_a_hard_failure_into_a_pass() {
         [("R01", "MEASURED"), ("R02", "NOT_TESTED")]
     );
     assert!(
-        undecided.rows()[1]
-            .detail
-            .contains("does not show a 60 s window above it"),
+        undecided.rows()[1].detail.contains("cannot be told"),
         "{:?}",
         undecided.rows()[1]
     );
     assert_eq!(read(&undecided.json()).unwrap()[1].verdict, "NOT_TESTED");
-    assert_eq!(verdicts(&with(0.062, 60.5))[1].1, "NOT_TESTED");
+    // Spread evenly, 62 ms over 60.5 s holds 61.4 ms before the middle sample at 59.9 s: the
+    // first 60 s window is shown above the line, a FAIL even though the window ran late
+    // (USER 2026-11-24, option A of review round 3 B3).
+    let over = with(0.062, 60.5);
+    assert_eq!(verdicts(&over)[1].1, "FAIL");
+    assert_eq!(read(&over.json()).unwrap()[1].verdict, "FAIL");
     assert_eq!(verdicts(&with(0.0599, 60.5))[1].1, "MEASURED");
     assert_eq!(verdicts(&with(0.0603, 60.0))[1].1, "FAIL");
+    // The review's counterexample: 31 ms at the start and 31 ms in the last 31 ms of a 60.5 s
+    // window. No 60 s window exceeds the line, and none is shown to: the middle sample has 31 ms,
+    // the last 62 ms, so the scenario is NOT_TESTED, never a FAIL.
+    let mut ends = with(0.062, 60.5);
+    let half = ticks(0.031);
+    for run in &mut ends.scenarios[1] {
+        let start = run.samples[0].clone();
+        run.samples[1].user_ticks = start.user_ticks + half / 2;
+        run.samples[1].system_ticks = start.system_ticks + half - half / 2;
+    }
+    assert_eq!(verdicts(&ends)[1].1, "NOT_TESTED");
+    assert_eq!(read(&ends.json()).unwrap()[1].verdict, "NOT_TESTED");
+    // A middle sample that itself landed after 60 s bounds nothing from below.
+    let mut slept = with(0.062, 60.5);
+    for run in &mut slept.scenarios[1] {
+        run.samples[1].elapsed_seconds = run.samples[0].elapsed_seconds + 60.2;
+    }
+    assert_eq!(verdicts(&slept)[1].1, "NOT_TESTED");
+    assert_eq!(read(&slept.json()).unwrap()[1].verdict, "NOT_TESTED");
     // One valid run of five, far over the line: incomplete, not a FAIL.
     let mut one = with(0.5, 60.0);
     for run in &mut one.scenarios[1][1..] {

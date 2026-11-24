@@ -21,10 +21,10 @@ pub(super) fn from_evidence(
 ) -> Result<Vec<Record>, String> {
     if !matches!(
         value.field("schema_version").and_then(Value::unsigned),
-        Ok(5)
+        Ok(6)
     ) {
         return Err(
-            "mac-resources evidence before schema 5 names neither the bundle nor the driver; it cannot be recorded"
+            "mac-resources evidence before schema 6 names neither the bundle nor the driver (schema 4 and earlier) or takes no sample before 60 s (schema 5); it cannot be recorded"
                 .into(),
         );
     }

@@ -18,9 +18,10 @@ fn sample(seconds: f64, ticks: u64, wakeups: u64) -> Sample {
 pub(super) const IDLE_TICKS: u64 = 14_400;
 pub(super) const BUSY_TICKS: u64 = 1_483_200;
 
-/// A valid run as the tool takes it: ready at 0.5 s, the first sample after the 30 s warm-up and
-/// the second 60 s later at `footprint_bytes`, `cpu_ticks` of CPU between them, 100 interrupt and
-/// 25 idle wake-ups a second, readings computed from them.
+/// A valid run as the tool takes it: ready at 0.5 s, the first sample after the 30 s warm-up, the
+/// middle one 59.9 s later and the last 60 s later, at `footprint_bytes`, `cpu_ticks` of CPU
+/// between the first and the last spread evenly, 100 interrupt and 25 idle wake-ups a second,
+/// readings computed from them.
 pub(super) fn measured(repetition: usize, footprint_bytes: u64, cpu_ticks: u64) -> Run {
     measured_over(repetition, footprint_bytes, cpu_ticks, 60.0)
 }
@@ -38,11 +39,20 @@ pub(super) fn measured_over(
     after.system_ticks = 1_000 + cpu_ticks - cpu_ticks / 2;
     after.pkg_idle_wakeups = 2_000 + 1_500;
     after.footprint_bytes = footprint_bytes;
+    let spread = (u128::from(cpu_ticks) * 599 / (window * 10.0).round() as u128) as u64;
+    let mut lower = sample(
+        31.5 + LOWER_SAMPLE_SECONDS,
+        1_000 + spread / 2,
+        2_000 + 5_990,
+    );
+    lower.system_ticks = 1_000 + spread - spread / 2;
+    lower.pkg_idle_wakeups = 2_000 + 1_497;
+    lower.footprint_bytes = footprint_bytes;
     let mut run = Run::new(repetition);
     run.pid = Some(4242);
     run.ready_seconds = Some(0.5);
     run.metrics = Some(metrics(&before, &after, 125, 3).unwrap());
-    run.samples = vec![before, after];
+    run.samples = vec![before, lower, after];
     run.status = "VALID";
     run
 }

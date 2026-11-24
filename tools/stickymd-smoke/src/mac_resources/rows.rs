@@ -1,6 +1,6 @@
 //! P16-R01 and P16-R02 from the runs of one `mac-resources` campaign (plan 11
 //! #phase-16-macos-host, "资源运行进账本"). Each row is judged from what every run recorded — how
-//! it ended, its cleanup and its two raw samples — never from a status the tool wrote for a
+//! it ended, its cleanup and its three raw samples — never from a status the tool wrote for a
 //! scenario or the campaign. Read back from evidence, every valid run's readings are recomputed
 //! from its samples and the Mach timebase and must equal the readings written beside them; the
 //! runs of a scenario must be its repetitions 1..=n in order. The same rule writes the evidence's
@@ -9,11 +9,11 @@
 //! campaign measured elsewhere leaves the row NOT_TESTED. No run yet confirms that its scenario
 //! opened in the view its configuration names (review F7), so until Develata decides how to
 //! confirm it, complete runs within the lines leave the row NOT_TESTED, never PASS; a FAIL stays
-//! a FAIL. Two samples at least 60 s apart bound every 60 s window inside them from above, so
-//! R02 holds on the CPU time within the 60 s budget, compared exactly in raw ticks; they show a
-//! 60 s window above the line only when the window was exactly 60 s, so a FAIL needs that, and a
-//! later sample leaves the scenario NOT_TESTED (review round 3, B3; awaiting Develata's decision
-//! on a third sample).
+//! a FAIL. The first and last samples, at least 60 s apart, bound the first 60 s window from
+//! above, so R02 holds on that CPU time within the 60 s budget, compared exactly in raw ticks;
+//! the first and the middle one, taken just before 60 s, bound it from below, so R02 fails on
+//! that CPU time above the budget (USER 2026-11-24, option A of review round 3 B3). Between the
+//! two the scenario cannot be told and is NOT_TESTED.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
 use super::model::{self, Metrics, SCENARIOS, Sample};
@@ -44,25 +44,43 @@ pub(super) struct Reading {
     pub denom: u128,
     /// The measured window, in seconds: at least 60, at most 60.5.
     pub window: f64,
+    /// The CPU time between the first and the middle sample, scaled as [`Self::cpu_scaled`],
+    /// when the middle one landed at or before 60 s: then no more than the first 60 s window's.
+    pub lower_scaled: Option<u128>,
 }
 
 impl Reading {
-    /// The reading of a valid run from its two samples and their metrics; `None` for readings
-    /// no valid run can have.
+    /// The reading of a valid run from its three samples and the metrics of its window (first to
+    /// last); `None` for readings no valid run can have.
     pub(super) fn of(
         metrics: &Metrics,
         before: &Sample,
+        lower: &Sample,
         after: &Sample,
         timebase: (u32, u32),
     ) -> Option<Self> {
-        let ticks = u128::from(after.user_ticks.checked_sub(before.user_ticks)?)
-            + u128::from(after.system_ticks.checked_sub(before.system_ticks)?);
+        let ticks = |from: &Sample, to: &Sample| -> Option<u128> {
+            Some(
+                u128::from(to.user_ticks.checked_sub(from.user_ticks)?)
+                    + u128::from(to.system_ticks.checked_sub(from.system_ticks)?),
+            )
+        };
+        let numer = u128::from(timebase.0);
+        let lower_window = lower.elapsed_seconds - before.elapsed_seconds;
+        // The middle sample must sit between the two others, its counters too.
+        ticks(lower, after)?;
+        if !(lower_window > 0.0 && lower.elapsed_seconds < after.elapsed_seconds) {
+            return None;
+        }
         Some(Self {
             footprint: metrics.footprint_bytes,
             idle_cpu: metrics.idle_cpu_percent,
-            cpu_scaled: ticks * u128::from(timebase.0),
+            cpu_scaled: ticks(before, after)? * numer,
             denom: u128::from(timebase.1),
             window: after.elapsed_seconds - before.elapsed_seconds,
+            lower_scaled: (lower_window <= CPU_SECONDS as f64)
+                .then(|| ticks(before, lower).map(|t| t * numer))
+                .flatten(),
         })
         .filter(|r| r.idle_cpu.is_finite() && r.idle_cpu >= 0.0 && r.footprint > 0 && r.denom > 0)
     }
@@ -73,14 +91,13 @@ impl Reading {
         self.cpu_scaled as f64 / self.denom as f64 / (CPU_SECONDS as f64 * 1e7)
     }
 
-    /// CPU time some 60 s window inside the measured one is shown to hold: all of it when the
-    /// window was exactly 60 s; none otherwise, since two samples do not say where in a longer
-    /// window it was spent (review round 3, B3).
+    /// CPU time the first 60 s window is shown to hold at least: up to the middle sample when it
+    /// landed at or before 60 s, all of it when the window was exactly 60 s, else none.
     fn proven_scaled(&self) -> u128 {
         if self.window <= CPU_SECONDS as f64 {
             self.cpu_scaled
         } else {
-            0
+            self.lower_scaled.unwrap_or(0)
         }
     }
 }
@@ -235,9 +252,10 @@ pub(super) fn judge(
     };
     // R02: each complete scenario's median CPU time against the 60 s budget at the hard line,
     // exactly in raw ticks. The measured window overshoots 60 s by scheduling (at most 0.5 s):
-    // within the budget bounds every 60 s window inside it, so the scenario holds; above the
-    // line is shown only by runs whose window was exactly 60 s (review B8, round 3 B3), so a
-    // FAIL needs their median above it; otherwise the scenario cannot be told either way.
+    // within the budget bounds every 60 s window inside it, so the scenario holds; the CPU up to
+    // the middle sample, taken before 60 s, is no more than the first 60 s window's, so its
+    // median above the budget is a FAIL (review B8, round 3 B3 option A); otherwise the
+    // scenario cannot be told either way.
     struct Cpu {
         name: &'static str,
         over: bool,
@@ -293,7 +311,7 @@ pub(super) fn judge(
         (
             "NOT_TESTED",
             format!(
-                "above the {CPU_HARD_FAILURE_PERCENT}% line over the 60 s budget, but a window longer than 60 s does not show a 60 s window above it (review round 3, B3; awaiting Develata's decision): {}",
+                "between the samples before and after 60 s the {CPU_HARD_FAILURE_PERCENT}% line cannot be told (review round 3, B3); measure again: {}",
                 undecided.join(", ")
             ),
         )
@@ -445,20 +463,33 @@ fn reading(
         .iter()
         .map(sample)
         .collect::<Result<Vec<_>, _>>()?;
-    let [before, after] = samples.as_slice() else {
+    let [before, lower, after] = samples.as_slice() else {
         return Err(format!(
-            "a VALID run has {} samples; the tool takes exactly two",
+            "a VALID run has {} samples; the tool takes exactly three",
             samples.len()
         ));
     };
     lifecycle(run, hidden, before.elapsed_seconds)?;
+    // The middle sample as the driver takes it: not before 59.9 s, and before the last one.
+    if lower.elapsed_seconds - before.elapsed_seconds < model::LOWER_SAMPLE_SECONDS
+        || lower.elapsed_seconds >= after.elapsed_seconds
+    {
+        return Err(
+            "a VALID run's middle sample is not one the driver takes (at 59.9 s, before the last)"
+                .into(),
+        );
+    }
     let recomputed = model::metrics(before, after, timebase.0, timebase.1)
         .map_err(|e| format!("a VALID run's samples give no reading: {e}"))?;
     let written = run.field("metrics")?;
     if matches!(written, Value::Null) || metrics(written)? != recomputed {
         return Err("a VALID run's written readings differ from those its samples give".into());
     }
-    Ok(Reading::of(&recomputed, before, after, timebase))
+    Reading::of(&recomputed, before, lower, after, timebase)
+        .map(Some)
+        .ok_or_else(|| {
+            "a VALID run's middle sample's counters do not sit between the others".into()
+        })
 }
 
 /// The value of `key: <value>` in `sw_vers` text.
@@ -507,7 +538,7 @@ fn conditions(environment: &Value) -> Result<Conditions, String> {
     })
 }
 
-/// The rows a `mac-resources` evidence file (schema 5) establishes, recomputed from its raw
+/// The rows a `mac-resources` evidence file (schema 6) establishes, recomputed from its raw
 /// samples. Its scenarios, memory gates and timings must be this tool's, each scenario's runs its
 /// repetitions in order, and its stated `rows` must agree with the runs; otherwise it is refused.
 pub(crate) fn from_evidence(value: &Value) -> Result<[RowVerdict; 2], String> {
