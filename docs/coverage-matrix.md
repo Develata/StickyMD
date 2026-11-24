@@ -61,7 +61,9 @@ Plan 10 `preview-resource-assessment` → 功能投影“宽内容/数学公式�
 [Phase 11-B 先连接等号行](acceptance-cases/phase-11-b.md#math-equals-first) →
 `stickymd-render/src/math_text{,/tests}.rs`、`math_action.rs`、
 `preview/semantic_conversion.rs`（引用定义位置错位，见
-[RISK 报告](report/RISK-comrak-054-inline-positions.md)）与 `stickymd-app/src/flow/editor.rs`。
+[RISK 报告](report/RISK-comrak-054-inline-positions.md)；2026-11-24 升级到 Comrak 1.2 后
+位置正确，跳过已删除，见[升级评估](report/2026-11-24-comrak-1.2-upgrade.md)）与
+`stickymd-app/src/flow/editor.rs`。
 自动化入口沿用 `phase11b_`，Release 基线沿用 `phase11b_performance_`；
 Windows 与 macOS 的真实按钮仍为 `NOT TESTED`。
 

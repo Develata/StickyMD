@@ -119,8 +119,9 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
 - Preconditions：USER 的 `\[` / `\rho'(g^{op})(y)` / `=` / `\rho(g^{op})(y).` / `\]` 原文；多行
   `\(...\)` 与 `$...$`；列表内公式；公式外的 `标题\n=\n正文`；被空行切断的 `\[`；引用块、
   链接、代码、表格内的公式；紧贴另一个 `$` 的 `\$$a\n=\nb$$`；从块的第二行起、各行缩进不同的
-  多行公式（Comrak 0.56 之前会报错结束列）；同一行的两个多行公式；段首有链接引用定义、位置
-  整体错位的段落；引用块的 lazy continuation；未闭合 `$$` 之后的 `\[...\]`；反向选区与部分
+  多行公式（Comrak 0.56 之前会报错结束列）；同一行的两个多行公式；段首有链接引用定义的段落
+  （Comrak 0.59 时位置整体错位，1.0 起正确）；结束行上的 closer 前有转义的反斜杠（`\\$`、
+  `\\)`）；引用块的 lazy continuation；未闭合 `$$` 之后的 `\[...\]`；反向选区与部分
   选区。
 - Action：点击 `$` action；先执行等号行连接，再执行分隔符转换；重复操作，然后 Undo/Redo。
 - Expected：四种公式内符合条件的等号行被连接，随后 `\[...\]` / `\(...\)` 转为 `$$...$$` /
@@ -135,20 +136,23 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   `phase11b_equals_lines_scope_requires_a_complete_latex_formula`、
   `phase11b_equals_lines_locate_misreported_multiline_formula_ends`、
   `phase11b_equals_lines_reject_positions_that_disagree_with_the_formula`、
+  `phase11b_equals_lines_join_formulas_after_reference_definitions`、
+  `phase11b_equals_lines_locate_closers_after_escaped_backslashes`、
   `phase11b_equals_lines_leave_tables_whole`，`semantic_conversion` 的
-  `phase11b_conversion_skips_blocks_shifted_by_reference_definitions`，以及 `flow/editor` 的
+  `phase11b_conversion_after_reference_definitions_leaves_titles`，以及 `flow/editor` 的
   `phase11b_math_button_joins_equals_before_recognizing_latex_formulas`（含两次点击）、
   `phase11b_math_button_maps_scope_through_equals_then_delimiters`、
   `phase11b_math_button_refuses_a_result_it_would_change_again`、
-  `phase11b_math_button_leaves_paragraphs_shifted_by_reference_definitions`。Release-only 的
+  `phase11b_math_button_leaves_reference_definition_titles`。Release-only 的
   `math_action` 的 `phase11b_performance_math_action_one_mib`（1 MiB、1000 个需两步的公式，
   每个单元另含公式外的裸 `=` 行与一个段首有引用定义的段落；计时为 Flow 调用的同一函数：
   一次处理加提交前的再次处理，不含提交；不计时运行 3 轮后计时 100 轮，每轮先解析同一文档一次：
   按钮中位数不超过解析中位数的 10 倍，nearest-rank p95 `< 100 ms`，即最多 5 个样本可超出）与
-  `phase11b_performance_math_action_stays_linear_in_shifted_paragraphs`（23,717 个段首有
+  `phase11b_performance_math_action_stays_linear_after_reference_definitions`（23,717 个段首有
   引用定义的段落；整个按钮须小于同一文档单次 Comrak 解析的 12 倍）由现有 Phase 11-B
   Release 基线任务运行；实测值连同所用提交与原始
-  输出记录在[报告](../report/2026-11-12-math-button-equals-first.md)末节。
+  输出记录在[报告](../report/2026-11-12-math-button-equals-first.md)末节；Comrak 1.2 上的复测见
+  [升级评估](../report/2026-11-24-comrak-1.2-upgrade.md)。
 - Manual：真实按钮在 Windows 与 macOS 上仍为 `NOT TESTED`；Windows 需桌面回归。
 
 <a id="math-known-limits"></a>
