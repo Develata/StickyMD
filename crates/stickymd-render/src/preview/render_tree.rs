@@ -190,7 +190,7 @@ impl RenderTreeBuilder {
             generation: document.generation,
             source: Arc::clone(&document.source),
             blocks,
-            outline: Arc::new(outline.finish(document.shifted_blocks.clone())),
+            outline: Arc::new(outline.finish()),
         }
     }
 

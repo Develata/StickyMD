@@ -58,6 +58,5 @@ pub use semantic_conversion::{
     MathDelimiterConversion, SemanticConversionError, convert_latex_math_delimiters,
 };
 use source_map::SourceMap;
-pub(crate) use source_map::inlines_shifted;
 
 pub use horizontal::{PreviewBlockId, PreviewHorizontalOffsets, PreviewHorizontalTarget};

@@ -77,9 +77,6 @@ pub(crate) struct CopyOutline {
     pub blocks: Vec<OutlineBlock>,
     pub leaf_owner: Vec<u32>,
     pub structures: Vec<Structure>,
-    /// Whole-line source ranges of the blocks whose inline positions Comrak reported shifted;
-    /// in document order and disjoint.
-    pub shifted: Vec<Range<usize>>,
 }
 
 impl CopyOutline {
@@ -89,7 +86,6 @@ impl CopyOutline {
         self.blocks.capacity() * size_of::<OutlineBlock>()
             + self.leaf_owner.capacity() * size_of::<u32>()
             + self.structures.capacity() * size_of::<Structure>()
-            + self.shifted.capacity() * size_of::<Range<usize>>()
     }
 
     pub(crate) fn block(&self, index: u32) -> &OutlineBlock {
@@ -114,15 +110,6 @@ impl CopyOutline {
         }
         items.reverse();
         items
-    }
-
-    /// The whole-line range of the shifted block that `range` starts in.
-    pub(crate) fn shifted_lines(&self, range: SourceRange) -> Option<Range<usize>> {
-        let after = self
-            .shifted
-            .partition_point(|lines| lines.start <= range.start);
-        let lines = self.shifted.get(after.checked_sub(1)?)?;
-        (range.start < lines.end).then(|| lines.clone())
     }
 
     /// The indices of the structures of `leaf`, in pre-order. O(log structures).
@@ -207,7 +194,7 @@ impl OutlineBuilder {
 
     /// Records the inline structures of `nodes` for render block `leaf`, nested ones included.
     /// A structure whose range leaves `block`, the leaf's own source range, is not recorded:
-    /// a range Comrak reported shifted can name other text (plan 06 rule 6).
+    /// such a range cannot be trusted to name the structure's own text (plan 06 rule 6).
     pub(crate) fn inlines(
         &mut self,
         nodes: &[InlineNode],
@@ -265,13 +252,12 @@ impl OutlineBuilder {
         }
     }
 
-    pub(crate) fn finish(mut self, shifted: Vec<Range<usize>>) -> CopyOutline {
+    pub(crate) fn finish(mut self) -> CopyOutline {
         debug_assert!(self.open.is_empty());
         // The outline lives as long as the tree and its layouts: drop the growth slack.
         self.outline.blocks.shrink_to_fit();
         self.outline.leaf_owner.shrink_to_fit();
         self.outline.structures.shrink_to_fit();
-        self.outline.shifted = shifted;
         self.outline
     }
 }

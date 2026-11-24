@@ -7,8 +7,8 @@ use super::display::Piece;
 use super::endpoint::Side;
 
 /// Whether the block's source range holds at least the lines its text shows, plus the open fence
-/// line when fenced. Comrak 0.59 can report a block cut short (for example a fenced block in a
-/// list item at the end of the document), and such a range cannot be mapped through.
+/// line when fenced. Comrak has reported a block cut short (0.59: a fenced block in a list item at
+/// the end of the document), and such a range cannot be mapped through.
 pub(super) fn holds_its_lines(text: &str, source: &str, piece: Piece, fenced: bool) -> bool {
     let (Some(shown), Some(range)) = (text.get(piece.display()), source.get(piece.source())) else {
         return false;

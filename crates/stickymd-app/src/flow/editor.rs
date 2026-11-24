@@ -1049,20 +1049,37 @@ mod tests {
     }
 
     #[test]
-    fn phase11b_math_button_leaves_paragraphs_shifted_by_reference_definitions() {
-        // Comrak 0.59 shifts every inline position in a paragraph that starts
-        // with a link reference definition; neither step may touch the title.
-        for source in [
-            "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
-            "[x]: u \"\\(a\\)\"\n12345678\\(c\\)",
-            // A paragraph of definitions only: Comrak detaches it.
-            "[x]: u \"$$a\n=\nb$$\"\n\n[x]",
+    fn phase11b_math_button_leaves_reference_definition_titles() {
+        // Comrak 1.0 and later report the positions of a paragraph that starts
+        // with a link reference definition in place (0.59 shifted them up), so
+        // both steps reach its formulas and neither touches the title.
+        for (source, expected) in [
+            (
+                "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
+                "[x]: u \"$a\n=\nb$\"\n12345678$a=b$",
+            ),
+            (
+                "[x]: u \"\\(a\\)\"\n12345678\\(c\\)",
+                "[x]: u \"\\(a\\)\"\n12345678$c$",
+            ),
         ] {
-            refuses(source);
+            let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+            edit(&mut coordinator, source);
+            coordinator
+                .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                    expected_generation: coordinator.view().generation,
+                    selection: Selection::caret(0),
+                    scope_to_selection: false,
+                    timestamp_ms: 10,
+                })
+                .unwrap();
+            assert_eq!(coordinator.view().text, expected, "{source:?}");
         }
+        // A paragraph of definitions only: Comrak detaches it.
+        refuses("[x]: u \"$$a\n=\nb$$\"\n\n[x]");
         // Only Setext parsing makes these definition paragraphs: step 1 still
-        // joins the `$$` pair, and step 2 leaves the title alone, also when a
-        // trailing inline's shifted end runs past its line.
+        // joins the `$$` pair, and step 2 leaves the title alone, with or
+        // without text after the formula.
         for tail in ["", " tail"] {
             let source = format!("foo\n=\n[x]: u \"\\(abc\\)\"\n12345678$$c\n=\nd$${tail}");
             let mut coordinator = EditorCoordinator::empty(MockClipboard::default());

@@ -2,9 +2,11 @@
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#semantic-math-delimiter-conversion
 //!
-//! A stopgap until Comrak parses display math as blocks (kivikakk/comrak#880).
-//! The `$` action runs it before the delimiter conversion, so a lone `=` line
-//! can no longer turn the line above into a Setext heading and hide the formula
+//! Written as a stopgap for kivikakk/comrak#880 and kept after it: Comrak 1.0's
+//! opt-in block math (`math_dollars_block`, off in StickyMD) only covers `$$`
+//! fence lines, while `\[...\]`, `$$a...b$$` and multiline inline formulas
+//! still lose a lone `=` line to a Setext heading. The `$` action runs it
+//! before the delimiter conversion, so that line can no longer hide the formula
 //! from that conversion. It has one caller and no dependency on the converter,
 //! so it can be removed on its own.
 
@@ -178,47 +180,33 @@ fn scan_formulas(source: &str) -> Option<FormulaScan> {
     options.parse.ignore_setext = true;
     let root = parse_document(&arena, source, &options);
     let lines = Lines::new(source);
-    // Only a source holding `]:` can contain a link reference definition.
-    let may_shift = source.contains("]:");
     let mut protected = Vec::new();
     let mut formulas = Vec::new();
     // Container state is kept on entry and exit, so no node walks its
     // ancestors. Tables do not nest and paragraphs do not nest.
     let mut in_table = false;
     let mut in_links = 0_usize;
-    let mut shifted: Option<&AstNode<'_>> = None;
     for edge in root.traverse() {
         let node = match edge {
             NodeEdge::End(node) => {
                 let value = &node.data.borrow().value;
-                if let Some(paragraph) = shifted {
-                    if std::ptr::eq(paragraph, node) {
-                        shifted = None;
-                    }
-                } else if in_table {
+                if in_table {
                     in_table = !matches!(value, NodeValue::Table(_));
                 } else if matches!(value, NodeValue::Link(_) | NodeValue::Image(_)) {
                     in_links = in_links.saturating_sub(1);
                 }
                 continue;
             }
-            NodeEdge::Start(_) if shifted.is_some() || in_table => continue,
+            NodeEdge::Start(_) if in_table => continue,
             NodeEdge::Start(node) => node,
         };
         let data = node.data.borrow();
         match &data.value {
             // A table is protected whole, by its lines: formulas in cells sit on
-            // one line and never join, and Comrak shifts cell inline columns
-            // around `\|`, so nothing inside a table is located by column.
+            // one line and never join, so nothing inside a table is located.
             NodeValue::Table(_) => {
                 protected.push(lines.whole(data.sourcepos)?);
                 in_table = true;
-            }
-            // Its lines are right, its inline positions are not (see
-            // `inlines_shifted`), so it is protected whole and left alone.
-            NodeValue::Paragraph if may_shift && crate::preview::inlines_shifted(node) => {
-                protected.push(lines.whole(data.sourcepos)?);
-                shifted = Some(node);
             }
             NodeValue::Code(_)
             | NodeValue::CodeBlock(_)
@@ -250,7 +238,8 @@ fn scan_formulas(source: &str) -> Option<FormulaScan> {
             _ => {}
         }
     }
-    if may_shift {
+    // Only a source holding `]:` can contain a link reference definition.
+    if source.contains("]:") {
         protect_detached_lines(source, root, &lines, &mut protected);
     }
     protected.sort_unstable_by_key(|range| range.start);
@@ -283,7 +272,7 @@ fn protect_detached_lines<'a>(
                 | NodeValue::Heading(_)
                 | NodeValue::CodeBlock(_)
                 | NodeValue::HtmlBlock(_)
-                | NodeValue::ThematicBreak
+                | NodeValue::ThematicBreak(_)
                 | NodeValue::Table(_)
         ) {
             let first = data.sourcepos.start.line.max(1);
@@ -380,10 +369,10 @@ enum Located {
 /// Locates a math node and checks the place against the node itself. Comrak
 /// has misreported positions: before 0.56 the end column of an inline that
 /// spans lines and starts after its block's first line (kivikakk/comrak#855),
-/// and up to 0.59 every inline position in a paragraph that began with link
-/// reference definitions, whose removed lines it still counts (that paragraph
-/// is skipped earlier, but the checks stay as a guard). So the opener must
-/// sit on the reported start line and match the node's kind,
+/// and before 1.0 every inline position in a paragraph that began with link
+/// reference definitions, whose removed lines it still counted. The checks
+/// stay as a guard. So the opener must sit on the reported start line and
+/// match the node's kind,
 /// and the body must hold exactly the node's content apart from ASCII
 /// whitespace (Comrak normalizes only that). A misplaced range, or one that
 /// takes in a container marker such as `>`, fails these checks.
@@ -417,25 +406,42 @@ fn locate(source: &str, lines: &Lines, position: Sourcepos, math: &NodeMath) -> 
 
 /// The exclusive end of a formula whose closer is `close`. A multiline end is
 /// taken from the end line, never from the column: the closer Comrak matched
-/// is the first `\)` or `\]`, or the first `$` not after a backslash, on that
-/// line, since none can occur earlier in the formula.
+/// is the first unescaped one on that line (`unescaped_closer_end`), since
+/// none can occur earlier in the formula.
 fn formula_end(source: &str, lines: &Lines, position: Sourcepos, close: &str) -> Option<usize> {
     let line_start = lines.start(position.end.line)?;
     let line_end = lines.end(position.end.line)?;
     let end = if position.start.line == position.end.line {
         line_start.checked_add(position.end.column)?
     } else {
-        let line = source.get(line_start..line_end)?;
-        let closer = if close == "$" {
-            line.bytes()
-                .enumerate()
-                .position(|(index, byte)| byte == b'$' && !line[..index].ends_with('\\'))?
-        } else {
-            line.find(close)?
-        };
-        line_start + closer + close.len()
+        line_start + unescaped_closer_end(source.get(line_start..line_end)?, close)?
     };
     (end <= line_end && source.get(..end)?.ends_with(close)).then_some(end)
+}
+
+/// The end of the first unescaped `close` (`$`, `\)` or `\]`) in `line`. As in
+/// Comrak's math spec, a backslash escapes the byte after it unless it is
+/// itself escaped: `$` closes after an even run of backslashes, and `\)` or
+/// `\]` where its backslash ends an odd run, so `a\\$` and `\\)b\)` close at
+/// their last delimiter. The scan starts at the line start, which no escape
+/// crosses. Skipping the escaped byte may stop inside a multi-byte character;
+/// its continuation bytes are never ASCII, so the result is a char boundary.
+/// O(line bytes).
+fn unescaped_closer_end(line: &str, close: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let latex_close = close.as_bytes().get(1).copied();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if latex_close.is_some() && bytes.get(index + 1).copied() == latex_close => {
+                return Some(index + 2);
+            }
+            b'\\' => index += 2,
+            b'$' if close == "$" => return Some(index + 1),
+            _ => index += 1,
+        }
+    }
+    None
 }
 
 /// A `$...$` formula touching another `$` (as in `\$$a$$`) reads as a broken

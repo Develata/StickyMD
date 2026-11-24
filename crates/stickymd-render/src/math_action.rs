@@ -220,8 +220,8 @@ mod tests {
 
     /// 1000 units that each need both steps, leave a bare `=` line outside a
     /// formula (so the second pass parses in full) and hold a paragraph that
-    /// starts with a link reference definition (so both steps look for
-    /// shifted blocks), padded to 1 MiB with `filler`.
+    /// starts with a link reference definition (so step 1 protects the lines
+    /// that no block covers), padded to 1 MiB with `filler`.
     fn workload(filler: &str) -> String {
         let unit = "\\[\nx^2\n=\ny^2\n\\]\n\nHeading\n=\ntext\n\n[r]: u\nt \\(q\\)\n\n";
         let mut source = unit.repeat(1_000);
@@ -250,7 +250,9 @@ mod tests {
         assert!(again.is_none());
         assert_eq!(pass.text().matches("$$\nx^2=y^2\n$$").count(), 1_000);
         assert_eq!(pass.text().matches("Heading\n=\ntext").count(), 1_000);
-        assert_eq!(pass.text().matches("t \\(q\\)").count(), 1_000);
+        // The paragraph after the definition `[r]: u` converts: Comrak 1.0 and
+        // later report its positions in place.
+        assert_eq!(pass.text().matches("[r]: u\nt $q$").count(), 1_000);
         elapsed
     }
 
@@ -351,12 +353,12 @@ mod tests {
 
     #[test]
     #[ignore = "Release-only Phase 11-B math button receipt"]
-    fn phase11b_performance_math_action_stays_linear_in_shifted_paragraphs() {
+    fn phase11b_performance_math_action_stays_linear_after_reference_definitions() {
         // 23,717 paragraphs that start with a definition, under the Preview's
         // node limit. Parsing so many blocks takes far longer than one large
         // paragraph, so this guards the shape, not the 100 ms bound: the
-        // button parses four times, while a per-node search over past
-        // shifted paragraphs would cost hundreds of parses.
+        // button parses four times, while a per-node search over the lines
+        // the definitions leave uncovered would cost hundreds of parses.
         let source = workload("[r]: u\nplain text filler plain text filler\n\n");
         let input = snapshot(&source);
         let mut parses: Vec<_> = (0..9).map(|_| parse_once(&source)).collect();
@@ -364,7 +366,7 @@ mod tests {
         let (parse, _, _) = summary(&mut parses);
         let (median, p95, max) = summary(&mut samples);
         eprintln!(
-            "phase11b math_action_1mib_shifted_paragraphs parse_median={parse:?} \
+            "phase11b math_action_1mib_definition_paragraphs parse_median={parse:?} \
              median={median:?} p95={p95:?} max={max:?}"
         );
         assert!(median < parse * 12, "median={median:?} parse={parse:?}");

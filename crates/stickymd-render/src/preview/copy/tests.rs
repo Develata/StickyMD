@@ -9,6 +9,7 @@ use cosmic_text::FontSystem;
 use stickymd_core::{DocumentSnapshot, Generation, LineEnding};
 
 use super::CopySource;
+use super::outline::StructureKind;
 use crate::image::DecodedImageCache;
 use crate::math::MathEngine;
 use crate::preview::layout::{LayoutResources, layout_document};
@@ -103,8 +104,9 @@ fn a_formula_alone_copies_its_tex() {
     assert_eq!(copy("a $x+1$ b", "$x+1$"), "x+1");
     assert_eq!(copy_all("$$\\notacommand{x}$$"), "\\notacommand{x}");
     assert_eq!(copy("a $\\frac{$ b", "$\\frac{$"), "\\frac{");
-    // Comrak shifts this paragraph's positions past the definition, so the formula has no
-    // source range; it is still an object.
+    // Comrak 1.2 keeps a dollar formula's line endings in its literal.
+    assert_eq!(copy("x $a\nb$ y", "$a\nb$"), "a\nb");
+    // A formula after a definition in the same paragraph is an object too.
     assert_eq!(copy("[中]: /x\n$x$", "x"), "x");
 }
 
@@ -203,12 +205,21 @@ fn select_all_is_an_ordinary_selection() {
     assert_eq!(copy_all(mixed), mixed.trim_end());
 }
 
-/// P17-C09: untrusted positions: a shifted paragraph snaps to its lines, escapes and entities
-/// round to their span, a list marker snaps to its item's start, and a bad mapping fails closed.
+/// P17-C09: untrusted positions: escapes and entities round to their span, a list marker snaps to
+/// its item's start, and a bad mapping fails closed. A paragraph after link reference definitions
+/// maps like any other: Comrak 1.0 and later report its positions in place.
 #[test]
 fn untrusted_positions_round_outward() {
-    let shifted = "[a]: http://x\n[b]: http://y\npara **bold** text";
-    assert_eq!(copy(shifted, "bol"), copy(shifted, "para bold text"));
+    let after_definitions = "[a]: http://x\n[b]: http://y\npara **bold** text";
+    assert_eq!(copy(after_definitions, "bol"), "**bold**");
+    assert_eq!(
+        copy(after_definitions, "para bold text"),
+        "para **bold** text"
+    );
+    // `a&amp;b` is one span, the whole paragraph, so rounding puts both endpoints on the
+    // paragraph's edges, and the quote around it, definition line included, counts (rule 2).
+    let in_quote = ">\n> [r]: /x\n> a&amp;b";
+    assert_eq!(copy(in_quote, "&"), in_quote);
     assert_eq!(copy("a \\*b\\* c", "*b"), "a \\*b\\* c");
     assert_eq!(copy("x &amp; y", "&"), "x &amp; y");
     assert_eq!(copy("one\ntwo", "one "), "one\n");
@@ -218,16 +229,13 @@ fn untrusted_positions_round_outward() {
     // Rounding to a span on the block's edge puts the endpoint on that edge (rule 6, then 2).
     assert_eq!(copy("# a&amp;b", "&"), "# a&amp;b");
     assert_eq!(copy("> x &amp; y", "&"), "> x &amp; y");
-    // So does snapping a shifted paragraph to its lines: the quote around it starts a line earlier.
-    let shifted_in_quote = ">\n> [r]: /x\n> a&amp;b";
-    assert_eq!(copy(shifted_in_quote, "&"), shifted_in_quote);
     // A hard break shows a newline for `  \n`: an endpoint in it rounds to its edges.
     assert_eq!(copy("a  \nb", "a\n"), "a  \n");
     assert_eq!(copy("a  \nb", "\nb"), "  \nb");
     assert_eq!(copy("- [x] done", "☑ done"), "- [x] done");
     assert_eq!(copy("- [x] done", "done"), "done");
     assert_eq!(copy("-\n- b", "• \n• b"), "-\n- b");
-    // Comrak 0.59 gives this item end column 0; the parser repairs it (`zero_end_item_range`).
+    // Comrak 0.59 gave this item end column 0; 1.0 and later report its end in place.
     assert_eq!(
         copy("- one\n- two\n  - deep\n\nafter", "• two\n• deep"),
         "- two\n  - deep"
@@ -345,14 +353,19 @@ fn an_endpoint_on_a_structure_edge_is_outside_it() {
     assert_eq!(copy("x `abcd` y", "x abcd"), "x `abcd`");
 }
 
-/// P17-C16: a link whose reported range does not end in `)` snaps to its block's lines.
+/// P17-C16: a structure whose reported range does not end in its own closer snaps to its block's
+/// lines. Comrak 1.0 and later report every link, image and emphasis with its closer (300,000
+/// fixed-seed cases, 2026-11-24); 0.59 ended a link whose `)` sits on the next line at the end of
+/// its URL. `cut_short` rebuilds that report by ending the link's outline range there.
 #[test]
 fn an_unclosed_expansion_snaps_to_whole_lines() {
     let source = "see [a](http://x\n) end";
-    assert_eq!(copy(source, "e a"), "e [a](http://x\n) end");
+    assert_eq!(copy(source, "e a"), "e [a](http://x\n)");
+    assert_eq!(cut_short(source, "e a"), "e [a](http://x\n) end");
     // The snapped endpoint is on its block's edge, so the quote around it still counts (rule 2).
     let in_quote = ">\n> see [a](http://x\n> ) end";
-    assert_eq!(copy(in_quote, "a end"), in_quote);
+    assert_eq!(copy(in_quote, "a end"), "[a](http://x\n> ) end");
+    assert_eq!(cut_short(in_quote, "a end"), in_quote);
     // An autolink closes with its own `>`, and a bare one has no delimiters to check: a cut through
     // either copies the whole link (USER decision 2026-11-17).
     assert_eq!(copy("x www.auto.com y\nz", "x www.au"), "x www.auto.com");
@@ -368,6 +381,26 @@ fn an_unclosed_expansion_snaps_to_whole_lines() {
     assert_eq!(copy("x a@b.co y", "x a@"), "x a@b.co");
     // Trailing punctuation is not part of a bare autolink, so it is not pulled in.
     assert_eq!(copy("x https://a.com. y", "x https://a"), "x https://a.com");
+}
+
+/// Copies the display text `selected` of `source` after ending its only link's outline range at
+/// the end of its URL, as Comrak 0.59 reported a link whose `)` is on the next line.
+fn cut_short(source: &str, selected: &str) -> String {
+    let projection = project(source);
+    let mut map = projection.copy_map().clone();
+    let mut outline = (*map.outline).clone();
+    let link = outline
+        .structures
+        .iter_mut()
+        .find(|structure| structure.kind == StructureKind::Link)
+        .expect("one link");
+    link.source.end = source.find("http://x").unwrap() + "http://x".len();
+    map.outline = Arc::new(outline);
+    let resolved = map.resolve(projection.text(), find(projection.text(), selected));
+    let Ok(CopySource::Slices(ranges)) = resolved else {
+        panic!("a source slice");
+    };
+    ranges.into_iter().map(|range| &source[range]).collect()
 }
 
 /// P17-C17: normalized inline code rounds to its content edges, then takes its backticks;

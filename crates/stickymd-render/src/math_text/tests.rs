@@ -282,17 +282,52 @@ fn phase11b_equals_lines_locate_misreported_multiline_formula_ends() {
     }
 }
 
+/// Comrak 1.2's escape parity (its math spec): `\\` no longer escapes the closer after it, so
+/// `$a\n\\$` closes at its `\\$`, `\(a\n\\)b\)` at its last `\)`, and `\(a\n\\\)` at its `\)`. The
+/// multiline closer is found the same way, so these inline formulas are located and the step
+/// still joins the display formula after them instead of failing closed.
+#[test]
+fn phase11b_equals_lines_locate_closers_after_escaped_backslashes() {
+    for formula in [
+        "$a\n\\\\$ b$",
+        "\\(a\n\\\\)b\\)",
+        "\\(a\n\\\\\\)",
+        "$a\n\\$\\\\$",
+    ] {
+        assert_conversion(
+            &format!("{formula}\n\n\\[x\n=\ny\\]"),
+            &format!("{formula}\n\n\\[x=y\\]"),
+        );
+    }
+}
+
+/// A paragraph that starts with link reference definitions: Comrak 1.0 and later report its
+/// inline positions in place (0.59 shifted them up by the removed lines), so its real formulas
+/// join, while a title that repeats one stays as written.
+#[test]
+fn phase11b_equals_lines_join_formulas_after_reference_definitions() {
+    for (source, expected) in [
+        (
+            "[x]: u \"\\(a\n=\nb\\)\"\n12345678$$c\n=\nd$$",
+            "[x]: u \"\\(a\n=\nb\\)\"\n12345678$$c=d$$",
+        ),
+        (
+            "[x]: u \"a\n=\nb$\"\n1234567890123$c\n=\nd$",
+            "[x]: u \"a\n=\nb$\"\n1234567890123$c=d$",
+        ),
+        (
+            "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
+            "[x]: u \"$a\n=\nb$\"\n12345678$a=b$",
+        ),
+        ("[x]: u\n\\[a\n=\nb\\]", "[x]: u\n\\[a=b\\]"),
+    ] {
+        assert_conversion(source, expected);
+    }
+}
+
 #[test]
 fn phase11b_equals_lines_reject_positions_that_disagree_with_the_formula() {
     for source in [
-        // A paragraph that starts with a link reference definition has every
-        // inline position Comrak 0.59 reports in it shifted up, so it is left
-        // alone whole: its title is never joined, even when it repeats the
-        // real formula, and its real formulas wait for a sound position.
-        "[x]: u \"\\(a\n=\nb\\)\"\n12345678$$c\n=\nd$$",
-        "[x]: u \"a\n=\nb$\"\n1234567890123$c\n=\nd$",
-        "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
-        "[x]: u\n\\[a\n=\nb\\]",
         // Lazy continuation lines put the quote marker inside the range.
         "> $a\n=\n> b$",
         "> \\(a\n=\n> b\\)",
@@ -334,8 +369,8 @@ fn phase11b_equals_lines_reject_positions_that_disagree_with_the_formula() {
             assert_conversion(&source, &expected);
         }
     }
-    // A link whose destination and title span lines also ends early in
-    // Comrak's report; without any `]:` no definition can have shifted it.
+    // A paragraph that ends in a link whose destination and title span lines
+    // joins like any other.
     assert_conversion("\\(a\n=\nb\\)\n[x](u\n\"t\")", "\\(a=b\\)\n[x](u\n\"t\")");
     // Deeply nested quotes are walked once, with no per-node ancestor scan.
     let deep = format!("{}\\[a\n=\nb\\]", "> ".repeat(20_000));

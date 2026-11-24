@@ -390,6 +390,26 @@ mod tests {
         assert_eq!(engine.counters().raster_hits, 100);
     }
 
+    /// Comrak 1.2 keeps the line endings of dollar math in its literal (0.59 turned them into
+    /// spaces). TeX reads a line ending as a space, and so does RaTeX: the same geometry results.
+    #[test]
+    fn a_line_ending_in_a_formula_lays_out_as_a_space() {
+        let mut engine = MathEngine::new();
+        for (with_newline, with_space) in [
+            ("a\nb", "a b"),
+            ("\\frac{a}\n{b}\n+ c", "\\frac{a} {b} + c"),
+            ("\\alpha\nx", "\\alpha x"),
+        ] {
+            for kind in [MathKind::Inline, MathKind::Display] {
+                assert_eq!(
+                    engine.measure(with_newline, kind, 17.0).unwrap(),
+                    engine.measure(with_space, kind, 17.0).unwrap(),
+                    "{with_newline:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn render_tree_and_formula_caches_share_the_source_allocation() {
         let mut engine = MathEngine::new();
