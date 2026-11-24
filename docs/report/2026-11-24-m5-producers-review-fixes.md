@@ -207,6 +207,30 @@ bundle 清单 `0223829d…`；本机打包的发布布局 ZIP `ee7d9322…`，�
 - 未覆盖：schema 5 的 `mac-resources` 仍没有在虚拟机中运行过（每次采样核对显示器集合、就绪期限、R02 的过渡规则都只在单元测试中验证）；
   R03 的会话目录与附件失败、`ps` 的查询失败没有在虚拟机中复现。
 
+### kqueue 恢复到 #24 之后的验证（`be2d1a7`）
+
+`f0aec99` 撤回 `28e7eb0`（协调会话决定 kqueue 留在 #24），与第三次复审的修复合在一起；B1 另加记录级的标记：导入器只为事实中带写入观测的
+R03 行在账本记 `"write_watch":true`，发布门只认带它的 R03 PASS（plan 11 #macos-readiness-check“账本判定”）。上一节在 `a179abf` 上的 R03 运行
+（`NOT TESTED`）是 fail closed 期间的，已被下面的运行取代。
+
+- 本机：`cargo test --locked -p stickymd-smoke` 单元 753 个、集成 20 个通过，3 个忽略；clippy（八个 macOS 包与 Windows 目标）、`fmt --check`、
+  `phase 00`、`phase 16` 通过。另做变异：门不看 `write_watch`、导入器总写 `write_watch`、读入接受 `"write_watch":false`、没有事实的行不核对检查表、
+  “没有看到写入但产品没有自行退出”一项删去、观测到的写入只在产品自行退出时判 FAIL，6 处都被测试抓住（后两处起初没有样本，补上后抓住）。
+  `phase-18.md` 与 `phase-16.md` 的 236 处行号引用中，本 PR 的都落在 `fn` 行上（其余 3 处是更早的行，落在 `#[test]` 上）。
+- `mac-test` 虚拟机（macOS 27.2，26B123），`be2d1a7` 的干净克隆构建：驱动为 debug 构建 `bd4f50ac…`，本机打包的发布布局 ZIP `27dda36d…`
+  （不是晋升的候选）：
+
+| 运行 | 结果 | 写入观测 | 证据 |
+| --- | --- | --- | --- |
+| 校准 `--r03-write-restore`，批次 `mf-cal` | R03 FAIL，只有“不写文件”一项 FAIL | 快照前后 14 项相同；`Info.plist` 报 `WRITE\|ATTRIB` | `cal/mac-gui.json`，`5f95b7ef…` |
+| 批次 `mf-1` | R03 PASS，七项都通过 | 14 项登记，没有计为写入的事件；`Info.plist`、可执行文件与 `CodeResources` 各有一次属性变化 | `out1/mac-gui.json`，`9504886d…` |
+| 批次 `mf-2` | R03 PASS | 同上 | `out2/mac-gui.json`，`17d66bfd…` |
+| 批次 `mf-3` | R03 PASS | 同上 | `out3/mac-gui.json`，`26c7d5a1…` |
+
+- 登记进真实账本的一份副本：三份干净证据都记为 R03 PASS，带 `zip_sha256` 与 `"write_watch":true`；校准证据被拒（真实账本未改动）。证据在本
+  worktree 已忽略的 `dist/evidence/mac-vm-2026-11-24-mf/`。
+- 未覆盖：schema 5 的 `mac-resources` 仍没有在虚拟机中运行；发布门本身没有在晋升的候选上运行。
+
 ## 验证
 
 - 本机（macOS 27.2 arm64）`cargo test --locked -p stickymd-smoke`：单元 692 个、集成 20 个通过，3 个忽略。
