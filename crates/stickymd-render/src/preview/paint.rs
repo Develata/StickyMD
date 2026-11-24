@@ -119,7 +119,14 @@ pub(super) fn paint_document(
                 .boxes
                 .iter()
                 .cloned()
-                .filter_map(|item| clip_box(item, offset, clip)),
+                .filter_map(|item| clip_box(item, offset, clip))
+                .map(|item| {
+                    if target.is_some() {
+                        item
+                    } else {
+                        visible_bounds(item)
+                    }
+                }),
         );
         for chunk in &block.chunks {
             let (offset, clip) = if chunk.scroll_with_block {
@@ -357,6 +364,18 @@ pub(super) fn paint_document(
         horizontal,
         rails,
     })
+}
+
+/// An atomic object in a block that cannot scroll horizontally, clipped to the frame, decides a
+/// drag endpoint by the part a reader can see: a pointer held inside the pane can reach the
+/// object's visible right edge but never its off-pane right end.
+fn visible_bounds(mut item: super::PreviewTextBox) -> super::PreviewTextBox {
+    if item.atomic {
+        let (left, right) = (item.rect.x, item.rect.right());
+        item.start_x = item.start_x.clamp(left, right);
+        item.end_x = item.end_x.clamp(left, right);
+    }
+    item
 }
 
 #[cfg(test)]

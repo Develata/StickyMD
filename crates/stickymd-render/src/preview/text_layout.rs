@@ -504,6 +504,7 @@ mod tests {
             math: None,
             image: None,
             hard_break: false,
+            soft_break: false,
         }
     }
 
@@ -579,6 +580,7 @@ mod tests {
             math: None,
             image: None,
             hard_break: false,
+            soft_break: false,
         };
 
         let built = make_text_chunk(
@@ -655,6 +657,7 @@ mod tests {
             math: None,
             image: None,
             hard_break: false,
+            soft_break: false,
         };
         let built = make_text_chunk(
             &mut font_system,
@@ -736,6 +739,7 @@ mod tests {
             math: None,
             image: None,
             hard_break: false,
+            soft_break: false,
         };
         let built = make_text_chunk(
             &mut font_system,
@@ -795,6 +799,7 @@ mod tests {
             math: None,
             image: None,
             hard_break: false,
+            soft_break: false,
         };
         let built = make_text_chunk(
             &mut font_system,
@@ -843,6 +848,7 @@ mod tests {
             math: None,
             image: None,
             hard_break: false,
+            soft_break: false,
         };
         let built = make_text_chunk(
             &mut font_system,

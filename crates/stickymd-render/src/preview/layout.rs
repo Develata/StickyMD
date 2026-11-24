@@ -377,6 +377,7 @@ fn layout_text_block(
             image_cache,
             image_band,
             text_layout_cache,
+            !display_math,
         )
     };
     let height = built.height.max(metrics.line_height);
@@ -460,6 +461,7 @@ pub(super) fn make_chunk(
     image_cache: &mut DecodedImageCache,
     image_band: (f32, f32),
     text_layout_cache: &mut super::text_layout::TextLayoutCache,
+    embedded_math: bool,
 ) -> ChunkBuild {
     if spans
         .iter()
@@ -496,6 +498,7 @@ pub(super) fn make_chunk(
         image_cache,
         image_band,
         text_layout_cache,
+        embedded_math,
     )
 }
 

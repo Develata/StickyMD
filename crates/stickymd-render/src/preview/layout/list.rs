@@ -5,6 +5,7 @@
 use cosmic_text::{Align, FontSystem, Wrap};
 
 use super::{BlockBuild, ChunkBuild, INDENT_DIP, LayoutContent, metrics_for};
+use crate::math::MathKind;
 use crate::preview::copy::SelectionText;
 use crate::preview::text_layout::{TextLayoutCache, make_text_chunk};
 use crate::preview::{RenderBlock, RenderBlockKind};
@@ -72,7 +73,11 @@ pub(super) fn attach_marker(
         }
         marker.height += offset.max(0.0);
     }
-    if matches!(kind, RenderBlockKind::DisplayMath)
+    // A standalone display formula, or one that opens the item's paragraph on its own line.
+    let opens_with_display_formula = block.chunks.first().is_some_and(|chunk| {
+        matches!(&chunk.content, LayoutContent::Math(math) if math.kind == MathKind::Display)
+    });
+    if (matches!(kind, RenderBlockKind::DisplayMath) || opens_with_display_formula)
         && let (Some(item), Some(marker_chunk)) = (block.boxes.first_mut(), marker.chunks.first())
     {
         // A short formula's ink rectangle sits inside the line. Its selectable
