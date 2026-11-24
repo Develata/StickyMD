@@ -84,6 +84,7 @@ impl PreviewParser {
                 source_map: &source_map,
                 node_count: 0,
                 pipes_unescaped: false,
+                first_isolated_cr: first_isolated_cr(&snapshot.text),
             };
             let blocks = context.convert_blocks(root, 0)?;
             (blocks, context.node_count)
@@ -112,6 +113,8 @@ struct ConvertContext<'a> {
     /// Set while the inlines of a table cell, or of the paragraph Comrak splits off above a
     /// table, convert: Comrak removed the backslash of each `\|` there (`escaped_pipe_text_range`).
     pipes_unescaped: bool,
+    /// The byte of the first `\r` that no `\n` follows, or the source length.
+    first_isolated_cr: usize,
 }
 
 impl ConvertContext<'_> {
@@ -147,7 +150,8 @@ impl ConvertContext<'_> {
     /// by that one byte, so the text no longer reads as identical to its source and a copy
     /// that starts there keeps the escape (plan 06 #preview-copy-semantics rule 6). A pipe a
     /// backslash escapes is always text: `\\|` ends the cell instead. Elsewhere the range is
-    /// Comrak's. O(1).
+    /// Comrak's. Past the first isolated `\r` the line index disagrees with Comrak's lines
+    /// (`SourceMap`), so no range there is widened. O(1).
     fn escaped_pipe_text_range(
         &self,
         literal: &str,
@@ -156,6 +160,7 @@ impl ConvertContext<'_> {
         let range = range?;
         let widened = range.start.checked_sub(1).and_then(|start| {
             (self.pipes_unescaped
+                && range.start < self.first_isolated_cr
                 && literal.starts_with('|')
                 && self.source.as_bytes().get(start) == Some(&b'\\')
                 && self.source.as_bytes().get(range.start) == Some(&b'|'))
@@ -197,9 +202,16 @@ impl ConvertContext<'_> {
                     output.push(BlockNode::DisplayMath(self.math_node(only, math)));
                 } else {
                     // Comrak also unescapes the pipes of the paragraph it splits off above a
-                    // table's header row.
+                    // table's header row: that table follows on the very next line, with no
+                    // blank line between them.
                     self.pipes_unescaped = node.next_sibling().is_some_and(|next| {
                         matches!(next.data.borrow().value, NodeValue::Table(_))
+                            && source_range
+                                .zip(self.source_range(next))
+                                .and_then(|(paragraph, table)| {
+                                    self.source.get(paragraph.end..table.start)
+                                })
+                                .is_some_and(|gap| gap.matches('\n').count() == 1)
                     });
                     let content = self.convert_inlines(node, depth);
                     self.pipes_unescaped = false;
@@ -463,6 +475,17 @@ impl ConvertContext<'_> {
         }
         Ok(text)
     }
+}
+
+/// The byte of the first `\r` that no `\n` follows, or `source.len()`. O(source bytes), no
+/// allocation.
+fn first_isolated_cr(source: &str) -> usize {
+    let bytes = source.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .position(|(index, &byte)| byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
+        .unwrap_or(bytes.len())
 }
 
 fn table_alignment(alignment: ComrakAlignment) -> TableAlignment {
@@ -942,6 +965,62 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// An escaped pipe that starts a text in the paragraph Comrak splits off above a table is
+    /// widened by its backslash, but not past the first isolated `\r`, where the line index
+    /// no longer agrees with Comrak's lines.
+    #[test]
+    fn escaped_pipe_ranges_widen_only_where_the_line_index_holds() {
+        // The source text of every text that starts with `|`, in paragraphs and table cells.
+        let starts = |source: &str| {
+            let tree = PreviewParser.parse(&snapshot(source)).unwrap();
+            let mut texts = Vec::new();
+            let mut take = |inlines: &[InlineNode]| {
+                for inline in inlines {
+                    if let InlineNode::Text {
+                        literal,
+                        source_range,
+                    } = inline
+                        && literal.starts_with('|')
+                    {
+                        texts.push(
+                            source_range
+                                .and_then(|range| range.text(source))
+                                .map(str::to_owned),
+                        );
+                    }
+                }
+            };
+            for block in &tree.blocks {
+                match block {
+                    BlockNode::Paragraph { content, .. } => take(content),
+                    BlockNode::Table(table) => {
+                        for cell in table.rows.iter().flat_map(|row| &row.cells) {
+                            take(&cell.content);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            texts
+        };
+        assert_eq!(starts("p\n\\|x\n| h |\n| - |"), [Some("\\|x".to_owned())]);
+        // A blank line before the table: Comrak did not split this paragraph off it, so the
+        // range stays Comrak's (an escape that starts a text omits its backslash everywhere).
+        assert_eq!(starts("p\n\\|x\n\n| h |\n| - |"), [Some("|x".to_owned())]);
+        assert_eq!(
+            starts("| h |\n| - |\n| \\|x |\n| \\|y |"),
+            [Some("\\|x".to_owned()), Some("\\|y".to_owned())]
+        );
+        // After an isolated `\r`, Comrak's line 6 is the index's line 5: the cell `\|x` is
+        // reported on the next row. Its range is wrong either way, but not widened into it.
+        assert!(
+            starts("p\rq\n\n| h |\n| - |\n| \\|x |\n| \\|y |")
+                .iter()
+                .flatten()
+                .all(|text| !text.starts_with('\\'))
+        );
     }
 
     #[test]

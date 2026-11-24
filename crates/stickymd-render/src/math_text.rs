@@ -45,6 +45,15 @@ impl EqualsLineConversion {
         })
     }
 
+    /// Each joined line in the input, in order: the last byte of the line above it, its `=`,
+    /// and the first byte of the line below it. Same invariant as `joined_equals`; the lines
+    /// above and below hold text, so both bytes exist. O(joins).
+    pub fn joins(&self) -> impl Iterator<Item = [usize; 3]> + '_ {
+        self.removed
+            .chunks_exact(2)
+            .map(|join| [join[0].start - 1, join[0].end, join[1].end])
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }

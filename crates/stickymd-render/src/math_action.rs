@@ -86,30 +86,35 @@ pub fn run_math_action(
     if has_isolated_cr(&snapshot.text) {
         return Ok(None);
     }
-    // Step 2 parses step 1's result with the Preview's dialect; the same tree
-    // first confirms that every joined `=` is text there. Step 1 scans with
-    // Setext off, so it can take a definition title, indented code or an HTML
-    // block that a Setext heading starts in the Preview's reading for formula
-    // text. Then step 1 is dropped whole and step 2 runs on the original text,
-    // which costs one more parse on that path only.
+    // Step 1 scans with Setext off, so it can read a definition, indented code,
+    // an HTML block or an ATX heading that the Preview's dialect sees as its own
+    // block for formula text, and its `$$` pairs ignore block boundaries. When
+    // it joins anything, the Preview's parse of the original text must see each
+    // join as one formula a Setext underline split (`joins_keep_blocks`), and
+    // the Preview's parse of the result, which step 2 converts, must hold each
+    // joined `=` as text (`joins_lie_in_text`). Otherwise step 1 is dropped
+    // whole and step 2 converts the original text with the tree it already has.
     validate_scope(&snapshot.text, scope.as_ref())?;
     let mut joined = join_math_equals_lines(&snapshot.text, scope.clone());
-    let mut tree = None;
-    if let Some(joins) = &joined {
-        let joined_tree = PreviewParser.parse(&DocumentSnapshot {
-            text: joins.text().into(),
-            generation: snapshot.generation,
-            line_ending: snapshot.line_ending,
-        })?;
-        if joins_lie_in_text(&joined_tree, joins) {
-            tree = Some(joined_tree);
-        } else {
-            joined = None;
-        }
-    }
-    let tree = match tree {
-        Some(tree) => tree,
+    let tree = match &joined {
         None => PreviewParser.parse(snapshot)?,
+        Some(joins) => {
+            let original = PreviewParser.parse(snapshot)?;
+            let accepted = if joins_keep_blocks(&original, joins) {
+                let result = PreviewParser.parse(&DocumentSnapshot {
+                    text: joins.text().into(),
+                    generation: snapshot.generation,
+                    line_ending: snapshot.line_ending,
+                })?;
+                joins_lie_in_text(&result, joins).then_some(result)
+            } else {
+                None
+            };
+            accepted.unwrap_or_else(|| {
+                joined = None;
+                original
+            })
+        }
     };
     let scope = scope.map(|range| match &joined {
         Some(joined) => joined.map_position(range.start)..joined.map_position(range.end),
@@ -121,27 +126,75 @@ pub fn run_math_action(
     })
 }
 
-/// Whether every `=` that step 1 joined lies, in `tree` (the Preview's parse
-/// of step 1's result), in a paragraph, a heading or a display formula, and
-/// there outside inline code, Raw HTML, links and images: not in a code block,
-/// an HTML block, a table, or on a line no block holds, such as a link
-/// reference definition. A leaf block without a source range cannot hold a
-/// join, and a text block with a protected inline that has none holds no
-/// join, so such joins fail closed. Leaves and protected inlines do not
-/// overlap and are collected in document order, so each join is two binary
-/// searches: O(nodes + joins log nodes).
+/// Whether every joined `=` lies as text in `tree`, the Preview's parse of
+/// step 1's result (`Leaves::text_block`).
 fn joins_lie_in_text(tree: &OwnedDocumentTree, joins: &EqualsLineConversion) -> bool {
-    let mut leaves = Vec::new();
-    let mut protected = Vec::new();
-    leaf_blocks(&tree.blocks, &mut leaves, &mut protected);
-    joins.joined_equals().all(|equal| {
-        let at = leaves.partition_point(|(range, _)| range.end <= equal);
-        let in_text = leaves
-            .get(at)
-            .is_some_and(|&(range, text)| text && range.start <= equal);
-        let at = protected.partition_point(|range: &SourceRange| range.end <= equal);
-        in_text && protected.get(at).is_none_or(|range| equal < range.start)
+    let leaves = Leaves::new(tree);
+    joins
+        .joined_equals()
+        .all(|equal| leaves.text_block(equal).is_some())
+}
+
+/// Whether, in `tree` (the Preview's parse of the original text), every join
+/// is one formula that a Setext underline split: the line above and the `=`
+/// line are text of one block (the Setext heading, or one paragraph when the
+/// `=` is not an underline), and the line below is text of that block or of
+/// the next leaf block. So a join never reaches into a definition (no block),
+/// code, HTML or a table, nor across an ATX heading or any other block the
+/// `$$` pair spans. Leaf blocks follow document order and the three lines are
+/// adjacent, so "the next leaf block" is the block the line below starts.
+fn joins_keep_blocks(tree: &OwnedDocumentTree, joins: &EqualsLineConversion) -> bool {
+    let leaves = Leaves::new(tree);
+    joins.joins().all(|[above, equal, below]| {
+        let (Some(above), Some(equal), Some(below)) = (
+            leaves.text_block(above),
+            leaves.text_block(equal),
+            leaves.text_block(below),
+        ) else {
+            return false;
+        };
+        above == equal && (below == equal || below == equal + 1)
     })
+}
+
+/// The leaf blocks of one Preview parse that have a source range, in document
+/// order, each with whether it holds text a join may touch, and the ranges of
+/// the inline code, Raw HTML, links and images in those text blocks. Leaves do
+/// not overlap, nor do protected inlines (nothing inside one is recorded), so
+/// a lookup is two binary searches: O(nodes) to build, O(log nodes) a byte.
+struct Leaves {
+    blocks: Vec<(SourceRange, bool)>,
+    protected: Vec<SourceRange>,
+}
+
+impl Leaves {
+    fn new(tree: &OwnedDocumentTree) -> Self {
+        let mut leaves = Self {
+            blocks: Vec::new(),
+            protected: Vec::new(),
+        };
+        leaf_blocks(&tree.blocks, &mut leaves.blocks, &mut leaves.protected);
+        leaves
+    }
+
+    /// The index of the leaf block that holds byte `at` as text: a paragraph,
+    /// a heading or a display formula, outside its protected inlines. None in
+    /// a code block, an HTML block, a table, or on a line no block holds, such
+    /// as a link reference definition. A leaf without a source range holds no
+    /// byte, and a text block with a protected inline that has none is not
+    /// text, so such cases fail closed.
+    fn text_block(&self, at: usize) -> Option<usize> {
+        let index = self.blocks.partition_point(|(range, _)| range.end <= at);
+        let &(range, text) = self.blocks.get(index)?;
+        let protected = self.protected.partition_point(|range| range.end <= at);
+        (text
+            && range.start <= at
+            && self
+                .protected
+                .get(protected)
+                .is_none_or(|range| at < range.start))
+        .then_some(index)
+    }
 }
 
 /// The leaf blocks under `blocks` that have a source range, in document order,
@@ -287,6 +340,15 @@ mod tests {
             // The Setext heading leaves its backtick unpaired, so the lines below are one code
             // span; with Setext off the backticks pair the other way (second review, 2026-11-24).
             "H `\n===\n`$$a\n    =\nb$$`",
+            // The Preview's parse of the original text: the line below the joined `=` starts a
+            // definition, indented code or an HTML block, or the `$$` pair spans an ATX heading
+            // (third review, 2026-11-24). With a definition in front, `main` left them alone.
+            "$$a\n=\n[x]: /v \"b$$\"\n\n[x]",
+            "[p]: /p\n$$a\n=\n[x]: /v \"b$$\"\n\n[x]",
+            "$$a\n=\n    b$$",
+            "$$a\n=\n<custom-tag>\nb$$",
+            "$$a\n# H\n=\nb$$",
+            "[p]: /p\n$$a\n# H\n=\nb$$",
         ] {
             assert_eq!(pass(text), None, "{text:?}");
             // Step 2 still converts the original text.
@@ -296,11 +358,16 @@ mod tests {
                 "{text:?}"
             );
         }
-        // Control: the same lines without the heading join.
-        assert_eq!(
-            pass("[x]: /w\n\n$$a\n    =\nb$$").as_deref(),
-            Some("[x]: /w\n\n$$a=b$$")
-        );
+        // Control: the same lines without the heading join, a formula after a definition
+        // joins, and so does a chain the Setext underlines split into several blocks.
+        for (text, joined) in [
+            ("[x]: /w\n\n$$a\n    =\nb$$", "[x]: /w\n\n$$a=b$$"),
+            ("[p]: /p\n$$a\n=\nb$$", "[p]: /p\n$$a=b$$"),
+            ("$$a\n=\nb\n=\nc$$", "$$a=b=c$$"),
+            ("- $$a\n  =\n  b$$", "- $$a=b$$"),
+        ] {
+            assert_eq!(pass(text).as_deref(), Some(joined), "{text:?}");
+        }
     }
 
     /// Known limit (plan 07): plan 05 keeps an isolated `\r` as an ordinary character and the

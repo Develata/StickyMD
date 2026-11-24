@@ -1081,6 +1081,10 @@ mod tests {
         // it as paragraph text: the Preview's parse of the joined text puts the joined `=`
         // on a definition line, so step 1 is dropped (cross-model review, 2026-11-24).
         refuses("[r]: /u\nHeading\n===\n[x]: /v \"$$a\n    =\nb$$\"\n\n[x]");
+        // The line below the joined `=` starts a definition, or the `$$` pair spans an ATX
+        // heading: the Preview's parse of the original text keeps them apart (third review).
+        refuses("[p]: /p\n$$a\n=\n[x]: /v \"b$$\"\n\n[x]");
+        refuses("[p]: /p\n$$a\n# H\n=\nb$$");
         // Only Setext parsing makes these definition paragraphs: step 1 still
         // joins the `$$` pair, and step 2 leaves the title alone, with or
         // without text after the formula.
