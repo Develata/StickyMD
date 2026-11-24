@@ -634,4 +634,162 @@ mod tests {
         );
         assert!(median < parse * 12, "median={median:?} parse={parse:?}");
     }
+
+    /// What a join may never change, read from one Preview parse: link targets and titles,
+    /// inline code and Raw HTML outside `formula` (inside it they are the formula's own text
+    /// once joined), code and HTML block literals, ATX heading texts, and how many list items
+    /// and quotes there are. Setext headings may go: that is the point of a join.
+    fn untouchable(text: &str, formula: &std::ops::Range<usize>) -> Vec<String> {
+        use crate::preview::{BlockNode, InlineNode, PreviewParser};
+        fn inlines(nodes: &[InlineNode], formula: &std::ops::Range<usize>, out: &mut Vec<String>) {
+            for node in nodes {
+                if node
+                    .source_range()
+                    .is_some_and(|range| formula.start <= range.start && range.end <= formula.end)
+                {
+                    continue;
+                }
+                match node {
+                    InlineNode::Link {
+                        destination,
+                        title,
+                        children,
+                        ..
+                    } => {
+                        out.push(format!("link {destination:?} {title:?}"));
+                        inlines(children, formula, out);
+                    }
+                    InlineNode::Image {
+                        destination, title, ..
+                    } => out.push(format!("image {destination:?} {title:?}")),
+                    InlineNode::Code { literal, .. } => out.push(format!("code {literal:?}")),
+                    InlineNode::HtmlLiteral { literal, .. } => {
+                        out.push(format!("html {literal:?}"))
+                    }
+                    InlineNode::Emphasis { children, .. }
+                    | InlineNode::Strong { children, .. }
+                    | InlineNode::Strikethrough { children, .. } => inlines(children, formula, out),
+                    _ => {}
+                }
+            }
+        }
+        fn blocks(
+            text: &str,
+            formula: &std::ops::Range<usize>,
+            nodes: &[BlockNode],
+            out: &mut Vec<String>,
+        ) {
+            for node in nodes {
+                match node {
+                    BlockNode::Paragraph { content, .. } => inlines(content, formula, out),
+                    BlockNode::Heading {
+                        content,
+                        source_range,
+                        ..
+                    } => {
+                        let source = source_range.and_then(|range| range.text(text));
+                        if source.is_some_and(|source| source.starts_with('#')) {
+                            out.push(format!("atx {source:?}"));
+                        }
+                        inlines(content, formula, out);
+                    }
+                    BlockNode::BlockQuote { blocks: inner, .. } => {
+                        out.push("quote".to_owned());
+                        blocks(text, formula, inner, out);
+                    }
+                    BlockNode::List(list) => {
+                        for item in &list.items {
+                            out.push("item".to_owned());
+                            blocks(text, formula, &item.blocks, out);
+                        }
+                    }
+                    BlockNode::CodeBlock(code) => out.push(format!("codeblock {:?}", code.literal)),
+                    BlockNode::HtmlLiteral { literal, .. } => {
+                        out.push(format!("htmlblock {literal:?}"))
+                    }
+                    BlockNode::Table(_) | BlockNode::ThematicBreak { .. } => {}
+                    BlockNode::DisplayMath(_) => {}
+                }
+            }
+        }
+        let tree = PreviewParser.parse(&snapshot(text)).unwrap();
+        let mut out = Vec::new();
+        blocks(text, formula, &tree.blocks, &mut out);
+        out.sort();
+        out
+    }
+
+    /// Formula shapes × the block starts a Setext heading lets begin × containers × an optional
+    /// definition in front, through the whole action: whenever step 1's joins are kept, the
+    /// joined text leaves `untouchable` as it was. An oracle independent of the checks.
+    #[test]
+    fn phase11b_math_action_joins_touch_nothing_but_formula_text() {
+        let lines = [
+            "b",
+            "# h",
+            "[x]: /v \"t\"",
+            "    code",
+            "<custom-tag>",
+            "<div>",
+            "```",
+            "- item",
+            "1. item",
+            "> q",
+            "***",
+            "`b`",
+            "[x]",
+            "b `c",
+        ];
+        let mut joined = 0;
+        for prefix in ["", "[p]: /p\n", "[x]: /v \"t\"\n\n"] {
+            for container in ["", "> ", "- "] {
+                for above in lines {
+                    for below in lines {
+                        for shape in [
+                            "$$a\n=\n{below}$$",
+                            "$${above}\n=\n{below}$$",
+                            "\\[a\n=\n{below}\\]",
+                            "$$a\n{above}\n=\n{below}$$",
+                            "x \\(a\n=\n{below}\\) y",
+                        ] {
+                            let formula = shape.replace("{above}", above).replace("{below}", below);
+                            let body = formula
+                                .lines()
+                                .enumerate()
+                                .map(|(index, line)| {
+                                    if index == 0 || container == "> " {
+                                        format!("{container}{line}")
+                                    } else {
+                                        format!("{}{line}", " ".repeat(container.len()))
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let text = format!("{prefix}{body}\n\n[x]\n");
+                            let Some(pass) = run_math_action(&snapshot(&text), None).unwrap()
+                            else {
+                                continue;
+                            };
+                            let joins = match &pass {
+                                super::MathActionPass::Joined(joins)
+                                | super::MathActionPass::Converted(Some(joins), _) => joins,
+                                super::MathActionPass::Converted(None, _) => continue,
+                            };
+                            joined += 1;
+                            // The formula's span in each text: it starts after the prefix and
+                            // ends before the closing blank line and probe.
+                            let span = |text: &str| prefix.len()..text.len() - "\n\n[x]\n".len();
+                            assert_eq!(
+                                untouchable(joins.text(), &span(joins.text())),
+                                untouchable(&text, &span(&text)),
+                                "{text:?} -> {:?}",
+                                joins.text()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(joined > 100, "{joined}");
+    }
 }
