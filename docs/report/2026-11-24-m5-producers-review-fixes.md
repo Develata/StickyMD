@@ -259,7 +259,11 @@ R03 行在账本记 `"write_watch":true`，发布门只认带它的 R03 PASS（p
 
 验证（本节提交）：`cargo test --locked -p stickymd-smoke` 单元 755 个、集成 20 个通过；clippy（八个 macOS 包与 Windows 目标）、`fmt --check`、`phase 00`
 通过。变异：校准不标完成、`prompt.ppm` 的要求、错误后清空检查、单个 `@`、FAIL 原因用下界、输入按真实位置解析、原子替换带原时间、导入器按事实写标记，
-8 处删去或改坏后都被测试抓住。修复轮的 R03 驱动改动没有在虚拟机中重跑；`mac-resources` 的完整运行是在本轮改动之前的 `b97d8ae` 上跑的（见下节）。
+8 处删去或改坏后都被测试抓住。
+
+虚拟机（`154fc35`，合并 #23 第四轮之后；debug 驱动 `9b49b6fc…`，本机打包的 ZIP `2c48255e…`，不是晋升的候选）：校准 R03 FAIL，证据为
+`finished:false`（B1，`0e9b6591…`）；干净的 R03 PASS，`prompt.ppm` 存下（`3b469217…`）；证据在本 worktree 已忽略的 `dist/evidence/mac-vm-2026-11-24-mz/`。
+同一驱动的 `mac-resources` 第一次运行在新的显示模式核对下有效；完整的资源测量在 `b97d8ae` 上跑过（见下节）。
 
 ### `mac-resources` 的虚拟机运行（schema 6，`b97d8ae`）
 
