@@ -57,29 +57,6 @@ impl MathActionPass {
         }
     }
 
-    /// Step 1's joins, if the pass kept them.
-    pub(crate) fn joined(&self) -> Option<&EqualsLineConversion> {
-        match self {
-            Self::Joined(joined) => Some(joined),
-            Self::Converted(joined, _) => joined.as_ref(),
-        }
-    }
-
-    /// `map_position` for positions asked in non-decreasing order: each step's forward map
-    /// passes its changes once, and both maps keep the order, so the composition does too.
-    pub(crate) fn forward_position_map(&self) -> impl FnMut(usize) -> usize + '_ {
-        let (joined, converted) = match self {
-            Self::Joined(joined) => (Some(joined), None),
-            Self::Converted(joined, converted) => (joined.as_ref(), Some(converted)),
-        };
-        let mut joined = joined.map(EqualsLineConversion::forward_position_map);
-        let mut converted = converted.map(MathDelimiterConversion::forward_position_map);
-        move |position| {
-            let position = joined.as_mut().map_or(position, |map| map(position));
-            converted.as_mut().map_or(position, |map| map(position))
-        }
-    }
-
     /// Maps a byte position of the pass input through both steps.
     pub fn map_position(&self, position: usize) -> usize {
         match self {
@@ -90,6 +67,21 @@ impl MathActionPass {
                     .map_or(position, |joined| joined.map_position(position)),
             ),
         }
+    }
+}
+
+/// `map_position` through the steps taken, for positions asked in non-decreasing order: each
+/// step's forward map passes its changes once, and both maps keep the order, so the
+/// composition does too.
+fn composed_forward_map<'a>(
+    joined: Option<&'a EqualsLineConversion>,
+    converted: Option<&'a MathDelimiterConversion>,
+) -> impl FnMut(usize) -> usize + 'a {
+    let mut joined = joined.map(EqualsLineConversion::forward_position_map);
+    let mut converted = converted.map(MathDelimiterConversion::forward_position_map);
+    move |position| {
+        let position = joined.as_mut().map_or(position, |map| map(position));
+        converted.as_mut().map_or(position, |map| map(position))
     }
 }
 
@@ -126,9 +118,10 @@ pub fn run_math_action(
     //
     // When step 2 rewrites delimiters, the final text is parsed once more and must
     // read as the original does outside the joined formulas, each converted formula
-    // reading back as the same formula (`pass_reads_back`, plan 07). If it does not
-    // with step 1's joins, they are dropped and step 2 converts the original text,
-    // read back the same way; if that fails too, nothing changes.
+    // reading back as the same formula (`settle`, plan 07). Rewrites that do not read
+    // back are left out; when what fails is not down to one, step 1's joins are
+    // dropped and step 2 converts the original text, read back the same way; if that
+    // fails too, nothing changes.
     validate_scope(&snapshot.text, scope.as_ref())?;
     let joined = join_math_equals_lines(&snapshot.text, scope.clone());
     let original = PreviewParser.parse(snapshot)?;
@@ -138,20 +131,61 @@ pub fn run_math_action(
         let mapped = scope
             .clone()
             .map(|range| joins.map_position(range.start)..joins.map_position(range.end));
-        let pass = match convert_parsed_latex_math_delimiters(&result, mapped)? {
+        match convert_parsed_latex_math_delimiters(&result, mapped)? {
             // The result check already compared this very text with the original.
             None => return Ok(Some(MathActionPass::Joined(joins))),
-            Some(converted) => MathActionPass::Converted(Some(joins), converted),
-        };
-        if reads_back(&original, &pass, snapshot) {
-            return Ok(Some(pass));
+            Some(converted) => {
+                if let Some(pass) =
+                    settle(&original, Some(joins), converted, &result.source, snapshot)?
+                {
+                    return Ok(Some(pass));
+                }
+            }
         }
     }
     let Some(converted) = convert_parsed_latex_math_delimiters(&original, scope)? else {
         return Ok(None);
     };
-    let pass = MathActionPass::Converted(None, converted);
-    Ok(reads_back(&original, &pass, snapshot).then_some(pass))
+    settle(&original, None, converted, &original.source, snapshot)
+}
+
+/// How many times one path reads its final text back.
+const READ_BACKS: usize = 3;
+
+/// Plan 07's read-back of step 2's rewrites of `base` (step 1's result when `joins` are kept,
+/// else the original): the final text must read as `original` does. When it does not, the
+/// rewrites whose formula does not read back as itself are left as they were (USER 乙) and the
+/// rest are read back again, up to `READ_BACKS` times. None when what fails is not down to a
+/// rewrite, or the final text cannot be parsed; with joins and no rewrite left, the joins
+/// alone, whose text the result check already compared.
+fn settle(
+    original: &OwnedDocumentTree,
+    joins: Option<EqualsLineConversion>,
+    mut converted: MathDelimiterConversion,
+    base: &str,
+    snapshot: &DocumentSnapshot,
+) -> Result<Option<MathActionPass>, SemanticConversionError> {
+    for _ in 0..READ_BACKS {
+        let Ok(final_tree) = PreviewParser.parse(&DocumentSnapshot {
+            text: converted.text().into(),
+            generation: snapshot.generation,
+            line_ending: snapshot.line_ending,
+        }) else {
+            return Ok(None);
+        };
+        if pass_reads_back(original, &final_tree, joins.as_ref(), &converted) {
+            return Ok(Some(MathActionPass::Converted(joins, converted)));
+        }
+        let failing = converted.failing_replacements(&final_tree);
+        if failing.is_empty() {
+            return Ok(None);
+        }
+        match converted.without(base, &failing)? {
+            Some(rest) => converted = rest,
+            None => return Ok(joins.map(MathActionPass::Joined)),
+        }
+    }
+    Ok(None)
 }
 
 /// The Preview's parse of step 1's result when the three checks on the joins pass, else None.
@@ -172,22 +206,6 @@ fn adopt_joins(
         (joins_lie_in_text(&result, joins) && joins_keep_surroundings(original, &result, joins))
             .then_some(result),
     )
-}
-
-/// Whether the Preview's parse of `pass`'s final text reads as `original` does (plan 07's
-/// read-back). A final text the Preview cannot parse does not read back.
-fn reads_back(
-    original: &OwnedDocumentTree,
-    pass: &MathActionPass,
-    snapshot: &DocumentSnapshot,
-) -> bool {
-    PreviewParser
-        .parse(&DocumentSnapshot {
-            text: pass.text().into(),
-            generation: snapshot.generation,
-            line_ending: snapshot.line_ending,
-        })
-        .is_ok_and(|final_tree| pass_reads_back(original, &final_tree, pass))
 }
 
 /// Whether every joined `=` lies as text in `tree`, the Preview's parse of
@@ -523,12 +541,11 @@ mod tests {
         assert!(super::run_math_action(&snapshot, None).unwrap().is_none());
     }
 
-    /// Plan 07's read-back (USER 2026-11-25, "A"): step 2 writes `\(…\)` as `$…$`, and Comrak
-    /// does not take a `$` that a digit follows as a closer. With step 1's joins, the join is
-    /// dropped and step 2 converts the original text; when that does not read back either,
-    /// nothing changes. Without the read-back the first two would be `$a=b$2xyz$`, with
-    /// `$2xyz$` as the formula. The other inputs that still do not read back once the
-    /// whitespace inside the delimiters is gone (plan 07) change nothing either.
+    /// Plan 07's read-back (USER 2026-11-25, "A", then "乙"): step 2 writes `\(…\)` as `$…$`, and
+    /// Comrak does not take a `$` that a digit follows as a closer. A formula that does not read
+    /// back as itself is left as it was and the rest are rewritten; the join stays, since the
+    /// joined formula reads as one. Without the read-back the first two would be `$a=b$2xyz$`,
+    /// with `$2xyz$` as the formula.
     #[test]
     fn phase11b_math_action_reads_the_final_text_back() {
         let pass = |text: &str| {
@@ -541,16 +558,32 @@ mod tests {
                 .unwrap()
                 .map(|pass| pass.into_text())
         };
-        // The join and step 2 together.
-        assert_eq!(pass("\\(a\n=\nb\\)2xyz$"), None);
-        // Step 2 alone, as on `main`.
+        // The join and step 2 together: the join stays, the conversion does not.
+        assert_eq!(
+            pass("\\(a\n=\nb\\)2xyz$").as_deref(),
+            Some("\\(a=b\\)2xyz$")
+        );
+        // Step 2 alone, as on `main`: nothing else to convert, so nothing changes.
         assert_eq!(pass("\\(a=b\\)2xyz$"), None);
         // An escaped space before the closer stays, so `$a\ $` has a space before its `$`; a `$`
         // inside the formula; a formula in a quote whose delimiters stand on their own lines
-        // (the `>` would land in the formula).
-        assert_eq!(pass("\\( a\\ \\)"), None);
-        assert_eq!(pass("\\(a$b\\)"), None);
-        assert_eq!(pass("> \\(\n> a\n> \\)"), None);
+        // (the `>` would land in the formula). Each is left as it was, and the formula next to
+        // it is still rewritten.
+        for (text, rewritten) in [
+            ("\\( a\\ \\)", None),
+            ("\\(a$b\\)", None),
+            ("> \\(\n> a\n> \\)", None),
+            ("\\(a\\)2 and \\(b\\)", Some("\\(a\\)2 and $b$")),
+            ("\\( a\\ \\) \\(c\\)", Some("\\( a\\ \\) $c$")),
+            ("\\(a$b\\) \\(c\\)", Some("\\(a$b\\) $c$")),
+            ("> \\(\n> a\n> \\) \\(c\\)", Some("> \\(\n> a\n> \\) $c$")),
+        ] {
+            assert_eq!(pass(text).as_deref(), rewritten, "{text:?}");
+        }
+        // Full-width spaces just inside go like spaces (USER 2026-11-25).
+        assert_eq!(pass("\\(\u{3000}a\u{3000}\\)").as_deref(), Some("$a$"));
+        assert_eq!(pass("$\u{3000}a\u{3000}$").as_deref(), Some("$a$"));
+        assert_eq!(pass("$$\u{3000}a\u{3000}$$").as_deref(), Some("$$a$$"));
         // With the whitespace just inside the delimiters dropped, these read back.
         assert_eq!(pass("\\( a \\)").as_deref(), Some("$a$"));
         assert_eq!(pass("\\(\na\n\\)").as_deref(), Some("$a$"));

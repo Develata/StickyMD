@@ -47,6 +47,58 @@ impl MathDelimiterConversion {
         self.replacements.len()
     }
 
+    /// The indices of the rewrites whose formula `converted`, the Preview's parse of this
+    /// conversion's text, does not read back as itself: one math node at the rewritten range,
+    /// its literal (without the whitespace just inside) the rewritten body's, and display math
+    /// exactly when the new delimiters are `$$`. Linear in the nodes and the rewrites.
+    pub(crate) fn failing_replacements(&self, converted: &OwnedDocumentTree) -> Vec<usize> {
+        let mut maths = Vec::new();
+        math_nodes(&converted.blocks, &mut maths);
+        maths.sort_unstable_by_key(|(range, ..)| range.start);
+        let mut shift = 0_i64;
+        let mut failing = Vec::new();
+        for (index, replacement) in self.replacements.iter().enumerate() {
+            let start = shifted(replacement.range.start, shift);
+            shift += replacement.byte_delta();
+            let end = start + replacement.replacement.len();
+            let body = &replacement.replacement[replacement.new_open_len
+                ..replacement.replacement.len() - replacement.new_close_len];
+            let reads = maths
+                .binary_search_by_key(&start, |(range, ..)| range.start)
+                .is_ok_and(|at| {
+                    let (range, literal, display) = maths[at];
+                    range.end == end
+                        && display == (replacement.new_open_len == 2)
+                        && trimmed_math_literal(literal) == trimmed_math_literal(body)
+                });
+            if !reads {
+                failing.push(index);
+            }
+        }
+        failing
+    }
+
+    /// The conversion of `source`, the text this one converted, without the rewrites at the
+    /// sorted indices `drop`; None when none is left.
+    pub(crate) fn without(
+        &self,
+        source: &str,
+        drop: &[usize],
+    ) -> Result<Option<Self>, SemanticConversionError> {
+        let replacements: Vec<_> = self
+            .replacements
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| drop.binary_search(index).is_err())
+            .map(|(_, replacement)| replacement.clone())
+            .collect();
+        if replacements.is_empty() {
+            return Ok(None);
+        }
+        let text = apply_replacements(source, &replacements)?;
+        Ok(Some(Self { text, replacements }))
+    }
+
     /// The ranges, in the converted text's input, of the single-`$` text the conversion made
     /// formulas of (plan 07): the read-back requires each to read back as one formula.
     pub(crate) fn new_formulas(&self) -> impl Iterator<Item = Range<usize>> + '_ {
@@ -152,35 +204,36 @@ impl DelimiterReplacement {
 }
 
 /// How many bytes of whitespace to drop at the start and at the end of a formula body: the
-/// spaces and tabs just inside the delimiters, and line breaks too when `line_breaks`. A
-/// whitespace character right after an odd number of backslashes is a TeX control space
-/// (`\ `), so it stays, with what follows it. None when nothing else is left.
+/// spaces, tabs and full-width spaces (U+3000) just inside the delimiters, and line breaks too
+/// when `line_breaks`. A whitespace character right after an odd number of backslashes is a
+/// TeX control space (`\ `), so it stays, with what follows it. None when nothing else is
+/// left.
 ///
-/// Postcondition: `lead + trail < body.len()`, and both cut at UTF-8 boundaries (the dropped
-/// bytes are ASCII).
+/// Postcondition: `lead + trail < body.len()`, and both cut at char boundaries.
 pub(crate) fn math_body_trim(body: &str, line_breaks: bool) -> Option<(usize, usize)> {
     let blank =
-        |byte: u8| matches!(byte, b' ' | b'\t') || line_breaks && matches!(byte, b'\n' | b'\r');
-    let bytes = body.as_bytes();
-    let lead = bytes.iter().take_while(|&&byte| blank(byte)).count();
-    if lead == bytes.len() {
+        |c: char| matches!(c, ' ' | '\t' | '\u{3000}') || line_breaks && matches!(c, '\n' | '\r');
+    let lead = body.len() - body.trim_start_matches(blank).len();
+    if lead == body.len() {
         return None;
     }
-    let mut end = bytes.len() - bytes.iter().rev().take_while(|&&byte| blank(byte)).count();
-    let backslashes = bytes[..end]
+    let mut end = body.trim_end_matches(blank).len();
+    let backslashes = body.as_bytes()[..end]
         .iter()
         .rev()
         .take_while(|&&byte| byte == b'\\')
         .count();
-    if backslashes % 2 == 1 && end < bytes.len() {
+    if backslashes % 2 == 1
+        && let Some(escaped) = body[end..].chars().next()
+    {
         // Keep a `\r\n` pair whole, so no isolated `\r` is left.
-        end += if bytes[end..].starts_with(b"\r\n") {
+        end += if body[end..].starts_with("\r\n") {
             2
         } else {
-            1
+            escaped.len_utf8()
         };
     }
-    Some((lead, bytes.len() - end))
+    Some((lead, body.len() - end))
 }
 
 /// A formula literal without the whitespace that `math_body_trim` drops, line breaks
@@ -355,20 +408,23 @@ fn collect_math(
     }
     let source = &math.source_literal;
     // `$` may have no whitespace beside it, so `\(…\)` drops line breaks too; `$$…$$` keeps
-    // them, as `$$\n…\n$$` is the standard block form.
-    let (open, close, line_breaks) = if source.starts_with("\\(") && source.ends_with("\\)") {
-        ("$", "$", true)
+    // them, as `$$\n…\n$$` is the standard block form. A `$…$` Comrak read can only have
+    // full-width spaces just inside.
+    let (old, open, close, line_breaks) = if source.starts_with("\\(") && source.ends_with("\\)") {
+        (2, "$", "$", true)
     } else if source.starts_with("\\[") && source.ends_with("\\]")
         || source.starts_with("$$") && source.ends_with("$$")
     {
-        ("$$", "$$", false)
+        (2, "$$", "$$", false)
+    } else if source.starts_with('$') && source.ends_with('$') {
+        (1, "$", "$", true)
     } else {
         return;
     };
-    if range.end - range.start < 4 || source.len() < 4 {
+    if source.len() < 2 * old || range.end - range.start != source.len() {
         return;
     }
-    let body = &source[2..source.len() - 2];
+    let body = &source[old..source.len() - old];
     let Some((lead, mut trail)) = math_body_trim(body, line_breaks) else {
         return;
     };
@@ -383,20 +439,75 @@ fn collect_math(
     {
         trail = 0;
     }
-    // `$$…$$` that is already in the standard form stays as it is.
-    if source.starts_with("$$") && lead == 0 && trail == 0 {
+    // Dollar math already in the standard form stays as it is.
+    if source.starts_with('$') && lead == 0 && trail == 0 {
         return;
     }
     output.push(DelimiterReplacement {
         range,
         replacement: format!("{open}{}{close}", &body[lead..body.len() - trail]),
-        old_delimiter_len: 2,
+        old_delimiter_len: old,
         new_open_len: open.len(),
         new_close_len: close.len(),
         lead,
         trail,
         new_formula: false,
     });
+}
+
+/// The math nodes under `blocks`: range, literal and whether display.
+fn math_nodes<'a>(blocks: &'a [BlockNode], output: &mut Vec<(SourceRange, &'a str, bool)>) {
+    fn inlines<'a>(nodes: &'a [InlineNode], output: &mut Vec<(SourceRange, &'a str, bool)>) {
+        for inline in nodes {
+            match inline {
+                InlineNode::Emphasis { children, .. }
+                | InlineNode::Strong { children, .. }
+                | InlineNode::Strikethrough { children, .. }
+                | InlineNode::Link { children, .. } => inlines(children, output),
+                InlineNode::InlineMath(math) => {
+                    output.extend(
+                        math.source_range
+                            .map(|range| (range, &*math.literal, math.display)),
+                    );
+                }
+                InlineNode::Text { .. }
+                | InlineNode::Code { .. }
+                | InlineNode::Image { .. }
+                | InlineNode::SoftBreak { .. }
+                | InlineNode::HardBreak { .. }
+                | InlineNode::HtmlLiteral { .. } => {}
+            }
+        }
+    }
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph { content, .. } | BlockNode::Heading { content, .. } => {
+                inlines(content, output);
+            }
+            BlockNode::BlockQuote { blocks, .. } => math_nodes(blocks, output),
+            BlockNode::List(list) => {
+                for item in &list.items {
+                    math_nodes(&item.blocks, output);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        inlines(&cell.content, output);
+                    }
+                }
+            }
+            BlockNode::DisplayMath(math) => {
+                output.extend(
+                    math.source_range
+                        .map(|range| (range, &*math.literal, math.display)),
+                );
+            }
+            BlockNode::CodeBlock(_)
+            | BlockNode::ThematicBreak { .. }
+            | BlockNode::HtmlLiteral { .. } => {}
+        }
+    }
 }
 
 /// Single-`$` text that Comrak left as text because of the whitespace just inside it, made a
@@ -505,7 +616,7 @@ fn dollar_pair(
         || content.bytes().all(|byte| byte.is_ascii_alphanumeric());
     // An escaped space kept at the end would stand before the closing `$`, which then does
     // not close.
-    let ends_blank = content.ends_with([' ', '\t']);
+    let ends_blank = content.ends_with([' ', '\t', '\u{3000}']);
     let accepted = (lead > 0 || trail > 0)
         && !ends_blank
         && !content.starts_with(|c: char| c.is_ascii_digit())
@@ -671,6 +782,14 @@ mod tests {
             ("$$a$$", None),
             ("$$\na\n$$", None),
             ("$a$", None),
+            // Full-width spaces just inside go like spaces; one right after an odd number of
+            // backslashes is escaped and stays; nothing but full-width spaces is no formula.
+            ("\\(\u{3000}a\u{3000}\\)", Some("$a$")),
+            ("$\u{3000}a\u{3000}$", Some("$a$")),
+            ("\\[\u{3000}a \\]", Some("$$a$$")),
+            ("\\(a\\\u{3000}\\)", Some("$a\\\u{3000}$")),
+            ("\\(\u{3000}\\)", None),
+            ("$ \u{3000}a\u{3000} $", Some("$a$")),
         ] {
             assert_eq!(
                 converted(source, None).map(|conversion| conversion.text().to_owned()),
@@ -737,6 +856,51 @@ mod tests {
         let source = "x $ a $ y";
         assert!(converted(source, Some(0..6)).is_none());
         assert_eq!(converted(source, Some(2..7)).unwrap().text(), "x $a$ y");
+    }
+
+    /// A rewrite reads back only as one math node at its range, with its body as the literal
+    /// (whitespace just inside aside) and display math exactly for `$$`. Each condition alone,
+    /// on hand-built parses of the converted text `$$ab$$`.
+    #[test]
+    fn phase11b_conversion_names_the_rewrites_that_do_not_read_back() {
+        let conversion = converted("\\[ab\\]", None).unwrap();
+        assert_eq!(conversion.text(), "$$ab$$");
+        let parse = |start: usize, end: usize, literal: &str, display: bool| OwnedDocumentTree {
+            generation: Generation::initial(),
+            source: Arc::from(conversion.text()),
+            blocks: vec![BlockNode::Paragraph {
+                content: vec![InlineNode::InlineMath(MathNode {
+                    literal: literal.to_owned(),
+                    source_literal: String::new(),
+                    display,
+                    source_range: SourceRange::new(start, end),
+                })],
+                source_range: SourceRange::new(0, 6),
+            }],
+            node_count: 2,
+        };
+        assert!(
+            conversion
+                .failing_replacements(&parse(0, 6, "ab", true))
+                .is_empty()
+        );
+        assert!(
+            conversion
+                .failing_replacements(&parse(0, 6, " ab ", true))
+                .is_empty()
+        );
+        for (start, end, literal, display) in [
+            (1, 6, "ab", true),
+            (0, 5, "ab", true),
+            (0, 6, "ab", false),
+            (0, 6, "ac", true),
+        ] {
+            assert_eq!(
+                conversion.failing_replacements(&parse(start, end, literal, display)),
+                [0],
+                "{start}..{end} {literal:?} {display}"
+            );
+        }
     }
 
     /// Positions in the whitespace a rewrite drops clamp to the edge of the kept body.

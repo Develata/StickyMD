@@ -5,11 +5,11 @@
 
 use std::ops::Range;
 
-use super::MathActionPass;
+use super::composed_forward_map;
 use crate::math_text::EqualsLineConversion;
 use crate::preview::{
-    BlockNode, ImageKind, InlineNode, LinkKind, OwnedDocumentTree, SourceRange, TableAlignment,
-    trimmed_math_literal,
+    BlockNode, ImageKind, InlineNode, LinkKind, MathDelimiterConversion, OwnedDocumentTree,
+    SourceRange, TableAlignment, trimmed_math_literal,
 };
 
 /// Whether the Preview reads the result as it reads the original everywhere but inside the
@@ -64,20 +64,20 @@ pub(super) fn joins_keep_surroundings(
 pub(super) fn pass_reads_back(
     original: &OwnedDocumentTree,
     final_tree: &OwnedDocumentTree,
-    pass: &MathActionPass,
+    joins: Option<&EqualsLineConversion>,
+    converted: &MathDelimiterConversion,
 ) -> bool {
-    let joined = pass.joined();
-    let mut spans = joined.map_or_else(Vec::new, |joins| joins.joined_formulas().to_vec());
-    if let MathActionPass::Converted(_, converted) = pass {
-        // Step 2's positions are in step 1's result; the read-back works in the original's.
-        let mut unmap = joined.map(EqualsLineConversion::forward_unmap);
-        spans.extend(converted.new_formulas().map(|range| match &mut unmap {
-            Some(unmap) => unmap(range.start)..unmap(range.end),
-            None => range,
-        }));
-        spans.sort_unstable_by_key(|span| span.start);
-    }
-    reads_alike(original, final_tree, &spans, || pass.forward_position_map())
+    let mut spans = joins.map_or_else(Vec::new, |joins| joins.joined_formulas().to_vec());
+    // Step 2's positions are in step 1's result; the read-back works in the original's.
+    let mut unmap = joins.map(EqualsLineConversion::forward_unmap);
+    spans.extend(converted.new_formulas().map(|range| match &mut unmap {
+        Some(unmap) => unmap(range.start)..unmap(range.end),
+        None => range,
+    }));
+    spans.sort_unstable_by_key(|span| span.start);
+    reads_alike(original, final_tree, &spans, || {
+        composed_forward_map(joins, Some(converted))
+    })
 }
 
 /// The comparison of `original` with `other`, the parse of a text derived from it: `spans`
