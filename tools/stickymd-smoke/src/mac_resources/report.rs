@@ -1,6 +1,7 @@
-//! JSON evidence and a short per-scenario summary; incomplete acceptance stays explicit. Schema 5
-//! names both byte identities of the bundle, the driver and the VM, so `mac-ledger record` can
-//! keep P16-R01 and P16-R02 for the release gate (plan 11 #phase-16-macos-host).
+//! JSON evidence and a short per-scenario summary; incomplete acceptance stays explicit. Schema 7
+//! names both byte identities of the bundle, the driver and the VM, takes three samples per run
+//! (schema 6) and records the view each run's product reported (review F7), so `mac-ledger
+//! record` can keep P16-R01 and P16-R02 for the release gate (plan 11 #phase-16-macos-host).
 //! plan_ref: docs/plan/10_performance_reliability.md#macos-gates
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
@@ -25,6 +26,8 @@ pub(super) struct Evidence {
     pub inputs: Option<String>,
     /// This driver's own executable, so the ledger can tell which driver produced the evidence.
     pub driver: String,
+    /// `--wrong-view`: the calibration bad sample, whose evidence mac-ledger never records.
+    pub calibration: bool,
     /// True only on the write after the last run: a checkpoint, or a campaign stopped by a failed
     /// cleanup, is never taken for a finished one (mac-ledger records only finished runs).
     pub finished: bool,
@@ -56,7 +59,7 @@ fn run_json(run: &Run) -> String {
         },
     );
     format!(
-        "{{\"repetition\":{},\"pid\":{},\"status\":{},\"reason\":{},\"ready_seconds\":{},\"status_item_wait_seconds\":{},\"hidden_seconds\":{},\"exit_observed_seconds\":{},\"exit_status\":{},\"samples\":[{}],\"metrics\":{},\"cleanup_error\":{}}}",
+        "{{\"repetition\":{},\"pid\":{},\"status\":{},\"reason\":{},\"ready_seconds\":{},\"status_item_wait_seconds\":{},\"hidden_seconds\":{},\"exit_observed_seconds\":{},\"exit_status\":{},\"samples\":[{}],\"metrics\":{},\"cleanup_error\":{},\"view\":{}}}",
         run.repetition,
         optional(run.pid),
         quote(run.status),
@@ -68,7 +71,8 @@ fn run_json(run: &Run) -> String {
         optional(run.exit_status.as_deref().map(quote)),
         samples,
         metrics,
-        optional(run.cleanup_error.as_deref().map(quote))
+        optional(run.cleanup_error.as_deref().map(quote)),
+        optional(run.view.as_deref().map(quote))
     )
 }
 
@@ -86,14 +90,17 @@ impl Evidence {
                     .iter()
                     .map(|run| {
                         let metrics = run.metrics.as_ref()?;
-                        (run.status == "VALID" && run.cleanup_error.is_none())
-                            .then(|| {
-                                let [before, lower, after] = run.samples.as_slice() else {
-                                    return None;
-                                };
-                                Reading::of(metrics, before, lower, after, self.timebase)
-                            })
-                            .flatten()
+                        // Valid: measured, cleaned up, and showing its scenario's view (F7).
+                        (run.status == "VALID"
+                            && run.cleanup_error.is_none()
+                            && run.view.as_deref() == Some(scenario.mode))
+                        .then(|| {
+                            let [before, lower, after] = run.samples.as_slice() else {
+                                return None;
+                            };
+                            Reading::of(metrics, before, lower, after, self.timebase)
+                        })
+                        .flatten()
                     })
                     .collect(),
             })
@@ -101,9 +108,34 @@ impl Evidence {
         rows::judge(&scenarios, self.repetitions, &self.conditions)
     }
 
-    /// Both rows' runs are complete and within the lines: PASS once the views are confirmed.
-    pub fn measured(&self) -> bool {
-        self.rows().iter().all(|row| row.measured)
+    /// Both rows PASS.
+    pub fn passed(&self) -> bool {
+        self.rows().iter().all(|row| row.verdict == "PASS")
+    }
+
+    /// The `--wrong-view` calibration held (review F7): every scenario ran its repetitions, each
+    /// run's product reported Source, the configuration the calibration writes, and the tool
+    /// told it apart: `WRONG_VIEW` where the scenario configures another view, `VIEW_CHECKED`
+    /// where it configures Source.
+    pub fn calibration_held(&self) -> bool {
+        self.scenarios.len() == model::SCENARIOS.len()
+            && self
+                .scenarios
+                .iter()
+                .zip(model::SCENARIOS)
+                .all(|(runs, scenario)| {
+                    let expected = if scenario.mode == "source" {
+                        "VIEW_CHECKED"
+                    } else {
+                        "WRONG_VIEW"
+                    };
+                    runs.len() == self.repetitions
+                        && runs.iter().all(|run| {
+                            run.status == expected
+                                && run.view.as_deref() == Some("source")
+                                && run.cleanup_error.is_none()
+                        })
+                })
     }
 
     pub fn json(&self) -> String {
@@ -141,17 +173,24 @@ impl Evidence {
             })
             .collect::<Vec<_>>()
             .join(",");
+        let calibration = if self.calibration {
+            ",\"calibration\":\"wrong-view\"".to_owned()
+        } else {
+            String::new()
+        };
         let inputs = self.inputs.as_ref().map_or_else(String::new, |inputs| {
             format!(",\"app_inputs\":{}", quote(inputs))
         });
         format!(
-            "{{\"schema_version\":6,\"tool\":\"mac-resources\",\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"finished\":{},\"environment\":{}{inputs},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":{{\"statistic\":\"median of the valid runs per scenario (USER 2026-11-24)\",\"hard_failure_above_percent\":{}}},\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"rows\":[{rows}],\"scenarios\":[{}]}}\n",
-            if self.measured() {
+            "{{\"schema_version\":7,\"tool\":\"mac-resources\"{calibration},\"status\":\"{}\",\"acceptance_status\":\"INCOMPLETE\",\"finished\":{},\"environment\":{}{inputs},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"fixture_sha256\":{},\"fixture_bytes\":20480,\"formula_count\":20,\"repetitions\":{},\"warmup_seconds\":{},\"idle_seconds\":{},\"mach_timebase\":{{\"numer\":{},\"denom\":{}}},\"cpu_gate\":{{\"statistic\":\"median of the valid runs per scenario (USER 2026-11-24)\",\"hard_failure_above_percent\":{}}},\"wakeups_gate\":null,\"cpu_normalization\":\"one logical CPU = 100 percent\",\"rows\":[{rows}],\"scenarios\":[{}]}}\n",
+            if self.passed() {
                 "SCENARIOS_PASS"
             } else {
                 "INCOMPLETE_OR_FAILED"
             },
-            self.finished,
+            // A calibration is never marked finished, so a reader that does not know
+            // `calibration` refuses it too (as for mac-gui's, review fix round B1).
+            self.finished && !self.calibration,
             self.environment,
             quote(&self.app_hash),
             quote(&self.bundle_hash),

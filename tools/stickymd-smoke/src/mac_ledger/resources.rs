@@ -3,7 +3,9 @@
 //! `mac-gui` run is kept under (product inputs, driver, VM image, system from `sw_vers`) with both
 //! byte identities of the bundle, so the release gate can judge them on a candidate's bytes. As
 //! for `mac-gui` evidence, only a finished run in the VM is recorded; schema 4 and older cannot
-//! say which bundle or driver they measured, so they are rerun, not recorded.
+//! say which bundle or driver they measured, schema 5 takes no sample before 60 s, and schemas 5
+//! and 6 do not say which view each run showed (review F7), so they are rerun, not recorded. The
+//! `--wrong-view` calibration is never recorded.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
 use super::record::{self, Built, Identity, Record, optional_text};
@@ -19,13 +21,28 @@ pub(super) fn from_evidence(
     image: &str,
     recorded_unix: u64,
 ) -> Result<Vec<Record>, String> {
-    if !matches!(
-        value.field("schema_version").and_then(Value::unsigned),
-        Ok(6)
-    ) {
+    match value.field("schema_version").and_then(Value::unsigned) {
+        Ok(7) => {}
+        // What each older schema lacks: rerun, not recorded.
+        Ok(6) => {
+            return Err("mac-resources evidence of schema 6 records no view for its runs (review F7); it cannot be recorded".into());
+        }
+        Ok(5) => {
+            return Err("mac-resources evidence of schema 5 takes no sample before 60 s and records no view for its runs; it cannot be recorded".into());
+        }
+        Ok(version) if version < 5 => {
+            return Err(format!(
+                "mac-resources evidence of schema {version} names neither the bundle nor the driver; it cannot be recorded"
+            ));
+        }
+        _ => {
+            return Err("mac-resources evidence is not of schema 7, the one this reader knows; it cannot be recorded".into());
+        }
+    }
+    // The --wrong-view calibration is a bad sample of the driver itself (review F7).
+    if optional_text(value, "calibration")?.is_some() {
         return Err(
-            "mac-resources evidence before schema 6 names neither the bundle nor the driver (schema 4 and earlier) or takes no sample before 60 s (schema 5); it cannot be recorded"
-                .into(),
+            "calibration evidence (--wrong-view) is a bad sample; it cannot be recorded".into(),
         );
     }
     // Only R03 opens a ZIP; resource evidence naming one is not this tool's (review S4).

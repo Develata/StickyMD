@@ -365,3 +365,83 @@ Develata 2026-11-26 在协调会话中决定由该会话处理冻结前清单，
 
 另：本报告提到的、在原 worktree 中已忽略的 `dist/evidence/mac-vm-2026-11-24-*` 与 `mac-vm-2026-11-25-mz-res` 已原名移入主检出的 `dist/evidence/`，
 随后该 worktree 已删除（2026-11-26，USER 要求清理）。
+
+## Resolution：F7 视图诊断的移植（2026-11-26）
+
+**USER 的选择。** 2026-11-24 选办法 A（原话“默认关闭的诊断输出（推荐）”，见上文“需要 Develata 决定”）；2026-11-26 对冻结前清单第 7 项选
+“本会话恢复，单独 PR”。实现原在分支 `feat/m5-view-diagnostic` 的 `737d95e` 上（自 `d67125c` 分出），该分支不动；本次在
+`feat/m5-view-diagnostic-port`（自 `e02868a` 切出）上以 `cherry-pick -n` 移植，逐个冲突按当前代码重写 F7 的意图，`main` 后来加入的第三次采样、
+修复轮与 `6791f02` 的坏样本都保留。
+
+**产品部分与 `737d95e` 相同：** 共享层 `PresentFacts.view`（`ViewGeometry::shown_view`，由这一帧的窗格得出，Windows 忽略）；macOS 宿主的
+`platform/macos/view_report.rs` 由 `STICKYMD_DIAGNOSTIC_VIEW` 开启，默认关闭，第一个完整帧之后写一次，经硬链接发布、从不替换已有文件，不含 `unsafe`；
+条款在 `10` #macos-gates“macOS 视图诊断”。唯一改动：关闭时的测试另断言空值不留路径（原测试在空值下也通过，因为空路径没有文件名，写入在碰文件系统之前就失败）。
+
+**相对 `737d95e` 的改动：**
+
+- **schema 7。** `main` 的 schema 6 已是第三次采样（`b97d8ae`），视图证据改为 schema 7。`record` 按 schema 分别拒绝并写明缺什么：schema 6 没有记视图；
+  schema 5 没有 60 s 之前的采样，也没有记视图；schema 4 及更早不记 bundle 与驱动；更新的 schema 读器不认识。没有 `tool` 成员的旧证据走 `mac-gui`
+  的入口，其提示改为“schema 7 of mac-resources”。
+- **移动的代码。** 那条提示随 `record.rs` 的拆分移到 `mac_ledger/record/evidence.rs`，在那里改；`record.rs` 本身不改。`cli.rs` 的拆分不涉及 F7 的改动。
+- **按新基础调整的规则：**
+  - 有效运行的视图核对与三次采样、驱动顺序（`lifecycle`）并存：`rows::reading` 同时接受场景的隐藏方式与视图，`Evidence::rows` 在三次采样的读数之外
+    再要求视图相符。
+  - 修复轮加入的运行状态表加上 `VIEW_UNREPORTED`、`WRONG_VIEW` 与校准的 `VIEW_CHECKED`，否则读器会以“不是本工具写的状态”拒绝工具自己的证据。
+  - 就绪时刻沿用 `main` 的规则（同一次观察决定就绪与期限，在循环内记下）；F7 在循环之后重写 `ready_seconds` 的一行不再保留。视图在其后、隐藏与预热之前读取；
+    每次采样核对显示器（`screen`）照旧。
+  - **校准从不标 `finished`。** 与 R03 的校准相同（修复轮 B1）：即使读器不认识 `calibration`，也因未跑完而拒绝。`737d95e` 在校准后照常标 `finished`。
+  - **校准自己判定。** `737d95e` 在校准后总以 0 退出；现在只有每次运行都报告 Source、Preview 与 Split 为 `WRONG_VIEW`、Source 与 Hidden 为 `VIEW_CHECKED`
+    时才以 0 退出，否则非零。这是新增的规则，写进了 `11` #phase-16-macos-host。
+  - R02 成立时的原因沿用 `main` 的措辞（“within 0.1% of the 60 s budget”）。
+- **文档。** `11`、P16-R01/R02 与 P18-G04 从当前文本出发，只删去 fail closed 的句子、加上视图诊断；`10` 的条款与 `737d95e` 相同。本报告不在中间插入
+  `737d95e` 的 Resolution，只追加本节。P18-G04 原有的 `producer_tests.rs` 与 `row_tests.rs` 引用在 `6791f02` 加入测试之后已不落在 `fn` 行上，这次按测试名
+  全部重算，并加上视图测试的引用。P16-R01、R02 的状态不改（仍是 2026-11-14 那一身份的 `AUTOMATED PASS`），证据栏前注明 schema 7 尚无虚拟机运行。
+  `mac-resources --help` 与 `mac-ledger --help` 里遗留的“schema 5”改为 7。
+
+**代价：**
+
+- 产品输入指纹改变（`apps/stickymd-mac` 与 `crates/stickymd-desktop` 都改了），已有的 `mac-gui` 账本 PASS 对新身份不再复用。
+- 共享层的 `host.rs`、`shell/render.rs`、`geometry.rs`、`testing.rs` 改动也使 Windows 的模块收据失效；冻结前本来就要重跑。
+
+**验证（本机 macOS 27.2 arm64，提交前的工作树）：**
+
+- `cargo test --locked`（八个 macOS 包）：23 个测试目标与文档测试，2106 通过、0 失败、33 忽略；其中 `stickymd-smoke` 单元 786 个、集成 20 个。
+- `cargo clippy --all-targets -D warnings`：八个 macOS 包无警告；`stickymd-smoke`、`stickymd-desktop`、`stickymd-app` 加 `--target x86_64-pc-windows-msvc` 无警告；
+  `cargo check -p stickymd-win --target x86_64-pc-windows-msvc` 通过（本机不是 Windows，资源编译跳过，只检查）。`cargo fmt --check` 通过。
+- 变异（只删去或改坏一处守卫，跑对应的测试，恢复后与原文件逐字节相同）：接受 schema 6、去掉校准的拒绝、读器不比视图、`Evidence::rows` 不比视图、
+  状态表缺 `WRONG_VIEW`、缺 `VIEW_UNREPORTED`、缺 `VIEW_CHECKED`、校准标 `finished`、校准不看状态、报告格式不查尺寸、宿主不等完整帧、宿主以替换代替硬链接、
+  空值也开启、`shown_view` 把 Preview 说成 Source，共 14 处，删去后相应测试都失败。驱动里 `confirm_view` 本身（读报告、超时、不符即 `WRONG_VIEW`）只能在虚拟机里运行，
+  没有单元测试，它的坏样本就是下面的 `--wrong-view`。
+
+**R01、R02 何时能 PASS：** 只在一次包含 `--wrong-view` 坏样本的虚拟机运行之后。这次运行还没有做，账本里也没有 schema 7 的记录。需要：
+
+1. 同一驱动与同一 release 程序先跑 `mac-resources --app <StickyMD.app> --out <空目录> --wrong-view`：须以 0 退出，Preview、Split 各次 `WRONG_VIEW`，
+   Source、Hidden 各次 `VIEW_CHECKED`，证据 `"finished":false`、带 `"calibration":"wrong-view"`；`mac-ledger record` 拒绝它。
+2. 再跑一次完整的 `mac-resources --app <StickyMD.app> --out <另一空目录>`：四个场景各 5 次，每次的 `view` 等于场景的视图（Hidden 为 Source），
+   `"finished":true`，schema 7；在账本的副本上 `record` 登记为 R01、R02，判定与证据写下的相同。
+
+冻结前清单第 2 项（账本中没有 `kind:"resources"` 的 R02 FAIL）在这次登记之后要再核一次。
+
+### 虚拟机运行（2026-11-26）
+
+USER 2026-11-26 同意现在跑（“现在跑（推荐）”）。运行环境：`mac-test`（macOS 27.2，26B123，`hv_vmm_present=1`），镜像
+`ghcr.io/cirruslabs/macos-golden-gate-vanilla@sha256:b35695ce…`。程序是 `701e240` 的本机 release 构建，不是晋升的候选：可执行文件 `730cae5e…`、
+产品输入 `1f3f3834…`。驱动是同一提交的 unwind release 构建 `b59f1365…`。两者拷入虚拟机后，哈希与主机上的相同。证据与运行日志在已忽略的
+`dist/evidence/mac-vm-2026-11-26-f7/`。
+
+1. **`--wrong-view` 校准：** 以 0 退出。Source、Hidden 各 5 次 `VIEW_CHECKED`，Preview、Split 各 5 次 `WRONG_VIEW`，20 次报告的视图都是 source。
+   证据 `cal/mac-resources.json`（`8486df56…`）为 schema 7，`"calibration":"wrong-view"`，`"finished":false`。`mac-ledger record` 拒绝登记它：
+   “calibration evidence (--wrong-view) is a bad sample; it cannot be recorded”。
+2. **完整运行：** 以 0 退出。四个场景各 5 次全部 `VALID`，每次的 `view` 等于场景的视图，Hidden 为 source。证据 `res/mac-resources.json`（`cfc3b705…`）为
+   schema 7，`"finished":true`。
+   - 内存中位/最大：Source 37.2/37.3、Preview 45.5/51.1、Split 46.0/48.8、Hidden 27.8/27.8 MiB。
+   - 空闲 CPU 中位：0.0013%、0.0015%、0.0005%、0.0012%。
+   - R01、R02 都为 PASS。
+3. **登记：** 登记在真实账本的副本上（scratchpad），新增两条 `kind:"resources"` 记录，R01 PASS、R02 PASS。真实账本未改动，仍为 337 行、`6feb4e7e…`。
+   冻结前清单第 2 项的复核：副本中的资源记录只有这两条 PASS，没有要重判的 R02 FAIL；真实账本中仍为 0 条。
+
+P16-R01、R02 证据栏的说明随之改为这次运行，状态仍为 `AUTOMATED PASS`（USER 2026-11-26，“保持 PASS 并加注（推荐）”）。这次运行证明的是 F7 的校准与
+视图确认在真实虚拟机里成立。它不是发布门要的证据：发布门要正式候选上的资源测量（冻结前清单第 3 项），那时再登记进真实账本。
+
+另：运行中途我在虚拟机里调用了 `python3` 读证据。虚拟机没有开发者工具，于是弹出了安装提示（`Install Command Line Developer Tools`）。该进程已结束，
+没有安装任何东西；截屏确认桌面上没有对话框之后，才开始完整运行。此后证据都在主机上读取。虚拟机已停止。

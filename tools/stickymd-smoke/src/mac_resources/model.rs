@@ -99,6 +99,8 @@ pub(super) struct Run {
     pub samples: Vec<Sample>,
     pub metrics: Option<Metrics>,
     pub cleanup_error: Option<String>,
+    /// The view the product reported for its first complete frame (`view`).
+    pub view: Option<String>,
 }
 
 impl Run {
@@ -116,6 +118,7 @@ impl Run {
             samples: Vec::new(),
             metrics: None,
             cleanup_error: None,
+            view: None,
         }
     }
     pub fn exited(&mut self, elapsed: f64, status: String) {

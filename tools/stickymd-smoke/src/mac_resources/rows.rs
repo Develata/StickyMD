@@ -6,14 +6,14 @@
 //! runs of a scenario must be its repetitions 1..=n in order. The same rule writes the evidence's
 //! `rows` and, from the evidence's bytes, the ledger's records; evidence whose stated rows
 //! disagree with its runs is refused. `10` measures on macOS 27 and memory at scale 2; a
-//! campaign measured elsewhere leaves the row NOT_TESTED. No run yet confirms that its scenario
-//! opened in the view its configuration names (review F7), so until Develata decides how to
-//! confirm it, complete runs within the lines leave the row NOT_TESTED, never PASS; a FAIL stays
-//! a FAIL. The first and last samples, at least 60 s apart, bound the first 60 s window from
-//! above, so R02 holds on that CPU time within the 60 s budget, compared exactly in raw ticks;
-//! the first and the middle one, taken just before 60 s, bound it from below, so R02 fails on
-//! that CPU time above the budget (USER 2026-11-24, option A of review round 3 B3). Between the
-//! two the scenario cannot be told and is NOT_TESTED.
+//! campaign measured elsewhere leaves the row NOT_TESTED. A valid run showed the view its
+//! scenario configures, as the product's view diagnostic reported it (`view`; review F7, USER
+//! 2026-11-24): a run that showed another view, or reported none, is not valid. The first and
+//! last samples, at least 60 s apart, bound the first 60 s window from above, so R02 holds on
+//! that CPU time within the 60 s budget, compared exactly in raw ticks; the first and the middle
+//! one, taken just before 60 s, bound it from below, so R02 fails on that CPU time above the
+//! budget (USER 2026-11-24, option A of review round 3 B3). Between the two the scenario cannot
+//! be told and is NOT_TESTED.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
 use super::model::{self, Metrics, SCENARIOS, Sample};
@@ -160,13 +160,7 @@ pub(crate) struct RowVerdict {
     /// `PASS`, `FAIL` or `NOT_TESTED`.
     pub verdict: &'static str,
     pub detail: String,
-    /// The runs are complete and within the line in `10`'s environment: the row would be PASS
-    /// once the views are confirmed.
-    pub measured: bool,
 }
-
-/// Why complete runs within the lines are not yet a PASS (review F7).
-pub(super) const VIEW_UNCONFIRMED: &str = "but no run confirmed that its scenario opened in the configured view (review F7; awaiting Develata's decision)";
 
 fn bytes(bytes: u64) -> String {
     format!("{bytes} B ({:.3} MiB)", bytes as f64 / 1048576.0)
@@ -184,9 +178,8 @@ fn valid(scenario: &Scenario) -> impl Iterator<Item = Reading> + '_ {
 }
 
 /// The two rows. Outside `10`'s environment a row is NOT_TESTED; otherwise a FAIL needs an
-/// observed violation; all four scenarios complete within the line are `measured`, which is
-/// NOT_TESTED until the views are confirmed ([`VIEW_UNCONFIRMED`]); anything else is
-/// NOT_TESTED, naming what is missing.
+/// observed violation, a PASS needs all four scenarios complete, and anything else is NOT_TESTED,
+/// naming what is missing.
 pub(super) fn judge(
     scenarios: &[Scenario],
     repetitions: usize,
@@ -244,7 +237,7 @@ pub(super) fn judge(
             })
             .collect();
         (
-            "MEASURED",
+            "PASS",
             format!("all runs within the memory gates: {}", maxima.join(", ")),
         )
     } else {
@@ -330,7 +323,7 @@ pub(super) fn judge(
         )
     } else if held {
         (
-            "MEASURED",
+            "PASS",
             format!(
                 "median idle CPU within {CPU_HARD_FAILURE_PERCENT}% of the 60 s budget: {listed}"
             ),
@@ -338,22 +331,10 @@ pub(super) fn judge(
     } else {
         ("NOT_TESTED", missing)
     };
-    let row = |row: &'static str, (verdict, detail): (&'static str, String)| {
-        if verdict == "MEASURED" {
-            RowVerdict {
-                row,
-                verdict: "NOT_TESTED",
-                detail: format!("{detail}; {VIEW_UNCONFIRMED}"),
-                measured: true,
-            }
-        } else {
-            RowVerdict {
-                row,
-                verdict,
-                detail,
-                measured: false,
-            }
-        }
+    let row = |row: &'static str, (verdict, detail): (&'static str, String)| RowVerdict {
+        row,
+        verdict,
+        detail,
     };
     [row("R01", r01), row("R02", r02)]
 }
@@ -392,11 +373,11 @@ fn metrics(value: &Value) -> Result<Metrics, String> {
     })
 }
 
-/// The reading of one run as written, or why the evidence cannot be what this tool writes. A
-/// VALID run has exactly two samples whose window and counters give exactly the readings beside
-/// them (`model::metrics`, the same function that wrote them; numbers round-trip exactly).
-/// How a run of this tool can end (`runner`); any other status is not this tool's.
-const STATUSES: [&str; 7] = [
+/// How a run of this tool can end (`runner`); any other status is not this tool's. A run whose
+/// product reported no view or another view than its scenario's is `VIEW_UNREPORTED` or
+/// `WRONG_VIEW`; a `--wrong-view` calibration run whose view was as configured is `VIEW_CHECKED`
+/// (review F7).
+const STATUSES: [&str; 10] = [
     "VALID",
     "ERROR",
     "EXITED_EARLY",
@@ -404,6 +385,9 @@ const STATUSES: [&str; 7] = [
     "HIDE_TIMEOUT",
     "NOT_HIDDEN",
     "DISPLAY_CHANGED",
+    "VIEW_UNREPORTED",
+    "WRONG_VIEW",
+    "VIEW_CHECKED",
 ];
 
 fn optional_number(value: &Value, key: &str) -> Result<Option<f64>, String> {
@@ -449,11 +433,16 @@ fn lifecycle(run: &Value, hidden: bool, first_sample: f64) -> Result<(), String>
     Ok(())
 }
 
+/// The reading of one run as written, or why the evidence cannot be what this tool writes. A
+/// VALID run reported its scenario's `view` and has exactly three samples whose window and
+/// counters give exactly the readings beside them (`model::metrics`, the same function that wrote
+/// them; numbers round-trip exactly).
 fn reading(
     run: &Value,
     timebase: (u32, u32),
     finished: bool,
     hidden: bool,
+    view: &str,
 ) -> Result<Option<Reading>, String> {
     let cleaned = matches!(run.field("cleanup_error")?, Value::Null);
     // The tool stops a campaign at the first failed cleanup, before marking it finished.
@@ -469,6 +458,13 @@ fn reading(
     }
     if !cleaned {
         return Err("a VALID run with a cleanup error: the tool marks such a run ERROR".into());
+    }
+    // The tool measures only a run that reported its scenario's view (review F7).
+    let reported = run.field("view")?.optional_string()?;
+    if reported != Some(view) {
+        return Err(format!(
+            "a VALID run reported view {reported:?} where its scenario configures {view:?}; the tool marks such a run WRONG_VIEW"
+        ));
     }
     let samples = run
         .field("samples")?
@@ -551,7 +547,7 @@ fn conditions(environment: &Value) -> Result<Conditions, String> {
     })
 }
 
-/// The rows a `mac-resources` evidence file (schema 6) establishes, recomputed from its raw
+/// The rows a `mac-resources` evidence file (schema 7) establishes, recomputed from its raw
 /// samples. Its scenarios, memory gates and timings must be this tool's, each scenario's runs its
 /// repetitions in order, and its stated `rows` must agree with the runs; otherwise it is refused.
 pub(crate) fn from_evidence(value: &Value) -> Result<[RowVerdict; 2], String> {
@@ -628,7 +624,7 @@ pub(crate) fn from_evidence(value: &Value) -> Result<[RowVerdict; 2], String> {
                 ));
             }
             runs.push(
-                reading(run, timebase, finished, expected.hidden)
+                reading(run, timebase, finished, expected.hidden, expected.mode)
                     .map_err(|e| format!("{name} run {}: {e}", index + 1))?,
             );
         }
@@ -639,8 +635,8 @@ pub(crate) fn from_evidence(value: &Value) -> Result<[RowVerdict; 2], String> {
         });
     }
     let judged = judge(&scenarios, repetitions, &conditions);
-    // Verdict and detail both: two NOT_TESTED rows for different reasons (views unconfirmed,
-    // another scale, a missing run) are different results.
+    // Verdict and detail both: two NOT_TESTED rows for different reasons (another scale, a
+    // missing run, an undecided CPU window) are different results.
     let stated = value.field("rows")?.array()?;
     let stated: Vec<(String, String, String)> = stated
         .iter()

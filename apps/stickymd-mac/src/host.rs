@@ -55,6 +55,8 @@ pub struct MacHost {
     pointer_band: PointerBandWatch,
     /// What the user chose, apart from the level a window over the menu bar has to take.
     wants_topmost: bool,
+    /// The opt-in view diagnostic (`10` macOS gates); off unless its variable names a file.
+    view_report: crate::platform::macos::view_report::ViewReport,
 }
 
 impl MacHost {
@@ -80,6 +82,7 @@ impl MacHost {
             presenter: Default::default(),
             pointer_band: PointerBandWatch::default(),
             wants_topmost: false,
+            view_report: crate::platform::macos::view_report::ViewReport::from_environment(),
         }
     }
 }
@@ -238,9 +241,15 @@ impl Host for MacHost {
         true
     }
 
-    /// Feeds the opt-in input-latency diagnostic; it never ends the event loop.
+    /// Feeds the opt-in input-latency and view diagnostics; it never ends the event loop.
     fn after_present(&mut self, facts: &PresentFacts<'_>) -> bool {
         crate::platform::macos::input_latency::frame_presented(facts.draw);
+        self.view_report.frame_presented(
+            facts.view,
+            facts.width,
+            facts.height,
+            facts.view_complete,
+        );
         false
     }
 

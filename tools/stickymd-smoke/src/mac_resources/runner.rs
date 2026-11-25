@@ -7,6 +7,7 @@ use super::{
     native,
     report::{Evidence, quote},
     rows::Conditions,
+    view,
 };
 use crate::mac_common::{
     fixture::{app_inputs, bundle_hash, contained_executable, copy_fixture},
@@ -56,6 +57,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         driver: crate::integrity::sha256(
             &std::env::current_exe().map_err(|e| format!("driver path: {e}"))?,
         )?,
+        calibration: options.wrong_view,
         finished: false,
         fixture_hash: crate::integrity::sha256_bytes(fixture.as_bytes())?,
         repetitions: options.repetitions,
@@ -95,7 +97,17 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
     crate::atomic_evidence::write(&output, evidence.json().as_bytes())?;
     evidence.print_summary();
     println!("Evidence: {}", output.display());
-    if evidence.measured() {
+    if evidence.calibration {
+        println!(
+            "Calibration (--wrong-view): Preview and Split were configured as Source; every such run must be WRONG_VIEW. This evidence is never finished and cannot be recorded."
+        );
+        return if evidence.calibration_held() {
+            Ok(())
+        } else {
+            Err("the --wrong-view calibration did not hold: every run must report Source, Preview and Split runs as WRONG_VIEW and Source and Hidden runs as VIEW_CHECKED; see mac-resources.json".into())
+        };
+    }
+    if evidence.passed() {
         Ok(())
     } else {
         Err("P16-R01 or P16-R02 does not hold: every run must be valid and within its memory gate, and each scenario's median idle CPU at most 0.1%; see mac-resources.json".into())
@@ -142,8 +154,24 @@ fn one_run(
             return run;
         }
     };
-    let result = prepare(&mut session, app, fixture, scenario.mode, evidence)
-        .and_then(|()| measure(&mut session, &mut run, timebase, scenario.hidden, screen));
+    // The calibration bad sample writes Source's configuration where Preview or Split is
+    // expected, so the product shows another view than the scenario's (review F7).
+    let written = if evidence.calibration && scenario.mode != "source" {
+        "source"
+    } else {
+        scenario.mode
+    };
+    let result = prepare(&mut session, app, fixture, written, evidence).and_then(|()| {
+        measure(
+            &mut session,
+            &mut run,
+            timebase,
+            scenario.hidden,
+            screen,
+            scenario.mode,
+            evidence.calibration,
+        )
+    });
     if let Err(error) = result {
         run.reason = error;
     }
@@ -181,9 +209,12 @@ fn prepare(
             "the copied bundle is not the one this campaign measures; refused before launch".into(),
         );
     }
+    // The product's opt-in view diagnostic reports the view its first complete frame shows.
+    let report = session.path().join(view::REPORT);
     session.spawn(
         Command::new(executable)
             .current_dir(session.path())
+            .env(view::ENV, &report)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null()),
@@ -244,12 +275,70 @@ fn capture(
     Ok(true)
 }
 
+/// Reads the product's view report (`view`) while the window is ready, before anything else is
+/// done to it. `false` means the product exited meanwhile, recorded in `run`. A missing, unreadable
+/// or other view makes the run invalid, never a FAIL.
+fn confirm_view(
+    session: &mut Session,
+    run: &mut Run,
+    started: Instant,
+    expected: &str,
+) -> Result<bool, String> {
+    let report = session.path().join(view::REPORT);
+    let deadline = Instant::now() + Duration::from_secs(view::WAIT_SECONDS);
+    let text = loop {
+        if exited(session, run, started)? {
+            return Ok(false);
+        }
+        match std::fs::read_to_string(&report) {
+            Ok(text) => break text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                run.status = "VIEW_UNREPORTED";
+                return Err(format!("view report unreadable: {e}"));
+            }
+        }
+        if Instant::now() >= deadline {
+            run.status = "VIEW_UNREPORTED";
+            return Err(format!(
+                "no view report within {} s of readiness",
+                view::WAIT_SECONDS
+            ));
+        }
+        if !wait(
+            session,
+            run,
+            started,
+            Instant::now() + Duration::from_millis(100),
+        )? {
+            return Ok(false);
+        }
+    };
+    let shown = match view::parse(&text) {
+        Ok(shown) => shown.to_owned(),
+        Err(error) => {
+            run.status = "VIEW_UNREPORTED";
+            return Err(error);
+        }
+    };
+    run.view = Some(shown.clone());
+    if shown != expected {
+        run.status = "WRONG_VIEW";
+        return Err(format!(
+            "the product showed {shown} where the scenario configures {expected}"
+        ));
+    }
+    Ok(true)
+}
+
 fn measure(
     session: &mut Session,
     run: &mut Run,
     timebase: (u32, u32),
     hidden: bool,
     screen: &Screen,
+    expected_view: &str,
+    calibration: bool,
 ) -> Result<(), String> {
     let started = Instant::now();
     let pid = session.child.as_ref().ok_or("Missing child")?.id();
@@ -278,6 +367,15 @@ fn measure(
         )? {
             return Ok(());
         }
+    }
+    // The view is read while the window is ready, before hiding or warming up (review F7).
+    if !confirm_view(session, run, started, expected_view)? {
+        return Ok(());
+    }
+    // The calibration bad sample checks views only; it never measures.
+    if calibration {
+        run.status = "VIEW_CHECKED";
+        return Ok(());
     }
     if hidden && !hide(session, run, pid, started)? {
         return Ok(());
@@ -425,7 +523,16 @@ mod tests {
             main: 1,
             active: vec![1],
         };
-        super::measure(&mut session, &mut run, (1, 1), false, &screen).unwrap();
+        super::measure(
+            &mut session,
+            &mut run,
+            (1, 1),
+            false,
+            &screen,
+            "source",
+            false,
+        )
+        .unwrap();
         assert_eq!(run.status, "EXITED_EARLY");
         assert!(run.samples.is_empty() && run.metrics.is_none());
         assert!(run.exit_status.as_deref().unwrap().contains('1'));

@@ -132,6 +132,9 @@ pub struct PresentFacts<'a> {
     pub ledger: &'a FrameLedger,
     /// From the start of drawing this frame to `present` returning.
     pub draw: std::time::Duration,
+    /// The view this frame's panes show (`ViewGeometry::shown_view`), for a host's opt-in view
+    /// diagnostic (`10` macOS gates); Windows ignores it.
+    pub view: stickymd_app::config::ViewMode,
 }
 
 /// Everything the shell uses of a host, as one bound: it adds no business of its own. The host is

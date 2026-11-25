@@ -535,6 +535,7 @@ mod tests {
             view_complete: true,
             ledger: &ledger,
             draw: std::time::Duration::ZERO,
+            view: stickymd_app::config::ViewMode::Source,
         };
         let mut host = FakeHost::default();
         assert!(!host.after_present(&facts));

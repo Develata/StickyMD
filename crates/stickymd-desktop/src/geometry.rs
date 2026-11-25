@@ -39,6 +39,18 @@ pub struct ViewGeometry {
     pub divider_x: Option<u32>,
 }
 
+impl ViewGeometry {
+    /// The view these panes show: both panes are Split, the preview alone is Preview, and the
+    /// source alone is Source. It is read from the panes laid out, not from the configuration.
+    pub fn shown_view(&self) -> ViewMode {
+        match (self.source.is_some(), self.preview.is_some()) {
+            (true, true) => ViewMode::Split,
+            (false, true) => ViewMode::Preview,
+            _ => ViewMode::Source,
+        }
+    }
+}
+
 pub fn geometry(mode: ViewMode, size: PhysicalSize<u32>, scale: f32) -> ViewGeometry {
     let toolbar_height = (TOOLBAR_HEIGHT_DIP * scale.max(0.5)).round().max(1.0) as u32;
     let content_y = toolbar_height.min(size.height);
@@ -105,6 +117,16 @@ mod tests {
         assert!((source.width as i64 - preview.width as i64).abs() <= 1);
         assert_eq!(source.y, preview.y);
         assert_eq!(source.height, preview.height);
+    }
+
+    #[test]
+    fn the_panes_laid_out_name_the_view_they_show() {
+        for scale in [1.0, 2.0] {
+            for mode in [ViewMode::Source, ViewMode::Split, ViewMode::Preview] {
+                let shown = geometry(mode, PhysicalSize::new(1040, 1360), scale).shown_view();
+                assert_eq!(shown, mode, "scale {scale}");
+            }
+        }
     }
 
     #[test]

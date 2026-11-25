@@ -18,16 +18,17 @@ fn sample(seconds: f64, ticks: u64, wakeups: u64) -> Sample {
 pub(super) const IDLE_TICKS: u64 = 14_400;
 pub(super) const BUSY_TICKS: u64 = 1_483_200;
 
-/// A valid run as the tool takes it: ready at 0.5 s, the first sample after the 30 s warm-up, the
-/// middle one 59.9 s later and the last 60 s later, at `footprint_bytes`, `cpu_ticks` of CPU
-/// between the first and the last spread evenly, 100 interrupt and 25 idle wake-ups a second,
-/// readings computed from them.
-pub(super) fn measured(repetition: usize, footprint_bytes: u64, cpu_ticks: u64) -> Run {
-    measured_over(repetition, footprint_bytes, cpu_ticks, 60.0)
+/// A valid run as the tool takes it: `view` reported, ready at 0.5 s, the first sample after the
+/// 30 s warm-up, the middle one 59.9 s later and the last 60 s later, at `footprint_bytes`,
+/// `cpu_ticks` of CPU between the first and the last spread evenly, 100 interrupt and 25 idle
+/// wake-ups a second, readings computed from them.
+pub(super) fn measured(view: &str, repetition: usize, footprint_bytes: u64, cpu_ticks: u64) -> Run {
+    measured_over(view, repetition, footprint_bytes, cpu_ticks, 60.0)
 }
 
 /// [`measured`] with the second sample `window` seconds after the first.
 pub(super) fn measured_over(
+    view: &str,
     repetition: usize,
     footprint_bytes: u64,
     cpu_ticks: u64,
@@ -54,11 +55,12 @@ pub(super) fn measured_over(
     run.metrics = Some(metrics(&before, &after, 125, 3).unwrap());
     run.samples = vec![before, lower, after];
     run.status = "VALID";
+    run.view = Some(view.to_owned());
     run
 }
 
 fn valid_run(repetition: usize, footprint_bytes: u64) -> Run {
-    measured(repetition, footprint_bytes, IDLE_TICKS)
+    measured("source", repetition, footprint_bytes, IDLE_TICKS)
 }
 
 #[test]
@@ -199,6 +201,22 @@ fn cli_parses_paths_defaults_equals_help_and_rejects_incomplete_or_ambiguous_opt
         panic!("wrong route")
     };
     assert_eq!(options.repetitions, 5);
+    assert!(!options.wrong_view);
+    // The calibration bad sample is a flag (review F7); once only.
+    let crate::cli::CommandLine::MacResources(calibration) =
+        parse(&["mac-resources", "--app", "x.app", "--wrong-view"]).unwrap()
+    else {
+        panic!("wrong route")
+    };
+    assert!(calibration.wrong_view);
+    assert!(
+        super::parse(&[
+            "--app=x".into(),
+            "--wrong-view".into(),
+            "--wrong-view".into()
+        ])
+        .is_err()
+    );
     assert_eq!(options.app.to_str().unwrap(), "中文 path/StickyMD.app");
     assert!(
         parse(&[
@@ -246,6 +264,7 @@ pub(super) fn evidence() -> Evidence {
         bundle_hash: "c".repeat(64),
         inputs: Some("e".repeat(64)),
         driver: "d".repeat(64),
+        calibration: false,
         finished: true,
         fixture_hash: crate::integrity::sha256_bytes(fixture().as_bytes()).unwrap(),
         repetitions: 5,
@@ -255,7 +274,7 @@ pub(super) fn evidence() -> Evidence {
             .map(|scenario| {
                 (1..=5)
                     .map(|i| {
-                        let mut run = valid_run(i, scenario.limit);
+                        let mut run = measured(scenario.mode, i, scenario.limit, IDLE_TICKS);
                         if scenario.hidden {
                             hide(&mut run);
                         }
@@ -281,16 +300,43 @@ pub(crate) fn evidence_json(busy: bool) -> String {
     if busy {
         let limit = SCENARIOS[2].limit;
         for (index, run) in evidence.scenarios[2].iter_mut().enumerate() {
-            *run = measured(index + 1, limit, BUSY_TICKS);
+            *run = measured("split", index + 1, limit, BUSY_TICKS);
         }
     }
     evidence.json()
 }
 
+/// A `--wrong-view` calibration as the tool writes it: Source's configuration in every scenario,
+/// views checked, nothing measured.
+pub(super) fn calibration() -> Evidence {
+    let mut evidence = evidence();
+    evidence.calibration = true;
+    for (runs, scenario) in evidence.scenarios.iter_mut().zip(SCENARIOS) {
+        for run in runs {
+            run.samples.clear();
+            run.metrics = None;
+            run.status_item_wait_seconds = None;
+            run.hidden_seconds = None;
+            run.view = Some("source".into());
+            run.status = if scenario.mode == "source" {
+                "VIEW_CHECKED"
+            } else {
+                "WRONG_VIEW"
+            };
+        }
+    }
+    evidence
+}
+
+/// The calibration's JSON as the tool writes it, for the ledger's tests.
+pub(crate) fn calibration_json() -> String {
+    calibration().json()
+}
+
 #[test]
 fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
     let mut evidence = evidence();
-    assert!(evidence.measured());
+    assert!(evidence.passed());
     let text = evidence.json();
     assert!(!text.contains("\"wakeups_per_second\""));
     assert!(text.contains("\"interrupt_wakeups_per_second\":100"));
@@ -325,11 +371,11 @@ fn json_preserves_failure_details_and_reports_hidden_like_the_rest() {
     );
     // A hidden run over its own 48 MiB gate fails, though it is within Source's 72 MiB.
     evidence.scenarios[3][0] = valid_run(1, 48 * 1024 * 1024 + 1);
-    assert!(!evidence.measured());
+    assert!(!evidence.passed());
     evidence.scenarios[3][0] = valid_run(1, 48 * 1024 * 1024);
-    assert!(evidence.measured());
+    assert!(evidence.passed());
     evidence.scenarios[0][0].exited(0.1, "signal: 9\n\"test\"".into());
-    assert!(!evidence.measured());
+    assert!(!evidence.passed());
     let json = crate::release::json::parse(&evidence.json()).unwrap();
     let run = &json.field("scenarios").unwrap().array().unwrap()[0]
         .field("runs")

@@ -179,8 +179,7 @@ fn a_finished_resources_run_in_the_vm_records_r01_and_r02_with_both_digests() {
             other => panic!("{other:?}"),
         })
         .collect();
-    // Not PASS until the views are confirmed (review F7): the rows are recorded NOT_TESTED.
-    assert_eq!(rows, [("R01", "NOT_TESTED"), ("R02", "NOT_TESTED")]);
+    assert_eq!(rows, [("R01", "PASS"), ("R02", "PASS")]);
     for r in &records {
         let Record::Automated {
             identity,
@@ -237,16 +236,27 @@ fn resources_evidence_outside_the_vm_unfinished_old_or_inconsistent_is_refused()
             "not in a virtual machine",
         ),
         ("\"finished\":true", "\"finished\":false", "not finished"),
+        // Each older schema is refused for what it lacks (review F7: schema 6 records no view).
         (
+            "\"schema_version\":7",
             "\"schema_version\":6",
-            "\"schema_version\":4",
-            "before schema 6",
+            "mac-resources evidence of schema 6 records no view for its runs",
         ),
-        // Schema 5 took no sample before 60 s (review round 3, B3).
+        // Schema 5 took no sample before 60 s (review round 3, B3), nor recorded a view.
         (
-            "\"schema_version\":6",
+            "\"schema_version\":7",
             "\"schema_version\":5",
-            "before schema 6",
+            "of schema 5 takes no sample before 60 s and records no view",
+        ),
+        (
+            "\"schema_version\":7",
+            "\"schema_version\":4",
+            "of schema 4 names neither the bundle nor the driver",
+        ),
+        (
+            "\"schema_version\":7",
+            "\"schema_version\":8",
+            "is not of schema 7, the one this reader knows",
         ),
         // A run's status changed while the rows still say PASS.
         (
@@ -263,8 +273,32 @@ fn resources_evidence_outside_the_vm_unfinished_old_or_inconsistent_is_refused()
     // Schema 4 evidence carried no tool member: it is neither mac-gui's nor this one's schema.
     let old = good.replacen("\"tool\":\"mac-resources\",", "", 1);
     let error =
-        record(&old.replacen("\"schema_version\":6", "\"schema_version\":4", 1)).unwrap_err();
-    assert!(error.contains("schema 6 of mac-resources"), "{error}");
+        record(&old.replacen("\"schema_version\":7", "\"schema_version\":4", 1)).unwrap_err();
+    assert!(error.contains("schema 7 of mac-resources"), "{error}");
+    // The --wrong-view calibration is a bad sample: never recorded (review F7). As the tool
+    // writes it, it is also never finished, so without its `calibration` member it is still
+    // refused, as unfinished.
+    let calibration = crate::mac_resources::calibration_json();
+    let error = record(&calibration).unwrap_err();
+    assert!(
+        error.contains("calibration evidence (--wrong-view) is a bad sample"),
+        "{error}"
+    );
+    let unnamed = calibration.replacen(",\"calibration\":\"wrong-view\"", "", 1);
+    assert_ne!(unnamed, calibration);
+    let error = record(&unnamed).unwrap_err();
+    assert!(error.contains("not finished"), "{error}");
+    // Even a calibration marked finished by hand is refused for being one.
+    let finished = good.replacen(
+        "\"tool\":\"mac-resources\"",
+        "\"tool\":\"mac-resources\",\"calibration\":\"wrong-view\"",
+        1,
+    );
+    let error = record(&finished).unwrap_err();
+    assert!(
+        error.contains("calibration evidence (--wrong-view) is a bad sample"),
+        "{error}"
+    );
     // Without the bundle digest or the driver it cannot be recorded.
     for member in ["\"app_bundle_manifest_sha256\"", "\"driver_sha256\""] {
         let renamed = good.replacen(member, "\"other\"", 1);

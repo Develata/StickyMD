@@ -36,7 +36,7 @@ pub(in crate::mac_ledger) fn from_evidence(
         value.field("schema_version").and_then(Value::unsigned),
         Ok(2)
     ) {
-        return Err("the evidence is not schema 2 of mac-gui (an older driver) nor schema 6 of mac-resources; it cannot be recorded".into());
+        return Err("the evidence is not schema 2 of mac-gui (an older driver) nor schema 7 of mac-resources; it cannot be recorded".into());
     }
     // A calibration run (`mac-gui --r03-write-restore`) is a bad sample of the driver itself.
     if let Ok(calibration) = value.field("calibration") {
