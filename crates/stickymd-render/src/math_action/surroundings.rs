@@ -16,25 +16,33 @@ use crate::preview::{
 /// - each joined formula, mapped, is the exact range of one math node of the result;
 /// - every other node, mapped, is the same in both parses (`Mark`): the same kind and
 ///   fields, at the same place among its containers, with the same start, and the same end
-///   unless it is a container.
+///   unless it is a container;
+/// - so is the text outside the joined formulas, compared as runs of adjacent text by mapped
+///   range and place among the containers, so no text moves into or out of a quote or item.
 ///
-/// Only three things may differ: nodes wholly inside a joined formula; text, which
-/// may straddle a formula's edge and holds nothing but its bytes; and the kind and extent of
-/// a paragraph or heading that meets a joined formula, since undoing the Setext split that cut
-/// the formula into a heading and a paragraph is the join's purpose (what such a block holds
-/// is still compared). Any other block that meets a joined formula, a display formula among
-/// them, is compared whole, so the join cannot turn it into formula text. A container's end is not compared because the join may move it: an item
-/// whose formula the join completes ends with that formula.
+/// Only these may differ:
 ///
-/// Fifth and sixth review (2026-11-25): a join can keep a list item open over the next list,
-/// which then renumbers, or over indented code, which step 2 would convert; it can re-pair
-/// the backticks after the formula's closer, so code becomes math; and since Comrak's budget
-/// for reference links is the document's length, a shorter document can leave a reference
-/// outside every formula without its link.
+/// - nodes and text wholly inside a joined formula;
+/// - the kind and extent of a paragraph or heading that meets a joined formula. Undoing the
+///   Setext split that cut the formula into a heading and a paragraph is the join's purpose,
+///   so text on the formula's first line may go from heading to paragraph text; what such a
+///   block holds is still compared. Any other block that meets a joined formula, a display
+///   formula among them, is compared whole;
+/// - a container's end, which the join may move: an item whose formula the join completes
+///   ends with that formula.
 ///
-/// O(nodes + joins) time: both walks visit nodes in document order, so the span cursor and
-/// the forward position map each pass once. O(nodes) memory for the original's marks; the
-/// result's are compared as they come and the walk stops at the first difference.
+/// Fifth to seventh review (2026-11-25): a join can keep a list item open over the next list,
+/// which then renumbers, over indented code, which step 2 would convert, or over the text
+/// after the formula's closer; it can re-pair the backticks after the closer, so code becomes
+/// math; and since Comrak's budget for reference links is the document's length, a shorter
+/// document can leave a reference outside every formula without its link.
+///
+/// Time: linear in the nodes, the joins and the bytes of the literals compared, when node
+/// positions come in document order, as Comrak's did in every input tested; the span cursor
+/// and the forward position map then pass once. A position that steps back costs a binary
+/// search over the formulas and a mapping from the first removed range. Memory: the
+/// original's marks and the mapped formula ranges; the result's marks are compared as they
+/// come, and the walk stops at the first difference.
 pub(super) fn joins_keep_surroundings(
     original: &OwnedDocumentTree,
     result: &OwnedDocumentTree,
@@ -47,44 +55,43 @@ pub(super) fn joins_keep_surroundings(
         .map(|span| map(span.start)..map(span.end))
         .collect();
     let mut before = Vec::new();
-    let mut reading = Reading {
-        spans: SpanCursor::new(spans),
-        map: joins.forward_position_map(),
-        emit: |mark| {
-            before.push(mark);
-            true
-        },
-        formulas: 0,
-    };
+    let mut reading = Reading::new(spans, joins.forward_position_map(), |mark| {
+        before.push(mark);
+        true
+    });
     reading.blocks(&original.blocks);
+    reading.finish();
     let mut compared = 0;
-    let mut reading = Reading {
-        spans: SpanCursor::new(&mapped),
-        map: |at| at,
-        emit: |mark| {
+    let mut reading = Reading::new(
+        &mapped,
+        |at| at,
+        |mark| {
             let same = before.get(compared) == Some(&mark);
             compared += 1;
             same
         },
-        formulas: 0,
-    };
-    let same = reading.blocks(&result.blocks);
+    );
+    let same = reading.blocks(&result.blocks) && reading.finish();
     let formulas = reading.formulas;
     same && compared == before.len() && formulas == mapped.len()
 }
 
-/// One step of a walk over a Preview parse, as `joins_keep_surroundings` compares it: a node
-/// starts, with what it is and its mapped start, or it ends.
+/// One step of a walk over a Preview parse, as `joins_keep_surroundings` compares it.
 #[derive(Debug, PartialEq, Eq)]
 enum Mark<'a> {
+    /// A node starts: what it is, and its mapped start.
     Open(Node<'a>, Option<usize>),
-    /// The mapped end; None for a container, whose end the join may move.
+    /// A node ends at its mapped end; None for a container, whose end the join may move.
     Close(Option<usize>),
+    /// A run of text outside the joined formulas, as its mapped range. Adjacent text nodes
+    /// make one run, so where Comrak splits text does not matter.
+    Text(Range<usize>),
+    /// Text without a source range, which cannot be placed: its literal.
+    UnplacedText(&'a str),
 }
 
 /// A node's kind and every field the Preview's rendering or step 2 reads, apart from its
-/// children and source range. Text has no entry: it holds only its bytes, which a join keeps
-/// outside the joined formulas.
+/// children and source range. Text is a `Mark` of its own.
 #[derive(Debug, PartialEq, Eq)]
 enum Node<'a> {
     Quote,
@@ -177,26 +184,30 @@ impl<'s> SpanCursor<'s> {
         }
     }
 
+    /// The index of the first formula that ends after `start`.
+    fn first_after(&mut self, start: usize) -> usize {
+        if start < self.last {
+            return self.spans.partition_point(|span| span.end <= start);
+        }
+        self.last = start;
+        // Invariant: every span before `next` ends at or before `last`.
+        while self
+            .spans
+            .get(self.next)
+            .is_some_and(|span| span.end <= start)
+        {
+            self.next += 1;
+        }
+        self.next
+    }
+
     /// Where `range` lies, and the formula it lies in, if it lies wholly inside one.
     fn place(&mut self, range: Option<SourceRange>) -> (Place, Option<&'s Range<usize>>) {
         let Some(range) = range else {
             return (Place::Clear, None);
         };
-        let at = if range.start < self.last {
-            self.spans.partition_point(|span| span.end <= range.start)
-        } else {
-            self.last = range.start;
-            // Invariant: every span before `next` ends at or before `last`.
-            while self
-                .spans
-                .get(self.next)
-                .is_some_and(|span| span.end <= range.start)
-            {
-                self.next += 1;
-            }
-            self.next
-        };
-        match self.spans.get(at) {
+        let spans = self.spans;
+        match spans.get(self.first_after(range.start)) {
             Some(span) if span.start <= range.start && range.end <= span.end => {
                 (Place::Inside, Some(span))
             }
@@ -208,19 +219,39 @@ impl<'s> SpanCursor<'s> {
 
 /// A walk over one Preview parse that hands each `Mark` to `emit` in document order, mapping
 /// positions with `map`, and counts the math nodes whose range is exactly a joined formula.
-/// Each walk method returns false as soon as `emit` does.
+/// Each walk method returns false as soon as `emit` does; `finish` emits the last text run.
 struct Reading<'s, M, E> {
     spans: SpanCursor<'s>,
     map: M,
     emit: E,
     formulas: usize,
+    /// Within a node wholly inside a joined formula: nothing is emitted, and the walk only
+    /// looks for the formula's math node.
+    inside: bool,
+    /// The text run not emitted yet, unmapped.
+    run: Option<Range<usize>>,
 }
 
-impl<'a, M, E> Reading<'_, M, E>
+impl<'s, 'a, M, E> Reading<'s, M, E>
 where
     M: FnMut(usize) -> usize,
     E: FnMut(Mark<'a>) -> bool,
 {
+    fn new(spans: &'s [Range<usize>], map: M, emit: E) -> Self {
+        Self {
+            spans: SpanCursor::new(spans),
+            map,
+            emit,
+            formulas: 0,
+            inside: false,
+            run: None,
+        }
+    }
+
+    fn finish(&mut self) -> bool {
+        self.flush()
+    }
+
     fn blocks(&mut self, blocks: &'a [BlockNode]) -> bool {
         blocks.iter().all(|block| self.block(block))
     }
@@ -298,7 +329,10 @@ where
     fn inlines(&mut self, inlines: &'a [InlineNode]) -> bool {
         inlines.iter().all(|inline| {
             let (node, children): (Node<'a>, &'a [InlineNode]) = match inline {
-                InlineNode::Text { .. } => return true,
+                InlineNode::Text {
+                    literal,
+                    source_range,
+                } => return self.text(*source_range, literal),
                 InlineNode::Emphasis { children, .. } => (Node::Emphasis, children),
                 InlineNode::Strong { children, .. } => (Node::Strong, children),
                 InlineNode::Strikethrough { children, .. } => (Node::Strikethrough, children),
@@ -349,6 +383,58 @@ where
         })
     }
 
+    /// Adds the parts of a text node outside the joined formulas to the text run.
+    fn text(&mut self, range: Option<SourceRange>, literal: &'a str) -> bool {
+        if self.inside {
+            return true;
+        }
+        let Some(range) = range else {
+            return self.flush() && (self.emit)(Mark::UnplacedText(literal));
+        };
+        let spans = self.spans.spans;
+        let mut at = range.start;
+        for span in &spans[self.spans.first_after(range.start)..] {
+            if span.start >= range.end {
+                break;
+            }
+            if !self.extend_run(at..span.start) {
+                return false;
+            }
+            at = at.max(span.end);
+        }
+        self.extend_run(at..range.end)
+    }
+
+    /// Extends the text run with `part` when they touch; otherwise emits the run and starts a
+    /// new one.
+    fn extend_run(&mut self, part: Range<usize>) -> bool {
+        if part.is_empty() {
+            return true;
+        }
+        if let Some(run) = &mut self.run
+            && run.end == part.start
+        {
+            run.end = part.end;
+            return true;
+        }
+        let emitted = self.flush();
+        self.run = Some(part);
+        emitted
+    }
+
+    /// Emits the text run, if any. Called before any other mark, so positions are still mapped
+    /// in document order.
+    fn flush(&mut self) -> bool {
+        match self.run.take() {
+            Some(run) => {
+                let start = (self.map)(run.start);
+                let end = (self.map)(run.end);
+                (self.emit)(Mark::Text(start..end))
+            }
+            None => true,
+        }
+    }
+
     /// Emits `node` and what `inner` emits, unless the node lies inside a joined formula;
     /// a paragraph or heading that meets one emits only what `inner` does.
     fn node(
@@ -358,30 +444,37 @@ where
         role: Role,
         inner: impl FnOnce(&mut Self) -> bool,
     ) -> bool {
-        match self.spans.place(range) {
-            (Place::Inside, span) => {
-                if matches!(node, Node::DisplayMath(_) | Node::InlineMath { .. })
-                    && range.zip(span).is_some_and(|(range, span)| {
-                        range.start == span.start && range.end == span.end
-                    })
-                {
-                    self.formulas += 1;
-                }
-                true
+        let (place, span) = self.spans.place(range);
+        if self.inside || place == Place::Inside {
+            // A paragraph that is only the formula holds its math node, so the walk goes on
+            // inside, emitting nothing, to find it.
+            if matches!(node, Node::DisplayMath(_) | Node::InlineMath { .. })
+                && range
+                    .zip(span)
+                    .is_some_and(|(range, span)| range.start == span.start && range.end == span.end)
+            {
+                self.formulas += 1;
             }
-            (Place::Meets, _) if role == Role::TextBlock => inner(self),
-            _ => {
-                let start = range.map(|range| (self.map)(range.start));
-                if !(self.emit)(Mark::Open(node, start)) || !inner(self) {
-                    return false;
-                }
-                let end = match role {
-                    Role::Container => None,
-                    Role::TextBlock | Role::Part => range.map(|range| (self.map)(range.end)),
-                };
-                (self.emit)(Mark::Close(end))
-            }
+            let outer = std::mem::replace(&mut self.inside, true);
+            let kept = inner(self);
+            self.inside = outer;
+            return kept;
         }
+        if place == Place::Meets && role == Role::TextBlock {
+            return inner(self);
+        }
+        if !self.flush() {
+            return false;
+        }
+        let start = range.map(|range| (self.map)(range.start));
+        if !(self.emit)(Mark::Open(node, start)) || !inner(self) || !self.flush() {
+            return false;
+        }
+        let end = match role {
+            Role::Container => None,
+            Role::TextBlock | Role::Part => range.map(|range| (self.map)(range.end)),
+        };
+        (self.emit)(Mark::Close(end))
     }
 }
 
@@ -426,9 +519,10 @@ mod tests {
         let joins = crate::math_text::join_math_equals_lines("$$a\n=\nc $$b$$", None).unwrap();
         assert_eq!(joins.joined_formulas().to_vec(), vec![0..10]);
         let result = parse("$$a=c $$b$$");
-        // Control: a paragraph there holds only text, so the two read alike.
+        // Control: a paragraph there holds only text, `b$$` after the formula as in the
+        // result, so the two read alike.
         assert!(super::joins_keep_surroundings(
-            &parse("$$a\n=\nc d e f g"),
+            &parse("$$a\n=\nc d b$$"),
             &result,
             &joins
         ));
@@ -451,19 +545,18 @@ mod tests {
         let tree = parse(text);
         let mut positions = Vec::new();
         let mut marks = 0;
-        let mut reading = super::Reading {
-            spans: super::SpanCursor::new(joins.joined_formulas()),
-            map: |at| {
+        let mut reading = super::Reading::new(
+            joins.joined_formulas(),
+            |at| {
                 positions.push(at);
                 at
             },
-            emit: |_| {
+            |_| {
                 marks += 1;
                 true
             },
-            formulas: 0,
-        };
-        assert!(reading.blocks(&tree.blocks));
+        );
+        assert!(reading.blocks(&tree.blocks) && reading.finish());
         assert!(positions.is_sorted(), "{positions:?}");
         assert!(marks > 60 && positions.len() > 40, "{marks} {positions:?}");
     }

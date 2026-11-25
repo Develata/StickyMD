@@ -392,6 +392,10 @@ mod tests {
             "7. $$a\n   =\nb$$\n\n1. tail",
             // The Setext heading shows `[ ] ` as text; joined, the item would be a task.
             "- [ ] $$a\n  =\n  b$$",
+            // Seventh review: the item the join keeps open would take in the text after the
+            // closer.
+            "7. $$a\n   =\nb$$ tail",
+            "- $$a\n  =\nb$$ tail",
         ] {
             assert_eq!(pass(text), None, "{text:?}");
             // Step 2 still converts the original text.
@@ -413,6 +417,13 @@ mod tests {
             ("- $$a\n  =\nb$$", "- $$a=b$$"),
             ("> $$a\n=\nb$$", "> $$a=b$$"),
             ("7. $$a\n   =\nb$$\n", "7. $$a=b$$\n"),
+            // Seventh review: a formula that is all of its paragraph joins, and so does the
+            // rest of the batch. Text before the opener goes from heading to paragraph text,
+            // since undoing that Setext split is what the join is for.
+            ("$a\n=\nb$", "$a=b$"),
+            ("\\(a\n=\nb\\)", "$a=b$"),
+            ("$a\n=\nb$\n\n$$c\n=\nd$$", "$a=b$\n\n$$c=d$$"),
+            ("Title $$a\n=\nb$$", "Title $$a=b$$"),
             ("$$a\n=\nb`c$$ d", "$$a=b`c$$ d"),
         ] {
             assert_eq!(pass(text).as_deref(), Some(joined), "{text:?}");
@@ -699,14 +710,29 @@ mod tests {
 
     /// What a join may never change, read from one Preview parse in document order: around
     /// each quote, list and item (with the list's numbering and tightness, and the item's task
-    /// state), ATX heading texts, code and HTML block literals, tables and rules; and, outside
-    /// `formula`, links with their targets and titles, images, inline code, Raw HTML, formulas
-    /// and emphasis. Paragraphs, Setext headings and text are not read: undoing a Setext split
-    /// is the point of a join. Written apart from `joins_keep_surroundings`, so the two do not
-    /// share a projection.
+    /// state), ATX heading texts, code and HTML block literals, tables (with their alignments
+    /// and header rows) and rules; and, outside `formula`, the source of the text, merged across
+    /// text nodes, links with their targets and titles, images with their alt text, inline
+    /// code, Raw HTML, formulas and each kind of emphasis. Paragraphs and Setext headings are
+    /// not read: undoing a Setext split is the point of a join. Written apart from
+    /// `joins_keep_surroundings`, so the two do not share a projection.
     fn untouchable(text: &str, formula: &std::ops::Range<usize>) -> Vec<String> {
         use crate::preview::{BlockNode, InlineNode, PreviewParser};
-        fn inlines(nodes: &[InlineNode], formula: &std::ops::Range<usize>, out: &mut Vec<String>) {
+        fn text_part(out: &mut Vec<String>, part: &str) {
+            if part.is_empty() {
+                return;
+            }
+            match out.last_mut() {
+                Some(last) if last.starts_with("text ") => last.push_str(part),
+                _ => out.push(format!("text {part}")),
+            }
+        }
+        fn inlines(
+            text: &str,
+            nodes: &[InlineNode],
+            formula: &std::ops::Range<usize>,
+            out: &mut Vec<String>,
+        ) {
             for node in nodes {
                 if node
                     .source_range()
@@ -722,19 +748,30 @@ mod tests {
                         ..
                     } => {
                         out.push(format!("link {destination:?} {title:?} {{"));
-                        inlines(children, formula, out);
+                        inlines(text, children, formula, out);
                         out.push("}".to_owned());
                     }
-                    InlineNode::Emphasis { children, .. }
-                    | InlineNode::Strong { children, .. }
-                    | InlineNode::Strikethrough { children, .. } => {
+                    InlineNode::Emphasis { children, .. } => {
                         out.push("emphasis {".to_owned());
-                        inlines(children, formula, out);
+                        inlines(text, children, formula, out);
+                        out.push("}".to_owned());
+                    }
+                    InlineNode::Strong { children, .. } => {
+                        out.push("strong {".to_owned());
+                        inlines(text, children, formula, out);
+                        out.push("}".to_owned());
+                    }
+                    InlineNode::Strikethrough { children, .. } => {
+                        out.push("strikethrough {".to_owned());
+                        inlines(text, children, formula, out);
                         out.push("}".to_owned());
                     }
                     InlineNode::Image {
-                        destination, title, ..
-                    } => out.push(format!("image {destination:?} {title:?}")),
+                        destination,
+                        title,
+                        alt,
+                        ..
+                    } => out.push(format!("image {destination:?} {title:?} {alt:?}")),
                     InlineNode::Code { literal, .. } => out.push(format!("code {literal:?}")),
                     InlineNode::HtmlLiteral { literal, .. } => {
                         out.push(format!("html {literal:?}"))
@@ -742,9 +779,21 @@ mod tests {
                     InlineNode::InlineMath(math) => {
                         out.push(format!("math {:?} {}", math.literal, math.display))
                     }
-                    InlineNode::Text { .. }
-                    | InlineNode::SoftBreak { .. }
-                    | InlineNode::HardBreak { .. } => {}
+                    InlineNode::Text {
+                        literal,
+                        source_range,
+                    } => match source_range {
+                        Some(range) => {
+                            if range.start < formula.start {
+                                text_part(out, &text[range.start..range.end.min(formula.start)]);
+                            }
+                            if formula.end < range.end {
+                                text_part(out, &text[range.start.max(formula.end)..range.end]);
+                            }
+                        }
+                        None => text_part(out, literal),
+                    },
+                    InlineNode::SoftBreak { .. } | InlineNode::HardBreak { .. } => {}
                 }
             }
         }
@@ -756,7 +805,7 @@ mod tests {
         ) {
             for node in nodes {
                 match node {
-                    BlockNode::Paragraph { content, .. } => inlines(content, formula, out),
+                    BlockNode::Paragraph { content, .. } => inlines(text, content, formula, out),
                     BlockNode::Heading {
                         content,
                         source_range,
@@ -766,7 +815,7 @@ mod tests {
                         if source.is_some_and(|source| source.starts_with('#')) {
                             out.push(format!("atx {source:?}"));
                         }
-                        inlines(content, formula, out);
+                        inlines(text, content, formula, out);
                     }
                     BlockNode::BlockQuote { blocks: inner, .. } => {
                         out.push("quote {".to_owned());
@@ -790,11 +839,12 @@ mod tests {
                         out.push(format!("htmlblock {literal:?}"))
                     }
                     BlockNode::Table(table) => {
-                        out.push("table {".to_owned());
+                        out.push(format!("table {:?} {{", table.alignments));
                         for row in &table.rows {
+                            out.push(format!("row {}", row.header));
                             for cell in &row.cells {
                                 out.push("cell".to_owned());
-                                inlines(&cell.content, formula, out);
+                                inlines(text, &cell.content, formula, out);
                             }
                         }
                         out.push("}".to_owned());
@@ -881,6 +931,9 @@ mod tests {
             ("\\[a\n=\n{below}\\]", 0, 0),
             ("$$a\n{above}\n=\n{below}$$", 0, 0),
             ("x \\(a\n=\n{below}\\) y", 2, 2),
+            // A formula that is all of its paragraph (seventh review).
+            ("\\(a\n=\n{below}\\)", 0, 0),
+            ("$a\n=\n{below}$", 0, 0),
         ];
         let mut kept = [0_usize; 16];
         let mut kept_in_scope = 0_usize;
@@ -958,11 +1011,18 @@ mod tests {
                                     "{text:?} -> {:?}",
                                     pass.text()
                                 );
-                                if prefix.is_empty()
-                                    && let Some(scoped) =
+                                if prefix.is_empty() {
+                                    // Selecting just the formula keeps the same join.
+                                    let scoped =
                                         run_math_action(&snapshot(&text), Some(span.clone()))
-                                            .unwrap()
-                                {
+                                            .unwrap();
+                                    let Some(
+                                        scoped @ (super::MathActionPass::Joined(_)
+                                        | super::MathActionPass::Converted(Some(_), _)),
+                                    ) = scoped
+                                    else {
+                                        panic!("{text:?} {span:?}: {scoped:?}");
+                                    };
                                     kept_in_scope += 1;
                                     let shown = scoped.map_position(span.start)
                                         ..scoped.map_position(span.end);
