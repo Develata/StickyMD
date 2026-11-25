@@ -2421,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "stickymd-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "sha2 0.10.9",
@@ -2434,7 +2434,7 @@ dependencies = [
 
 [[package]]
 name = "stickymd-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.20",
@@ -2442,7 +2442,7 @@ dependencies = [
 
 [[package]]
 name = "stickymd-desktop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "raw-window-handle",
  "softbuffer",
@@ -2457,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "stickymd-mac"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "block2 0.6.2",
  "crossbeam-channel",
@@ -2482,11 +2482,11 @@ dependencies = [
 
 [[package]]
 name = "stickymd-package"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "stickymd-posix"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
  "sha2 0.10.9",
@@ -2495,7 +2495,7 @@ dependencies = [
 
 [[package]]
 name = "stickymd-render"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ab_glyph",
  "comrak",
@@ -2517,14 +2517,14 @@ dependencies = [
 
 [[package]]
 name = "stickymd-smoke"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "stickymd-package",
 ]
 
 [[package]]
 name = "stickymd-win"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "cosmic-text",
