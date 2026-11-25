@@ -1046,13 +1046,16 @@ mod tests {
         // pass. In this one step 2 converts `\(\(b\)` to `$\(b$`, and the next
         // pass joins the `$$` pair that the trailing `$` then completes.
         refuses("$$\\)`\n=\n\\)\\(\\(b\\)$");
-        // Refused before the sixth review and the read-back, final now: the
-        // join the next pass would make is dropped, since it would turn the
-        // formula `$$b$$` (or `$b$`) into text. The click commits, and a
-        // second click changes nothing.
+        // Refused before the sixth review and the read-back, final now. In the
+        // first, the join the next pass would make is dropped, since it would
+        // turn the formula `$$b$$` into text. In the second, the formula with
+        // Setext off ends at the inner closer; written in the standard form
+        // (`$a=\(b$`, without the space after the opener) it reads back as one
+        // formula, so the join is kept. The click commits, and a second click
+        // changes nothing.
         for (source, converted) in [
             ("$$a\n=\nc \\[b\\]", "$$a\n=\nc $$b$$"),
-            ("\\( a\n=\n\\(b\\) c\\)", "\\( a\n=\n$b$ c\\)"),
+            ("\\( a\n=\n\\(b\\) c\\)", "$a=\\(b$ c\\)"),
         ] {
             let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
             edit(&mut coordinator, source);
