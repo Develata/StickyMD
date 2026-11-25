@@ -58,16 +58,26 @@ pub(super) fn joins_keep_surroundings(
 /// Plan 07's read-back of a pass that rewrote delimiters: the Preview's parse of its final
 /// text against the parse of the original, by the same rule, with positions mapped through
 /// both steps. A converted formula is compared like any other node, so it must read back as
-/// one formula with the same literal and display, at its mapped range.
+/// one formula with the same literal and display, at its mapped range. Like a joined formula,
+/// a formula made of single-`$` text must be exactly one math node, and what it covered in the
+/// original (text) is not compared.
 pub(super) fn pass_reads_back(
     original: &OwnedDocumentTree,
     final_tree: &OwnedDocumentTree,
     pass: &MathActionPass,
 ) -> bool {
-    let spans = pass
-        .joined()
-        .map_or(&[][..], EqualsLineConversion::joined_formulas);
-    reads_alike(original, final_tree, spans, || pass.forward_position_map())
+    let joined = pass.joined();
+    let mut spans = joined.map_or_else(Vec::new, |joins| joins.joined_formulas().to_vec());
+    if let MathActionPass::Converted(_, converted) = pass {
+        // Step 2's positions are in step 1's result; the read-back works in the original's.
+        let mut unmap = joined.map(EqualsLineConversion::forward_unmap);
+        spans.extend(converted.new_formulas().map(|range| match &mut unmap {
+            Some(unmap) => unmap(range.start)..unmap(range.end),
+            None => range,
+        }));
+        spans.sort_unstable_by_key(|span| span.start);
+    }
+    reads_alike(original, final_tree, &spans, || pass.forward_position_map())
 }
 
 /// The comparison of `original` with `other`, the parse of a text derived from it: `spans`

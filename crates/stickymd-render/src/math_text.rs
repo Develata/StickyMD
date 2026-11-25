@@ -70,6 +70,25 @@ impl EqualsLineConversion {
         self.text
     }
 
+    /// The inverse of `map_position` for positions of the joined text asked in non-decreasing
+    /// order, none of them at a join (each removed range is passed once). A formula step 2
+    /// makes of single-`$` text lies outside every joined formula, so its ends qualify.
+    pub(crate) fn forward_unmap(&self) -> impl FnMut(usize) -> usize + '_ {
+        let mut next = 0;
+        let mut shift = 0;
+        move |position| {
+            // Invariant: `shift` is the length of `removed[..next]`, each of which the joined
+            // text holds at or before `position`.
+            while let Some(range) = self.removed.get(next)
+                && range.start - shift <= position
+            {
+                shift += range.len();
+                next += 1;
+            }
+            position + shift
+        }
+    }
+
     /// `map_position` for a caller that maps positions in non-decreasing order, as a walk over
     /// a document does: the removed ranges are passed once, so each call is amortized O(1)
     /// instead of O(joins). A position below the previous one falls back to `map_position`,

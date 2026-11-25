@@ -47,6 +47,15 @@ impl MathDelimiterConversion {
         self.replacements.len()
     }
 
+    /// The ranges, in the converted text's input, of the single-`$` text the conversion made
+    /// formulas of (plan 07): the read-back requires each to read back as one formula.
+    pub(crate) fn new_formulas(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+        self.replacements
+            .iter()
+            .filter(|replacement| replacement.new_formula)
+            .map(|replacement| replacement.range.as_range())
+    }
+
     /// Maps one old canonical byte position through all delimiter-length
     /// changes. Positions in formula bodies preserve their relative byte
     /// offset; positions inside a delimiter clamp into the new delimiter.
@@ -96,17 +105,19 @@ impl MathDelimiterConversion {
     }
 }
 
-/// One formula rewritten: its old range, the new text, the new delimiters' lengths, and how
-/// many bytes of whitespace the rewrite dropped just inside each old delimiter. Every old
-/// delimiter (`\(`, `\)`, `\[`, `\]`, `$$`) is two bytes.
+/// One formula rewritten: its old range, the new text, the old and new delimiters' lengths,
+/// how many bytes of whitespace the rewrite dropped just inside each old delimiter, and
+/// whether the old text was single-`$` text rather than a Comrak formula.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DelimiterReplacement {
     range: SourceRange,
     replacement: String,
+    old_delimiter_len: usize,
     new_open_len: usize,
     new_close_len: usize,
     lead: usize,
     trail: usize,
+    new_formula: bool,
 }
 
 impl DelimiterReplacement {
@@ -118,9 +129,8 @@ impl DelimiterReplacement {
     /// dropped whitespace to the edge of the kept body, and in the kept body it keeps its
     /// offset.
     fn map_inner_position(&self, position: usize, shift: i64) -> usize {
-        const OLD_DELIMITER_LEN: usize = 2;
-        let old_body_start = self.range.start + OLD_DELIMITER_LEN;
-        let old_body_end = self.range.end - OLD_DELIMITER_LEN;
+        let old_body_start = self.range.start + self.old_delimiter_len;
+        let old_body_end = self.range.end - self.old_delimiter_len;
         let kept_start = old_body_start + self.lead;
         let kept_end = old_body_end - self.trail;
         let new_start = shifted(self.range.start, shift);
@@ -210,7 +220,12 @@ pub(crate) fn convert_parsed_latex_math_delimiters(
 ) -> Result<Option<MathDelimiterConversion>, SemanticConversionError> {
     validate_scope(&tree.source, scope.as_ref())?;
     let mut replacements = Vec::new();
-    collect_blocks(&tree.blocks, scope.as_ref(), &mut replacements);
+    collect_blocks(
+        &tree.source,
+        &tree.blocks,
+        scope.as_ref(),
+        &mut replacements,
+    );
     replacements.sort_unstable_by_key(|replacement| replacement.range.start);
     replacements.dedup_by_key(|replacement| replacement.range);
     if replacements.is_empty() {
@@ -272,6 +287,7 @@ pub(crate) fn validate_scope(
 }
 
 fn collect_blocks(
+    source: &str,
     blocks: &[BlockNode],
     scope: Option<&Range<usize>>,
     output: &mut Vec<DelimiterReplacement>,
@@ -280,17 +296,19 @@ fn collect_blocks(
         match block {
             BlockNode::Paragraph { content, .. } | BlockNode::Heading { content, .. } => {
                 collect_inlines(content, scope, output);
+                collect_dollar_text(source, content, scope, output);
             }
-            BlockNode::BlockQuote { blocks, .. } => collect_blocks(blocks, scope, output),
+            BlockNode::BlockQuote { blocks, .. } => collect_blocks(source, blocks, scope, output),
             BlockNode::List(list) => {
                 for item in &list.items {
-                    collect_blocks(&item.blocks, scope, output);
+                    collect_blocks(source, &item.blocks, scope, output);
                 }
             }
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
                         collect_inlines(&cell.content, scope, output);
+                        collect_dollar_text(source, &cell.content, scope, output);
                     }
                 }
             }
@@ -372,11 +390,140 @@ fn collect_math(
     output.push(DelimiterReplacement {
         range,
         replacement: format!("{open}{}{close}", &body[lead..body.len() - trail]),
+        old_delimiter_len: 2,
         new_open_len: open.len(),
         new_close_len: close.len(),
         lead,
         trail,
+        new_formula: false,
     });
+}
+
+/// Single-`$` text that Comrak left as text because of the whitespace just inside it, made a
+/// formula by plan 07's rule: the candidates are unescaped lone `$` in this block's text (not
+/// in links, images, code, HTML or formulas); a line of the block with exactly two pairs them
+/// when nothing but text lies between; `dollar_pair` then decides.
+fn collect_dollar_text(
+    source: &str,
+    inlines: &[InlineNode],
+    scope: Option<&Range<usize>>,
+    output: &mut Vec<DelimiterReplacement>,
+) {
+    let mut runs = Vec::new();
+    text_runs(inlines, &mut runs, &mut true);
+    let bytes = source.as_bytes();
+    // (position, index of its text run), in document order.
+    let mut candidates = Vec::new();
+    for (index, run) in runs.iter().enumerate() {
+        for at in memchr::memchr_iter(b'$', &bytes[run.clone()]) {
+            let at = run.start + at;
+            let backslashes = bytes[..at]
+                .iter()
+                .rev()
+                .take_while(|&&byte| byte == b'\\')
+                .count();
+            let lone = (at == 0 || bytes[at - 1] != b'$') && bytes.get(at + 1) != Some(&b'$');
+            if backslashes % 2 == 0 && lone {
+                candidates.push((at, index));
+            }
+        }
+    }
+    let mut first = 0;
+    while first < candidates.len() {
+        // The candidates of one line: no line break between neighbours.
+        let mut end = first + 1;
+        while end < candidates.len()
+            && memchr::memchr(b'\n', &bytes[candidates[end - 1].0..candidates[end].0]).is_none()
+        {
+            end += 1;
+        }
+        if let [(open, open_run), (close, close_run)] = candidates[first..end]
+            && open_run == close_run
+            && let Some(replacement) = dollar_pair(source, open, close, scope)
+        {
+            output.push(replacement);
+        }
+        first = end;
+    }
+}
+
+/// The text of `inlines` as runs of touching text nodes, outside links and images; emphasis
+/// is entered, so its markers end a run. `touching` says whether the next text node may
+/// extend the last run.
+fn text_runs(inlines: &[InlineNode], runs: &mut Vec<Range<usize>>, touching: &mut bool) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Text {
+                source_range: Some(range),
+                ..
+            } => match runs.last_mut() {
+                Some(run) if *touching && run.end == range.start => run.end = range.end,
+                _ => {
+                    runs.push(range.as_range());
+                    *touching = true;
+                }
+            },
+            InlineNode::Emphasis { children, .. }
+            | InlineNode::Strong { children, .. }
+            | InlineNode::Strikethrough { children, .. } => {
+                *touching = false;
+                text_runs(children, runs, touching);
+                *touching = false;
+            }
+            InlineNode::Text { .. }
+            | InlineNode::Link { .. }
+            | InlineNode::Image { .. }
+            | InlineNode::Code { .. }
+            | InlineNode::InlineMath(_)
+            | InlineNode::SoftBreak { .. }
+            | InlineNode::HardBreak { .. }
+            | InlineNode::HtmlLiteral { .. } => *touching = false,
+        }
+    }
+}
+
+/// The rewrite of the single-`$` text from `open` to `close` (both `$`) into `$content$`, when
+/// plan 07's rule takes it for a formula: whitespace just inside at least one `$`, content left
+/// once it is gone, not starting with a digit nor followed by one (prices), and looking like
+/// a formula: it holds one of `\ ^ _ { = +`, or is one word of ASCII letters and digits.
+fn dollar_pair(
+    source: &str,
+    open: usize,
+    close: usize,
+    scope: Option<&Range<usize>>,
+) -> Option<DelimiterReplacement> {
+    if scope.is_some_and(|scope| open < scope.start || close + 1 > scope.end) {
+        return None;
+    }
+    let inner = &source[open + 1..close];
+    let (lead, trail) = math_body_trim(inner, false)?;
+    let content = &inner[lead..inner.len() - trail];
+    let bytes = source.as_bytes();
+    let formula_like = content
+        .bytes()
+        .any(|byte| matches!(byte, b'\\' | b'^' | b'_' | b'{' | b'=' | b'+'))
+        || content.bytes().all(|byte| byte.is_ascii_alphanumeric());
+    // An escaped space kept at the end would stand before the closing `$`, which then does
+    // not close.
+    let ends_blank = content.ends_with([' ', '\t']);
+    let accepted = (lead > 0 || trail > 0)
+        && !ends_blank
+        && !content.starts_with(|c: char| c.is_ascii_digit())
+        && !bytes.get(close + 1).is_some_and(u8::is_ascii_digit)
+        && formula_like;
+    accepted.then(|| DelimiterReplacement {
+        range: SourceRange {
+            start: open,
+            end: close + 1,
+        },
+        replacement: format!("${content}$"),
+        old_delimiter_len: 1,
+        new_open_len: 1,
+        new_close_len: 1,
+        lead,
+        trail,
+        new_formula: true,
+    })
 }
 
 #[cfg(test)]
@@ -533,6 +680,65 @@ mod tests {
         }
     }
 
+    /// Plan 07's single-`$` rule (USER 2026-11-25, rule b): each row of the report's risk table,
+    /// and the edges of the rule. Only text that the rule takes for a formula is rewritten.
+    #[test]
+    fn phase11b_conversion_makes_formulas_of_single_dollar_text_only_by_the_rule() {
+        for (source, expected) in [
+            // Not formulas: the corpus line, prose and prices.
+            (
+                "* 转义测试：\\$ Not a math $ (反斜杠转义应生效，显示普通 $ 符号)。",
+                None,
+            ),
+            ("Prices: $ USD 5 and $ CAD 7 today.", None),
+            ("Run $ npm test and check $ output.", None),
+            ("The $ symbol and the $ sign.", None),
+            ("价格 $ 5 和 $ 10", None),
+            // Formulas.
+            ("Formula $a $ here.", Some("Formula $a$ here.")),
+            ("Formula $ a$ here.", Some("Formula $a$ here.")),
+            ("Both $ a $ here.", Some("Both $a$ here.")),
+            ("Math $a$ and $ b $ after.", Some("Math $a$ and $b$ after.")),
+            ("Emph *$ a $* text.", Some("Emph *$a$* text.")),
+            ("$ x^2 + y $", Some("$x^2 + y$")),
+            ("$\t\\alpha $", Some("$\\alpha$")),
+            ("# $ a $", Some("# $a$")),
+            ("| $ a $ | b |\n|---|---|", Some("| $a$ | b |\n|---|---|")),
+            ("$ a $b", Some("$a$b")),
+            // Left alone: code and links hold no candidates; a formula starting with a digit, or
+            // a digit after the closer, is taken for a price; lines without exactly two, or with
+            // other nodes between; a formula across lines; several plain words; an escaped space
+            // before the closer; no whitespace inside at all.
+            ("Code `$ a $` stays.", None),
+            ("Link [$ a $](u) text.", None),
+            ("Formula $ 2x + 1 $ here.", None),
+            ("$ a $2", None),
+            ("One $ a $ and $ three.", None),
+            ("$ a $ *x* $ b $", None),
+            ("$ *a* $", None),
+            ("Cross $ a\nb $ line.", None),
+            ("$ a b $", None),
+            ("$ a\\ $", None),
+            ("$  $", None),
+            ("a $b$c d", None),
+            // Markup between the two; an escaped `$` is no candidate; a `$` next to another
+            // (here a formula's closer) is none either.
+            ("$ x^2 *y* $", None),
+            ("\\$ x $ y^2 $", Some("\\$ x $y^2$")),
+            ("$a$$ b^2 $", None),
+        ] {
+            assert_eq!(
+                converted(source, None).map(|conversion| conversion.text().to_owned()),
+                expected.map(str::to_owned),
+                "{source:?}"
+            );
+        }
+        // A selection must hold the whole pair.
+        let source = "x $ a $ y";
+        assert!(converted(source, Some(0..6)).is_none());
+        assert_eq!(converted(source, Some(2..7)).unwrap().text(), "x $a$ y");
+    }
+
     /// Positions in the whitespace a rewrite drops clamp to the edge of the kept body.
     #[test]
     fn phase11b_conversion_maps_dropped_whitespace_to_the_kept_body() {
@@ -548,18 +754,22 @@ mod tests {
             DelimiterReplacement {
                 range: SourceRange { start: 0, end: 4 },
                 replacement: "$a$".to_owned(),
+                old_delimiter_len: 2,
                 new_open_len: 1,
                 new_close_len: 1,
                 lead: 0,
                 trail: 0,
+                new_formula: false,
             },
             DelimiterReplacement {
                 range: SourceRange { start: 3, end: 7 },
                 replacement: "$b$".to_owned(),
+                old_delimiter_len: 2,
                 new_open_len: 1,
                 new_close_len: 1,
                 lead: 0,
                 trail: 0,
+                new_formula: false,
             },
         ];
         assert_eq!(

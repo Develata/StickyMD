@@ -560,6 +560,15 @@ mod tests {
             pass("> \\[\n> a\n> \\]").as_deref(),
             Some("> $$\n> a\n> $$")
         );
+        // Single-`$` text made a formula (plan 07's rule b) reads back as one formula, alone,
+        // after a join and next to a converted formula.
+        assert_eq!(pass("Both $ a $ here.").as_deref(), Some("Both $a$ here."));
+        assert_eq!(
+            pass("$$a\n=\nb$$ and $ c $").as_deref(),
+            Some("$$a=b$$ and $c$")
+        );
+        assert_eq!(pass("\\( x \\) $ y $").as_deref(), Some("$x$ $y$"));
+        assert_eq!(pass("Run $ npm test and check $ output."), None);
         // Controls: with a space before the digit, or a letter after the closer, they read
         // back.
         assert_eq!(pass("\\(a\n=\nb\\) 2xyz$").as_deref(), Some("$a=b$ 2xyz$"));
