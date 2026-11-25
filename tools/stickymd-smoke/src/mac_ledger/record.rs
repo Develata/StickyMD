@@ -3,7 +3,9 @@
 //! the built app's hashes for audit. A revocation records the USER withdrawing one of them; the
 //! withdrawn result stays as history and is never reused. Every line is validated on read: a malformed or out-of-range
 //! record rejects the whole ledger. Records written before the input fingerprint (no
-//! `app_inputs`) are read as history and never reused.
+//! `app_inputs`) are read as history and never reused. An R03 record names the release ZIP it
+//! opened (`zip_sha256`) when `mac-gui --zip` gave one; records without it read as before. A
+//! finished `mac-resources` run is recorded too (`resources`).
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 use super::release::ReleaseRecord;
 use crate::release::json::{self, Value};
@@ -60,6 +62,9 @@ pub(crate) enum Record {
         run_unix: Option<u64>,
         /// The acceptance batch, for the never-reused rows (plan 11 #phase-16-macos-host).
         batch: Option<String>,
+        /// The release ZIP R03 opened (`mac-gui --zip`); only R03 records carry it, and only when
+        /// a ZIP was given (plan 11 #phase-16-macos-host).
+        zip: Option<OpenedZip>,
         recorded_unix: u64,
     },
     Manual {
@@ -85,6 +90,26 @@ pub(crate) enum Record {
 
 const VERDICTS: [&str; 3] = ["PASS", "FAIL", "NOT_TESTED"];
 
+/// The key an image is grouped by: its content digest `sha256:<hex>` (an OCI digest names the
+/// content, whatever repository name precedes it), lowercased; a value without one is kept
+/// lowercased as written.
+pub(crate) fn image_key(image: &str) -> String {
+    match super::options::image_digest(image) {
+        Ok(reference) => reference
+            .rsplit_once('@')
+            .map_or(reference.clone(), |(_, digest)| digest.to_owned()),
+        Err(_) => image.to_owned(),
+    }
+}
+
+/// Whether an image key names a content digest; one that does not (an old line's tag, a
+/// malformed reference) leaves its record's identity unknown (review round 3, B5).
+pub(crate) fn image_attributable(key: &str) -> bool {
+    key.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
+}
+
 /// `sw_vers` text with every run of whitespace made one space, so the VM's own report and the
 /// copy an operator passes compare equal.
 pub(super) fn system(text: &str) -> String {
@@ -103,14 +128,35 @@ fn quote(s: &str) -> String {
     format!("\"{}\"", crate::evidence::escape_json(s))
 }
 
-/// Optional trailing members, each with its leading comma; absent values write nothing.
-fn optional_members(run_unix: Option<u64>, batch: Option<&String>) -> String {
+/// The release ZIP an R03 run opened, and whether its "nothing written" was read through the write
+/// watch: the importer sets `write_watch` only from evidence whose R03 facts carry the watch, so
+/// a record an older importer wrote, or of a driver that only compared snapshots, has none, and
+/// the release gate does not count its PASS (review round 3, B1).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OpenedZip {
+    pub sha256: String,
+    pub write_watch: bool,
+}
+
+/// Optional trailing members, each with its leading comma; absent values write nothing, so a
+/// record without them is written as before.
+fn optional_members(
+    run_unix: Option<u64>,
+    batch: Option<&String>,
+    zip: Option<&OpenedZip>,
+) -> String {
     let mut out = String::new();
     if let Some(run_unix) = run_unix {
         out.push_str(&format!(",\"run_unix\":{run_unix}"));
     }
     if let Some(batch) = batch {
         out.push_str(&format!(",\"batch\":{}", quote(batch)));
+    }
+    if let Some(zip) = zip {
+        out.push_str(&format!(",\"zip_sha256\":{}", quote(&zip.sha256)));
+        if zip.write_watch {
+            out.push_str(",\"write_watch\":true");
+        }
     }
     out
 }
@@ -134,9 +180,11 @@ impl Record {
                 evidence_sha256,
                 run_unix,
                 batch,
+                zip,
                 recorded_unix,
             } => format!(
-                "{{\"kind\":\"automated\",\"row\":{},\"verdict\":{}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"image\":{},\"system\":{},\"evidence\":{},\"evidence_sha256\":{}{},\"recorded_unix\":{recorded_unix}}}",
+                "{{\"kind\":{},\"row\":{},\"verdict\":{}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{},\"image\":{},\"system\":{},\"evidence\":{},\"evidence_sha256\":{}{},\"recorded_unix\":{recorded_unix}}}",
+                quote(super::producers::kind_of(row)),
                 quote(row),
                 quote(verdict),
                 inputs_member(identity.inputs.as_ref()),
@@ -147,7 +195,7 @@ impl Record {
                 quote(&identity.system),
                 quote(evidence),
                 quote(evidence_sha256),
-                optional_members(*run_unix, batch.as_ref()),
+                optional_members(*run_unix, batch.as_ref(), zip.as_ref()),
             ),
             Self::Manual {
                 row,
@@ -164,7 +212,7 @@ impl Record {
                 quote(app_executable),
                 quote(environment),
                 quote(words),
-                optional_members(None, batch.as_ref()),
+                optional_members(None, batch.as_ref(), None),
             ),
             Self::Revocation {
                 row,
@@ -219,10 +267,17 @@ impl Record {
                 evidence,
                 evidence_sha256,
                 batch: run_batch,
+                zip,
                 ..
             } => {
                 nonempty("row", row)?;
                 batch(run_batch.as_ref())?;
+                if let Some(zip) = zip {
+                    if row != "R03" {
+                        return Err(format!("only R03 opens a ZIP; P16-{row} names one"));
+                    }
+                    hash("zip_sha256", &zip.sha256)?;
+                }
                 if !VERDICTS.contains(&verdict.as_str()) {
                     return Err(format!("unknown verdict {verdict:?}"));
                 }
@@ -275,8 +330,9 @@ impl Record {
             |key: &str| -> Result<String, String> { Ok(value.field(key)?.string()?.to_owned()) };
         let recorded_unix = value.field("recorded_unix")?.unsigned()?;
         let inputs = optional_text(&value, "app_inputs")?;
-        let record = match text("kind")?.as_str() {
-            "automated" => Self::Automated {
+        let kind = text("kind")?;
+        let record = match kind.as_str() {
+            "automated" | "resources" => Self::Automated {
                 row: text("row")?,
                 verdict: text("verdict")?,
                 identity: Identity {
@@ -293,6 +349,24 @@ impl Record {
                 evidence_sha256: text("evidence_sha256")?,
                 run_unix: optional_unsigned(&value, "run_unix")?,
                 batch: optional_text(&value, "batch")?,
+                zip: match (
+                    optional_text(&value, "zip_sha256")?,
+                    value.field("write_watch").ok(),
+                ) {
+                    (sha256, None) => sha256.map(|sha256| OpenedZip {
+                        sha256,
+                        write_watch: false,
+                    }),
+                    (Some(sha256), Some(Value::Bool(true))) => Some(OpenedZip {
+                        sha256,
+                        write_watch: true,
+                    }),
+                    _ => {
+                        return Err(
+                            "write_watch is written only as true, beside the ZIP R03 opened".into(),
+                        );
+                    }
+                },
                 recorded_unix,
             },
             "manual" if text("verdict")? == "MANUAL PASS" => Self::Manual {
@@ -350,21 +424,38 @@ impl Record {
                 None => return Err(format!("unknown ledger record kind {other}")),
             },
         };
+        // Review B5: a resource row is kept only by `mac-resources`'s importer, under its own kind;
+        // a line of the other kind naming one (an older GUI-shaped import) has no such producer.
+        if let Self::Automated { row, .. } = &record
+            && super::producers::kind_of(row) != kind
+        {
+            return Err(format!(
+                "a {kind:?} record of {} is not one any producer writes",
+                label(row)
+            ));
+        }
         record.validate()?;
         Ok(record.normalized())
     }
 
     /// The record with every digest lowercased; the ledger's bytes stay as written.
-    fn normalized(mut self) -> Self {
+    pub(super) fn normalized(mut self) -> Self {
         let lower = |s: &mut String| s.make_ascii_lowercase();
         match &mut self {
             Self::Automated {
                 identity,
                 built,
                 evidence_sha256,
+                zip,
                 ..
             } => {
                 identity.inputs.as_mut().map(lower);
+                // One image, one key (review B4): its content digest, whatever name or case a
+                // record spelled it with; the ledger's bytes keep the spelling.
+                identity.image = image_key(&identity.image);
+                if let Some(zip) = zip.as_mut() {
+                    lower(&mut zip.sha256);
+                }
                 lower(&mut identity.driver);
                 lower(&mut built.executable);
                 lower(&mut built.bundle);
@@ -390,7 +481,7 @@ impl Record {
 }
 
 /// A number member that may be absent; present with any other type, it is an error.
-fn optional_unsigned(value: &Value, key: &str) -> Result<Option<u64>, String> {
+pub(super) fn optional_unsigned(value: &Value, key: &str) -> Result<Option<u64>, String> {
     match value.field(key) {
         Ok(member) => Ok(Some(member.unsigned()?)),
         Err(_) => Ok(None),
@@ -398,7 +489,7 @@ fn optional_unsigned(value: &Value, key: &str) -> Result<Option<u64>, String> {
 }
 
 /// A string member that may be absent; present with any other type, it is an error.
-fn optional_text(value: &Value, key: &str) -> Result<Option<String>, String> {
+pub(super) fn optional_text(value: &Value, key: &str) -> Result<Option<String>, String> {
     match value.field(key) {
         Ok(member) => Ok(Some(member.string()?.to_owned())),
         Err(_) => Ok(None),
@@ -505,13 +596,36 @@ pub(super) fn from_evidence(
 ) -> Result<Vec<Record>, String> {
     let text = std::str::from_utf8(bytes).map_err(|e| format!("evidence is not UTF-8: {e}"))?;
     let value = json::parse(text)?;
+    // Each producer has its own schema and rows: mac-resources writes R01 and R02, mac-gui and
+    // mac-logout (no `tool` member) only the rows they run.
+    match optional_text(&value, "tool")?.as_deref() {
+        Some(super::resources::TOOL) => {
+            return super::resources::from_evidence(&value, bytes, evidence, image, recorded_unix);
+        }
+        Some(other) => return Err(format!("evidence of tool {other:?} cannot be recorded")),
+        None => {}
+    }
     // Schema 2 is the first whose `finished` only the current rules set and that names the batch
     // the run was started for; an older file cannot say either, so it is rerun, not recorded.
     if !matches!(
         value.field("schema_version").and_then(Value::unsigned),
         Ok(2)
     ) {
-        return Err("the evidence is not schema 2 (an older driver); it cannot be recorded".into());
+        return Err("the evidence is not schema 2 of mac-gui (an older driver) nor schema 6 of mac-resources; it cannot be recorded".into());
+    }
+    // A calibration run (`mac-gui --r03-write-restore`) is a bad sample of the driver itself.
+    if let Ok(calibration) = value.field("calibration") {
+        return Err(format!(
+            "the evidence is a calibration run ({}); it cannot be recorded",
+            calibration.string().unwrap_or("of an unknown kind")
+        ));
+    }
+    // The release ZIP R03 opened, kept with R03 alone.
+    let zip = optional_text(&value, "zip_sha256")?;
+    if let Some(digest) = zip.as_deref().filter(|d| !is_sha256(d)) {
+        return Err(format!(
+            "the evidence names a ZIP digest that is not a SHA-256: {digest:?}"
+        ));
     }
     let batch = optional_text(&value, "batch")?;
     if let Some(name) = batch.as_deref().filter(|b| !super::options::is_batch(b)) {
@@ -537,6 +651,8 @@ pub(super) fn from_evidence(
                 .into(),
         );
     }
+    // mac-logout's evidence names its case (and boot); mac-gui's names none (review S4).
+    let logout_case = optional_text(environment, "case")?;
     let identity = Identity {
         inputs: optional_text(&value, "app_inputs")?,
         driver,
@@ -558,8 +674,22 @@ pub(super) fn from_evidence(
         {
             return Err(format!("P16-{row} appears twice in the evidence"));
         }
+        if !super::producers::gui_row(&row, logout_case.as_deref()) {
+            return Err(format!(
+                "P16-{row} is not a row mac-gui or mac-logout runs; it cannot be recorded from this evidence"
+            ));
+        }
         let verdict = field(scenario, "verdict")?;
         let checks = scenario.field("checks")?.array()?;
+        // Whether R03's "nothing written" was read through the write watch (its facts say so).
+        let mut write_watch = false;
+        if row == "R03" {
+            write_watch = super::producers::r03(scenario, &verdict, checks, zip.as_deref())?;
+        } else if scenario.field("facts").is_ok() {
+            return Err(format!(
+                "P16-{row} records facts, which only R03 does; it cannot be recorded"
+            ));
+        }
         // A row stopped by the run's shared stop, or never started, means the run was cut short;
         // an older driver could still mark such a run finished, so the rows themselves decide.
         for check in checks {
@@ -598,6 +728,13 @@ pub(super) fn from_evidence(
             ));
         }
         let record = Record::Automated {
+            zip: zip
+                .clone()
+                .filter(|_| row == "R03")
+                .map(|sha256| OpenedZip {
+                    sha256,
+                    write_watch,
+                }),
             row,
             verdict,
             identity: identity.clone(),
@@ -614,6 +751,15 @@ pub(super) fn from_evidence(
     }
     if records.is_empty() {
         return Err("the evidence has no rows".into());
+    }
+    if zip.is_some()
+        && !records
+            .iter()
+            .any(|r| matches!(r, Record::Automated { row, .. } if row == "R03"))
+    {
+        return Err(
+            "the evidence names a ZIP but has no R03 row, the only row that opens one".into(),
+        );
     }
     Ok(records)
 }

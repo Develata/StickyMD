@@ -36,6 +36,13 @@ Requires Accessibility and PostEvent for the driver (the GUI part runs in a chil
 /// The cases, in the order the ledger lists them.
 pub(crate) const CASES: [&str; 3] = ["text", "dialog", "fault"];
 
+/// Whether `name` (lowercased) is one `mac-logout` may write into --out: the evidence and its
+/// `W12-logout-*` logs (review round 3 B2; the one rule its driver and the tests use).
+#[cfg(target_os = "macos")]
+pub(crate) fn written_here(name: &str) -> bool {
+    name == "mac-gui.json" || name.starts_with("w12-logout-")
+}
+
 /// The ledger rows of the logout cases.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn rows() -> Vec<String> {

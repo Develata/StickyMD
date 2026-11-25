@@ -79,6 +79,7 @@ pub(super) fn layout_table(
                 image_cache,
                 (f32::MAX, f32::MAX),
                 text_layout_cache,
+                false,
             );
             inner_widths[column] = inner_widths[column].max(measured.right_edge());
             widths[column] = widths[column].max(measured.right_edge() + cell_padding * 2.0);
@@ -146,6 +147,7 @@ pub(super) fn layout_table(
                     (f32::MAX, f32::MAX)
                 },
                 text_layout_cache,
+                false,
             );
             row_height = row_height.max(built.height + cell_padding * 2.0);
             boxes.extend(built.boxes);

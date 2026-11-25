@@ -182,6 +182,7 @@ fn append_single_text_span(
                 math: None,
                 image: None,
                 hard_break: false,
+                soft_break: false,
             };
             pieces.push(text_piece(
                 font_system,

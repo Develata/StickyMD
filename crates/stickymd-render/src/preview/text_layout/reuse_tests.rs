@@ -80,6 +80,7 @@ fn span(text: &str, source_start: usize, destination: &str) -> RenderSpan {
         math: None,
         image: None,
         hard_break: false,
+        soft_break: false,
     }
 }
 

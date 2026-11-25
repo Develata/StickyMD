@@ -6,9 +6,10 @@ use super::{
     model::{self, Run, Scenario},
     native,
     report::{Evidence, quote},
+    rows::Conditions,
 };
 use crate::mac_common::{
-    fixture::{contained_executable, copy_fixture},
+    fixture::{app_inputs, bundle_hash, contained_executable, copy_fixture},
     session::Session,
 };
 use std::path::Path;
@@ -31,16 +32,39 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         return Err("Accessibility permission missing: Hidden chooses the menu-bar item through Accessibility; grant it to this binary, then measure".into());
     }
     let fixture = model::fixture();
+    // The output may not reach the input bundle, its note directory or the mac-gui ledger.
+    let out = crate::mac_common::output::guarded(&options.out, &app)?;
+    // A first run creates its directory; an earlier campaign's evidence is never replaced
+    // (review round 3, B2 and its first-run finding).
+    crate::mac_common::output::prepare(&out, &|name| name == "mac-resources.json", &[])?;
+    // One reading of the environment gives both the evidence and the conditions it is judged
+    // under (review B3); every sample checks the displays are still these.
+    let screen = Screen::now()?;
+    let display = screen.dimensions;
+    let [pixel_width, pixel_height, point_width, point_height] = display;
+    let displays = u32::try_from(screen.active.len()).map_err(|e| e.to_string())?;
     let mut evidence = Evidence {
-        environment: environment()?,
+        environment: environment(display, displays)?,
+        conditions: Conditions {
+            macos_version: native::system_text(c"kern.osproductversion")?,
+            scale: [pixel_width / point_width, pixel_height / point_height],
+            displays,
+        },
         app_hash: crate::integrity::sha256(&executable)?,
+        bundle_hash: bundle_hash(&app)?,
+        inputs: app_inputs(&app)?,
+        driver: crate::integrity::sha256(
+            &std::env::current_exe().map_err(|e| format!("driver path: {e}"))?,
+        )?,
+        finished: false,
         fixture_hash: crate::integrity::sha256_bytes(fixture.as_bytes())?,
         repetitions: options.repetitions,
         timebase: native::timebase()?,
         scenarios: Vec::new(),
     };
-    let output = options.out.join("mac-resources.json");
-    crate::atomic_evidence::write(&output, evidence.json().as_bytes())?;
+    let output = out.join("mac-resources.json");
+    // Review B7: an earlier campaign's evidence is never replaced; the first write is exclusive.
+    crate::atomic_evidence::write_new(&output, evidence.json().as_bytes())?;
     for scenario in model::SCENARIOS {
         let name = scenario.name;
         evidence.scenarios.push(Vec::new());
@@ -49,14 +73,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
                 "{name} run {repetition}/{}: starting isolated measurement",
                 options.repetitions
             );
-            let run = one_run(
-                &app,
-                &fixture,
-                scenario,
-                repetition,
-                &evidence.app_hash,
-                evidence.timebase,
-            );
+            let run = one_run(&app, &fixture, scenario, repetition, &evidence, &screen);
             println!("{name} run {repetition}: {} {}", run.status, run.reason);
             let cleanup_error = run.cleanup_error.clone();
             evidence
@@ -73,12 +90,38 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             }
         }
     }
+    // Every run ran: only now is the campaign finished (a cut-short one returned above).
+    evidence.finished = true;
+    crate::atomic_evidence::write(&output, evidence.json().as_bytes())?;
     evidence.print_summary();
     println!("Evidence: {}", output.display());
-    if evidence.passed() {
+    if evidence.measured() {
         Ok(())
     } else {
-        Err("Scenarios incomplete or failed: every requested run must be valid and within its memory gate; see mac-resources.json".into())
+        Err("P16-R01 or P16-R02 does not hold: every run must be valid and within its memory gate, and each scenario's median idle CPU at most 0.1%; see mac-resources.json".into())
+    }
+}
+
+/// The displays a campaign is measured on: the main display's mode and size, its ID and the
+/// active displays' IDs.
+#[derive(Debug, PartialEq)]
+struct Screen {
+    dimensions: [f64; 4],
+    /// The main display's mode identifier and refresh rate.
+    mode: (i32, f64),
+    main: u32,
+    active: Vec<u32>,
+}
+
+impl Screen {
+    fn now() -> Result<Self, String> {
+        let (main, active) = native::displays()?;
+        Ok(Self {
+            dimensions: native::display()?,
+            mode: native::main_mode()?,
+            main,
+            active,
+        })
     }
 }
 
@@ -87,9 +130,10 @@ fn one_run(
     fixture: &str,
     scenario: Scenario,
     repetition: usize,
-    hash: &str,
-    timebase: (u32, u32),
+    evidence: &Evidence,
+    screen: &Screen,
 ) -> Run {
+    let timebase = evidence.timebase;
     let mut run = Run::new(repetition);
     let mut session = match Session::new() {
         Ok(session) => session,
@@ -98,8 +142,8 @@ fn one_run(
             return run;
         }
     };
-    let result = prepare(&mut session, app, fixture, scenario.mode, hash)
-        .and_then(|()| measure(&mut session, &mut run, timebase, scenario.hidden));
+    let result = prepare(&mut session, app, fixture, scenario.mode, evidence)
+        .and_then(|()| measure(&mut session, &mut run, timebase, scenario.hidden, screen));
     if let Err(error) = result {
         run.reason = error;
     }
@@ -114,14 +158,29 @@ fn one_run(
     run
 }
 
+/// Copies the bundle and its fixture and starts it. The copy must be the bundle the evidence
+/// names: its executable (checked while copying), its manifest and its input fingerprint, so a
+/// bundle changed during the campaign is never measured under the first one's identity.
 fn prepare(
     session: &mut Session,
     app: &Path,
     fixture: &str,
     mode: &str,
-    hash: &str,
+    evidence: &Evidence,
 ) -> Result<(), String> {
-    let executable = copy_fixture(session, app, fixture, &model::config(mode), hash)?;
+    let executable = copy_fixture(
+        session,
+        app,
+        fixture,
+        &model::config(mode),
+        &evidence.app_hash,
+    )?;
+    let copied = session.path().join("StickyMD.app");
+    if bundle_hash(&copied)? != evidence.bundle_hash || app_inputs(&copied)? != evidence.inputs {
+        return Err(
+            "the copied bundle is not the one this campaign measures; refused before launch".into(),
+        );
+    }
     session.spawn(
         Command::new(executable)
             .current_dir(session.path())
@@ -152,9 +211,20 @@ fn wait(
     Ok(true)
 }
 
-fn capture(session: &mut Session, run: &mut Run, started: Instant) -> Result<bool, String> {
+fn capture(
+    session: &mut Session,
+    run: &mut Run,
+    started: Instant,
+    screen: &Screen,
+) -> Result<bool, String> {
     if exited(session, run, started)? {
         return Ok(false);
+    }
+    // The scale and the single display the campaign records must be the ones measured under
+    // (review B3 and round 3): the main display's mode, its ID and the set of active displays.
+    if Screen::now()? != *screen {
+        run.status = "DISPLAY_CHANGED";
+        return Err("the displays changed during the campaign".into());
     }
     let result = native::sample(run.pid.ok_or("Missing measured PID")?, started);
     let error = match result {
@@ -179,6 +249,7 @@ fn measure(
     run: &mut Run,
     timebase: (u32, u32),
     hidden: bool,
+    screen: &Screen,
 ) -> Result<(), String> {
     let started = Instant::now();
     let pid = session.child.as_ref().ok_or("Missing child")?.id();
@@ -187,10 +258,15 @@ fn measure(
         if exited(session, run, started)? {
             return Ok(());
         }
-        if native::window_ready(pid)? {
+        // One instant decides both readiness and the deadline (review round 3): a window first
+        // seen after 30 s is a timeout, never a run the reader would refuse.
+        let ready = native::window_ready(pid)?;
+        let at = started.elapsed();
+        if ready && at <= Duration::from_secs(30) {
+            run.ready_seconds = Some(at.as_secs_f64());
             break;
         }
-        if started.elapsed() >= Duration::from_secs(30) {
+        if at >= Duration::from_secs(30) {
             run.status = "READINESS_TIMEOUT";
             return Err("No PID-owned on-screen content window within 30 seconds".into());
         }
@@ -203,7 +279,6 @@ fn measure(
             return Ok(());
         }
     }
-    run.ready_seconds = Some(started.elapsed().as_secs_f64());
     if hidden && !hide(session, run, pid, started)? {
         return Ok(());
     }
@@ -212,25 +287,30 @@ fn measure(
         run,
         started,
         Instant::now() + Duration::from_secs(crate::resource_plan::WARMUP_SECONDS),
-    )? || !capture(session, run, started)?
+    )? || !capture(session, run, started, screen)?
     {
         return Ok(());
     }
     if hidden {
         stays_hidden(run, pid)?;
     }
-    let deadline = started
-        + Duration::from_secs_f64(run.samples[0].elapsed_seconds)
-        + Duration::from_secs(crate::resource_plan::CPU_SECONDS);
-    if !wait(session, run, started, deadline)? || !capture(session, run, started)? {
-        return Ok(());
-    }
-    if hidden {
-        stays_hidden(run, pid)?;
+    // Just before 60 s, then just after: the CPU between the first two bounds the first 60 s
+    // window from below, between the first and the last from above (review round 3, B3, A).
+    let first = started + Duration::from_secs_f64(run.samples[0].elapsed_seconds);
+    for deadline in [
+        first + Duration::from_secs_f64(model::LOWER_SAMPLE_SECONDS),
+        first + Duration::from_secs(crate::resource_plan::CPU_SECONDS),
+    ] {
+        if !wait(session, run, started, deadline)? || !capture(session, run, started, screen)? {
+            return Ok(());
+        }
+        if hidden {
+            stays_hidden(run, pid)?;
+        }
     }
     run.metrics = Some(model::metrics(
         &run.samples[0],
-        &run.samples[1],
+        &run.samples[2],
         timebase.0,
         timebase.1,
     )?);
@@ -280,10 +360,33 @@ fn stays_hidden(run: &mut Run, pid: u32) -> Result<(), String> {
     Ok(())
 }
 
-fn environment() -> Result<String, String> {
-    let [pixel_width, pixel_height, point_width, point_height] = native::display()?;
+/// `sysctl -n <name>` trimmed, or `unavailable`; as `mac-gui` reads `kern.hv_vmm_present`.
+fn sysctl(name: &str) -> String {
+    Command::new("/usr/sbin/sysctl")
+        .args(["-n", name])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map_or_else(
+            || "unavailable".into(),
+            |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        )
+}
+
+fn environment(display: [f64; 4], displays: u32) -> Result<String, String> {
+    let [pixel_width, pixel_height, point_width, point_height] = display;
+    // The ledger takes the system from `sw_vers` as it does for mac-gui runs, so one image digest
+    // names one system across both tools.
+    let sw_vers = Command::new("/usr/bin/sw_vers")
+        .output()
+        .map_err(|e| format!("sw_vers: {e}"))?;
+    if !sw_vers.status.success() {
+        return Err("sw_vers failed".into());
+    }
     Ok(format!(
-        "{{\"macos_version\":{},\"os_build\":{},\"model\":{},\"cpu\":{},\"ram_bytes\":{},\"architecture\":{},\"unix_seconds\":{},\"main_display\":{{\"pixel_width\":{},\"pixel_height\":{},\"point_width\":{},\"point_height\":{},\"scale_x\":{},\"scale_y\":{}}},\"release_build\":\"caller-supplied; not inferred from binary\",\"desktop_conditions\":\"caller must keep desktop unlocked, display on, and avoid interaction\"}}",
+        "{{\"os\":{},\"hv_vmm_present\":{},\"display_count\":{displays},\"macos_version\":{},\"os_build\":{},\"model\":{},\"cpu\":{},\"ram_bytes\":{},\"architecture\":{},\"unix_seconds\":{},\"main_display\":{{\"pixel_width\":{},\"pixel_height\":{},\"point_width\":{},\"point_height\":{},\"scale_x\":{},\"scale_y\":{}}},\"release_build\":\"caller-supplied; not inferred from binary\",\"desktop_conditions\":\"caller must keep desktop unlocked, display on, and avoid interaction\"}}",
+        quote(&String::from_utf8_lossy(&sw_vers.stdout)),
+        quote(&sysctl("kern.hv_vmm_present")),
         quote(&native::system_text(c"kern.osproductversion")?),
         quote(&native::system_text(c"kern.osversion")?),
         quote(&native::system_text(c"hw.model")?),
@@ -316,7 +419,13 @@ mod tests {
             .unwrap()
             .unwrap();
         let mut run = super::Run::new(1);
-        super::measure(&mut session, &mut run, (1, 1), false).unwrap();
+        let screen = super::Screen {
+            dimensions: [1.0; 4],
+            mode: (1, 60.0),
+            main: 1,
+            active: vec![1],
+        };
+        super::measure(&mut session, &mut run, (1, 1), false, &screen).unwrap();
         assert_eq!(run.status, "EXITED_EARLY");
         assert!(run.samples.is_empty() && run.metrics.is_none());
         assert!(run.exit_status.as_deref().unwrap().contains('1'));
