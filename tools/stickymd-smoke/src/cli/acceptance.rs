@@ -1,4 +1,4 @@
-//! Manual acceptance commands: selections, guided sessions and standalone runs.
+//! `acceptance manual` commands: selections, guided sessions and standalone runs.
 
 use std::path::PathBuf;
 

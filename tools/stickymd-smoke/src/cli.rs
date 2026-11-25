@@ -1,15 +1,15 @@
 //! Command-line contract for selecting phase verification tasks.
 
+mod acceptance;
 mod args;
-mod manual;
 mod options;
 mod phase;
 mod qualification;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use acceptance::{GuidedSession, ManualCommand, ManualSelection, ManualSession};
 use args::{exact_named_values, named_bounded_usize, named_u64, named_value, optional_named_value};
-pub(crate) use manual::{GuidedSession, ManualCommand, ManualSelection, ManualSession};
 pub(crate) use options::{CiShard, Options, ResourceModule, Selection};
 pub(crate) use phase::Phase;
 use qualification::window_stress_usage;

@@ -121,6 +121,8 @@ fn ci_shared_and_unknown_inputs_choose_full_even_alongside_known_changes() {
         "tools/stickymd-smoke/src/ci/git.rs",
         "tools/stickymd-smoke/src/development/git.rs",
         "tools/stickymd-smoke/src/runner/headless.rs",
+        "tools/stickymd-smoke/src/cli.rs",
+        "tools/stickymd-smoke/src/cli/options.rs",
         ".github/workflows/ci.yml",
         "tools/release/package.ps1",
         "new-module/src/lib.rs",
