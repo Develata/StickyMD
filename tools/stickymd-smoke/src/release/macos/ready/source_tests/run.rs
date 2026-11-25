@@ -290,8 +290,14 @@ fn discover(root: &Path) -> Result<(Vec<Executable>, Vec<Target>), String> {
     Ok((executables, output::doc_libraries(&metadata)?))
 }
 
-/// One listing: `argv` with `--list --format terse`, and again with `--ignored` added.
-fn list(root: &Path, program: &Path, argv: &[&str]) -> Result<(Vec<String>, Vec<String>), String> {
+/// One listing: `argv` with `--list --format terse`, and again with `--ignored` added; a library's
+/// doc-tests (`doc`) are read as rustdoc prints them.
+fn list(
+    root: &Path,
+    program: &Path,
+    argv: &[&str],
+    doc: bool,
+) -> Result<(Vec<String>, Vec<String>), String> {
     let once = |ignored: bool| -> Result<Vec<String>, String> {
         let mut arguments: Vec<&str> = argv.to_vec();
         arguments.extend(["--list", "--format", "terse"]);
@@ -308,40 +314,50 @@ fn list(root: &Path, program: &Path, argv: &[&str]) -> Result<(Vec<String>, Vec<
         if !output.status.success() {
             return Err(format!("listing {} failed", program.display()));
         }
-        output::listing(std::str::from_utf8(&output.stdout).map_err(|_| "a listing is not UTF-8")?)
+        let text = std::str::from_utf8(&output.stdout).map_err(|_| "a listing is not UTF-8")?;
+        if doc {
+            output::doc_listing(text)
+        } else {
+            output::listing(text)
+        }
     };
     Ok((once(false)?, once(true)?))
 }
 
 /// Every target's own listing of its tests: each test executable's `--list`, and each
-/// doc-tested library's `cargo test --doc -- --list`.
-fn listings(
-    root: &Path,
+/// doc-tested library's `cargo test --doc -- --list`. A target whose listing fails is a problem
+/// of that target alone; the others keep theirs (pre-freeze item 4).
+fn listings(root: &Path, executables: &[Executable], doc: &[Target]) -> (Vec<Listed>, Vec<String>) {
+    gather(executables, doc, |program, argv, is_doc| {
+        list(root, program, argv, is_doc)
+    })
+}
+
+/// [`listings`] over any lister, `(program, argv, doc)` to `(all, ignored)`.
+fn gather(
     executables: &[Executable],
     doc: &[Target],
-) -> Result<Vec<Listed>, String> {
+    list: impl Fn(&Path, &[&str], bool) -> Result<(Vec<String>, Vec<String>), String>,
+) -> (Vec<Listed>, Vec<String>) {
     let mut out = Vec::new();
+    let mut problems = Vec::new();
+    let mut take =
+        |target: &Target, listed: Result<(Vec<String>, Vec<String>), String>| match listed {
+            Ok((all, ignored)) => out.push(Listed {
+                target: target.clone(),
+                all,
+                ignored,
+            }),
+            Err(error) => problems.push(format!("the listing of {target:?}: {error}")),
+        };
     for executable in executables {
-        let (all, ignored) = list(root, &executable.path, &[])?;
-        out.push(Listed {
-            target: executable.target.clone(),
-            all,
-            ignored,
-        });
+        take(&executable.target, list(&executable.path, &[], false));
     }
     for library in doc {
-        let (all, ignored) = list(
-            root,
-            Path::new("cargo"),
-            &["test", "--locked", "-p", &library.package, "--doc", "--"],
-        )?;
-        out.push(Listed {
-            target: library.clone(),
-            all,
-            ignored,
-        });
+        let argv = ["test", "--locked", "-p", &library.package, "--doc", "--"];
+        take(library, list(Path::new("cargo"), &argv, true));
     }
-    Ok(out)
+    (out, problems)
 }
 
 /// The volumes P18-L08's tests reported (`<volume> <case behaviour>` lines): exactly one line for
@@ -522,10 +538,8 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
         problems.push(error);
         (Vec::new(), Vec::new())
     });
-    let listed = listings(root, &executables, &doc).unwrap_or_else(|error| {
-        problems.push(error);
-        Vec::new()
-    });
+    let (listed, unlisted) = listings(root, &executables, &doc);
+    problems.extend(unlisted);
     let argv = command();
     let merged = run_merged(root, &argv, None);
     problems.extend(merged.problem);
@@ -669,6 +683,45 @@ mod tests {
         assert!(super::driver_path(&lib).is_err());
         let other = format!("{}\n{finished}\n", artifact("stickymd-mac", "bin"));
         assert!(super::driver_path(&other).is_err());
+    }
+
+    /// Pre-freeze item 4 (fix-round review 15): one target whose listing fails is a problem of
+    /// that target alone; the other targets keep their listings, so their runs are still judged.
+    #[test]
+    fn a_failed_listing_drops_only_its_own_target() {
+        use super::super::Target;
+        use super::output::Executable;
+        let target = |name: &str, kind: &str| Target {
+            package: "p".to_owned(),
+            kind: kind.to_owned(),
+            name: name.to_owned(),
+        };
+        let executables = [
+            Executable {
+                target: target("good", "bin"),
+                path: "target/debug/deps/good-1".into(),
+            },
+            Executable {
+                target: target("bad", "bin"),
+                path: "target/debug/deps/bad-1".into(),
+            },
+        ];
+        let doc = [target("p", "doctest")];
+        let (listed, problems) = super::gather(&executables, &doc, |program, _, is_doc| {
+            if program.ends_with("bad-1") {
+                Err("listing bad-1 failed".to_owned())
+            } else {
+                Ok((
+                    vec![format!("{}::t", if is_doc { "doc" } else { "bin" })],
+                    Vec::new(),
+                ))
+            }
+        });
+        let names: Vec<_> = listed.iter().map(|l| l.target.name.as_str()).collect();
+        assert_eq!(names, ["good", "p"]);
+        assert_eq!(listed[1].all, ["doc::t"]);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("bad") && problems[0].contains("listing bad-1 failed"));
     }
 
     /// Fix round, BLOCKER 5: the listing keeps a name as often as the binary lists it.

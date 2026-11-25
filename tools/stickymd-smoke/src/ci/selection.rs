@@ -157,6 +157,7 @@ fn is_shared(path: &str) -> bool {
             "runner.rs",
             "runner/",
             "cli.rs",
+            "cli/",
             "main.rs",
             "governance.rs",
             "governance/",

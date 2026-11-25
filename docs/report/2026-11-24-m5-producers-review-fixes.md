@@ -324,3 +324,44 @@ USER 2026-11-24 又决定（经协调会话转达，原话“再修一轮就合�
   新的检查表校验通过，记录带 `zip_sha256`（真实账本未改动）。证据在本 worktree 已忽略的 `dist/evidence/mac-vm-2026-11-24-m5p-2/`
   （`mac-gui.json` 为 `28bdd9c9…`）。
 - 新测试在 Windows 上只编译检查，由 CI 运行。schema 5 的 `mac-resources` 没有在虚拟机中跑过。
+
+## Resolution：R 冻结前的跟进事项（2026-11-26）
+
+Develata 2026-11-26 在协调会话中决定由该会话处理冻结前清单，分支 `chore/pre-freeze-items`，自 `dab45d9` 切出。逐项：
+
+1. **未做。** 冻结 R 之前对全部发布门代码的完整跨模型审查，要等代码不再变动（含 F7）。
+2. **已核对，账本中没有。** 真实账本 `dist/evidence/mac-gui-ledger/records.jsonl`，2026-11-26 核对：
+   - 337 行，SHA-256 `6feb4e7e…`，最后修改 2026-11-20；
+   - 309 条 `automated`，28 条 `manual`，`kind:"resources"` 0 条，所以没有要重判的 R02 FAIL。
+   F7 的虚拟机运行会登记资源记录，这一项在冻结 R 之前要再核一次。
+3. **未做。** 正式候选上的 `mac-resources`，要等候选。
+4. **未做。** 晋升候选上的 R03，要等候选。
+5. **已补五个坏样本。** 每个样本都只删去或放宽它对应的一处守卫来验证：相应测试失败，恢复后与原文件逐字节相同。
+   - **(a) 截断的运行：** `a_finished_campaign_whose_evidence_lists_three_scenarios_is_refused`（`mac_resources/row_tests.rs`）。它从写出的证据文本中删去第四个场景，
+     断言读取端拒绝，错误为“a finished campaign lists 3 of 4 scenarios”。放宽 `rows.rs` 中这项检查后，证据被读入。
+   - **(b) 坏 digest：** `a_zip_digest_that_is_not_a_sha256_is_refused_where_the_evidence_is_read`（`mac_ledger/producer_tests.rs`）。入口的检查对没有 R03 行的证据
+     是唯一一处看到这个 digest 的地方。删去它，这类证据仍被“names a ZIP but has no R03 row”拒绝，只是报错不同；就接受与拒绝而言它是冗余的，只决定报错的措辞。保留。
+   - **(c) 检查顺序：** `two_of_r03s_checks_swapped_are_refused`（`mac_ledger/producer_tests.rs`）交换 R03 自己的前两项检查。
+     - 没有事实的行：`producers.rs` 中 `names != expected` 是唯一的守卫。改成不计顺序的比较后，交换的行作为 R03 FAIL 被登记。
+     - 有事实的行：`rejudged.checks != stated` 被放宽时，仍被 `r03_checks` 拒绝，只是报错不同。
+   - **(d) 资源证据带 ZIP digest：** `resources_evidence_naming_a_zip_is_refused`（`mac_ledger/producer_tests.rs`）。删去 `resources.rs` 中的检查后，
+     这份证据被登记为两条 R01/R02 NOT_TESTED。
+   - **(e) 资源行 FAIL 与 waiver：** `a_resource_row_fail_under_a_waiver_stays_the_groups_fail`（`release/macos/ready/tests/producers.rs`）对 R01、R02 各加一条 FAIL
+     与一条 waiver，断言为分组判定的 FAIL，不提 waiver。三层守卫：
+     - 分组判定的 FAIL 分支，删去后测试失败；
+     - `waived` 对非 NOT TESTED 行原样返回，删去后测试失败；
+     - `waived` 自己的 FAIL 检查，对资源行不可达，因为候选字节上有 FAIL 时分组判定总是 FAIL 或干净的 PASS。它仍守着 V03 与人工行，已有测试覆盖。
+
+     删去前两层中任何一层，这一行仍为 FAIL（另一层接住），变化的是报错。
+6. **已修（`660857c`）。** 测试根目录的名字加上进程内序号。样本为同一进程、同一时刻的两个根得到两个名字，删去序号即失败。
+7. **USER 2026-11-26 选“本会话恢复，单独 PR”。** 核对发现 F7（`737d95e`）不能直接变基：
+   - 它从 `d67125c` 分出，之后 `main` 又有 9 个 producers 提交（含 `b97d8ae` 的 R02 第三次采样与 `b2b4ab4` 的修复轮）；
+   - 在本分支上模拟拣选，12 个文件冲突；
+   - F7 的“证据 schema 6”与 `main` 上已有的 schema 6（R02 的 60 s 采样）不是同一个，移植时要改为 7。
+
+   移植另开分支，结论记在该分支。
+
+验证与拆分、修复的细节见 `2026-11-24-m5-macos-readiness-check.md` 末尾的 Resolution（2026-11-26）。
+
+另：本报告提到的、在原 worktree 中已忽略的 `dist/evidence/mac-vm-2026-11-24-*` 与 `mac-vm-2026-11-25-mz-res` 已原名移入主检出的 `dist/evidence/`，
+随后该 worktree 已删除（2026-11-26，USER 要求清理）。

@@ -455,3 +455,60 @@ R 才冻结。这一条取代上面“只审修复”的规则在合并上的作
 `case-insensitive`、映像 `case-sensitive`；驱动在先清空的 `target/macos-driver` 中构建，摘要 `1ed0c204…` 等于 `target/macos-driver/release/stickymd-smoke`
 的；三项判定都为 PASS，开始与结束都干净。新测试在 Windows 上只做了 clippy，没有实际运行。
 
+
+## Resolution：冻结 R 之前的后续项（2026-11-26）
+
+Develata 2026-11-26 在协调会话中决定由该会话处理冻结前清单；对第 3 项选“拆分（推荐）”。分支 `chore/pre-freeze-items`，自 `dab45d9`（#27 合入后的
+`main`）切出。
+
+1. **已拆（`8adfba1`）。** resolver（`Resolved`、`receipt_present`、`resolve` 及其两个测试）原样移入 `release/macos/resolve.rs`。`promote.rs` 留下晋升本身，
+   以及它写下的布局常量、`check_release` 与 `reuse_record`，后三者改为 `pub(super)` 供 resolver 使用。`ready.rs`、`mod.rs`、`mac_ledger/append.rs`
+   改指新模块；P18-P04、P18-G02 引用的行号按测试名重新生成。
+2. **已拆（`d5aa88a`）。** `mac_ledger/record.rs` 留下表示：类型、共用的小函数、`validate` 与 `normalized`。另外三个子模块：
+   - `record/codec.rs`：一行 JSON 的写与读，以及 `read_all`；
+   - `record/consistency.rs`：`consistent_with`；
+   - `record/evidence.rs`：`from_evidence`。它把运行证据读成记录，是本条没有点名的第四种职责，一并分出。
+
+   原有的 `record::` 路径经再导出保留。原先错挂在 `label` 上的 `consistent_with` 文档注释放回原处。
+3. **USER 选拆分（`a4c34c1`）。** `cli.rs` 留下 `CommandLine`、`StandaloneRecord`、命令解析与 `package-path`（385 行）。其余移入 `cli/`：
+   - `phase.rs`、`manual.rs`、`qualification.rs`、`options.rs`、`args.rs`；
+   - `tests.rs`：原内联测试，模块路径仍是 `cli::tests`。
+
+   各处 `crate::cli::` 路径经再导出保留。
+
+   三处拆分都是纯搬移。按行排序后与 `dab45d9` 比较，只差路径、可见性、import、模块头与 rustfmt 换行。测试名集合与 `dab45d9` 相同：`stickymd-smoke` 与
+   `stickymd-mac` 共 926 个。
+4. **已修（`5565384`）。** 计时尾行用 rustc 1.99.1 实测：取一个只有可合并文档测试的 2024 edition 临时 crate，`cargo test --doc -- --list --format terse`
+   的 stdout 末行为 `all doctests ran in 0.48s; merged doctests compilation took 0.16s`，加 `--ignored` 时只有这一行。修复如下：
+   - `output::doc_listing` 只在文档测试清单中、只在末行、只一次时接受这一行。出现在别处、出现两次、格式不符，或出现在测试二进制的清单里，仍为错误。
+   - `listings` 逐个目标列清单：一个目标失败只记为该目标的问题，其他目标保留清单。
+
+   样本即上面的真实输出。
+5. **已修（`c1c9b3f`）。** `--driver` 取不到摘要时，错误交给 `r_driver`，与驱动不符同样处理：没有 `mac-gui` 行能 PASS，各行照常判定并输出，
+   `driver_sha256` 输出为 `null`。样本：取摘要的错误保留在 `r_driver` 的结果中，在这个结果下 P16-W03 的已记 FAIL 仍为 FAIL。“命令不再提前退出”本身
+   没有单元样本，因为 `ready_command` 要 R 的干净检出。
+6. **已修（`629a52a`）。** `count_keys` 先收集名字并传播逐项错误，再计数。大小写敏感卷的测试在因此失败之前先卸载映像；只保留名字，没有目录项让卷
+   保持打开（S06 的教训）。没有单元样本，因为读不出的目录项无法按需制造。显式运行
+   `cargo test -p stickymd-mac -- --ignored on_a_case_sensitive_volume_case_makes_another_key` 通过，没有留下新挂载的映像。
+   第 6 项改的是 `apps/stickymd-mac` 的测试，属于 macOS 平台的构建输入；升版本号本来就要使两个平台都在 R 上重建。
+
+**拆分带出的三处问题，在随后的提交中修正。** 拆分时测试名的比较与 macOS 上的 clippy 都没有发现它们；全量测试、Windows 目标的 clippy 与模块指纹的治理测试发现了。
+- `resolve` 模块漏了 `promote` 的 `#[cfg(target_os = "macos")]`：rustfmt 按字母重排 `mod` 声明，新行没有带上条件。`stickymd-smoke` 因此在 Windows 目标上不能编译。
+- `ci/selection.rs` 把 `cli.rs` 列为改动即全量跑 CI 的共享路径，`cli/` 下的文件不在其中。样本在修正前为红：`cli/options.rs` 的改动不会选全量。现已补上 `cli/`，样本加了这两条路径。
+- 子模块原名 `cli/manual`，`manual::` 路径触发了模块指纹的“只有人工模块代码才点名人工模块”扫描（误报）。已改名为 `cli/acceptance`，不放宽扫描。
+
+**删去守卫的变异：** 每次只删一处守卫，相应测试都失败；恢复后与原文件逐字节相同，测试通过。
+- 第 4 项的两处：不认尾行；一处失败清空全部清单。
+- 第 5 项：`r_driver` 忽略取摘要的错误。
+
+**验证**（本机 macOS 27.2 arm64，`6791f02`）：
+- `cargo fmt --all --check` 通过。
+- clippy `-D warnings` 无警告：八个 macOS 包，以及 `stickymd-smoke --target x86_64-pc-windows-msvc`。
+- 八个包的 `cargo test --locked`：23 个测试套件，2097 个通过，0 个失败，33 个忽略。其中 `stickymd-smoke` 单元测试 782 个、集成测试 20 个，
+  `stickymd-mac` 124 个。
+- 拆分前（`dab45d9`）的同一组测试：`stickymd-smoke` 775 + 20 个，`stickymd-mac` 124 个。新增的 7 个是本轮的样本。
+- 新测试在 Windows 与 Linux 上没有实际运行，由 CI 运行。
+
+**仍未做：** 本节之前列出的、对整个就绪门的一次完整跨模型复审，仍须在冻结 R 之前做，且没有 BLOCKER。
+
+另见：本机仍挂着上文提到的旧映像 `stickymd-test-root-case-sensitive-62516-…`，本轮未动。

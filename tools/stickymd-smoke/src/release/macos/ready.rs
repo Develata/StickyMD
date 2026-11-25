@@ -88,10 +88,12 @@ pub(in super::super) fn ready_command(
     // row table and rules are those of a clean checkout of R, read as committed.
     let start = identity::require(root, &release, "macos-ready")?;
     // Only R's own driver's runs can hold a `mac-gui` PASS (USER 2026-11-24): the same rule as
-    // `mac-ledger plan`, which reuses a PASS only for the current driver.
+    // `mac-ledger plan`, which reuses a PASS only for the current driver. A `--driver` that cannot
+    // be hashed is judged like a wrong one, so every row is still printed, the ledger's FAILs
+    // among them (pre-freeze item 5).
     let driver = crate::integrity::sha256(driver)
-        .map_err(|error| format!("cannot hash the driver {}: {error}", driver.display()))?
-        .to_ascii_lowercase();
+        .map(|digest| digest.to_ascii_lowercase())
+        .map_err(|error| format!("cannot hash the driver {}: {error}", driver.display()));
     // R must be one the release authorization can name, before any row is judged, with or
     // without a candidate (review round 2, SHOULD_FIX 5).
     super::promote::check_release(root, &release)?;
@@ -107,7 +109,11 @@ pub(in super::super) fn ready_command(
     };
     // R's driver is the one the run on R built (review round 4, BLOCKER 1): `--driver` must be
     // that file, or no `mac-gui` run counts as R's; a FAIL still counts whatever the driver.
-    let driver_rule = judge::r_driver(&driver, borrow(&receipt), &release);
+    let driver_rule = judge::r_driver(
+        driver.as_deref().map_err(String::as_str),
+        borrow(&receipt),
+        &release,
+    );
     let ledger_path = root
         .join(crate::qualification::reserved_paths::MAC_GUI_LEDGER)
         .join("records.jsonl");
@@ -133,8 +139,8 @@ pub(in super::super) fn ready_command(
             None,
         ),
     };
-    let candidate = match super::promote::receipt_present(root) {
-        Ok(true) => match super::promote::resolve(root, &release) {
+    let candidate = match super::resolve::receipt_present(root) {
+        Ok(true) => match super::resolve::resolve(root, &release) {
             Ok(resolved) => Read::Present(judge::Candidate {
                 receipt_sha256: resolved.receipt_sha256,
                 zip_sha256: resolved.zip_sha256,
@@ -185,8 +191,8 @@ pub(in super::super) fn ready_command(
         Read::Missing(_) => "missing".to_owned(),
         Read::Invalid(_) => "invalid".to_owned(),
     };
-    let now = match super::promote::receipt_present(root) {
-        Ok(true) => match super::promote::resolve(root, &release) {
+    let now = match super::resolve::receipt_present(root) {
+        Ok(true) => match super::resolve::resolve(root, &release) {
             Ok(resolved) => format!("present {}", resolved.receipt_sha256),
             Err(_) => "invalid".to_owned(),
         },
@@ -214,8 +220,9 @@ pub(in super::super) fn ready_command(
         _ => "null".to_owned(),
     };
     println!(
-        "{{\"release_source\":\"{release}\",\"candidate_receipt_sha256\":{digest},\"batch\":{},\"macos_major\":{macos_major},\"driver_sha256\":\"{driver}\",\"ready\":{ready},\"rows\":[\n{}\n]}}",
+        "{{\"release_source\":\"{release}\",\"candidate_receipt_sha256\":{digest},\"batch\":{},\"macos_major\":{macos_major},\"driver_sha256\":{},\"ready\":{ready},\"rows\":[\n{}\n]}}",
         batch.map_or_else(|| "null".to_owned(), |name| format!("\"{name}\"")),
+        driver.map_or_else(|_| "null".to_owned(), |digest| format!("\"{digest}\"")),
         rows.join(",\n")
     );
     if ready {

@@ -190,6 +190,22 @@ fn a_missing_invalid_or_uncleaned_run_leaves_both_rows_not_tested() {
     assert_eq!(verdicts(&short), [("R01", "FAIL"), ("R02", "NOT_TESTED")]);
 }
 
+/// Review S3: evidence marked finished whose bytes list three scenarios is refused by the reader,
+/// even with the rows it states for them. `Evidence::json` writes every scenario of the tool, so
+/// the fourth is cut from the text (pre-freeze, producers item 5 (third review)).
+#[test]
+fn a_finished_campaign_whose_evidence_lists_three_scenarios_is_refused() {
+    let mut partial = evidence();
+    partial.scenarios.truncate(3);
+    assert!(partial.finished);
+    let written = partial.json();
+    let fourth = written.rfind(",{\"scenario\":\"hidden\"").unwrap();
+    let text = format!("{}]}}\n", &written[..fourth]);
+    assert_eq!(text.matches("\"scenario\":\"").count(), 3);
+    assert!(text.contains("3 of 4 scenarios measured"), "{text}");
+    refused(&text, "a finished campaign lists 3 of 4 scenarios");
+}
+
 /// `10`: memory is measured at scale 2, and every measurement on macOS 27.
 #[test]
 fn outside_plan_10s_environment_the_rows_are_not_tested() {

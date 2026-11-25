@@ -185,6 +185,37 @@ fn a_resource_fail_on_the_candidates_bytes_cannot_be_waived() {
     assert_line(&lines, "P16-R01", Verdict::NotTested, "revoked");
 }
 
+/// The layers that keep a resource row's FAIL from a USER waiver: the groups' verdict FAILs the
+/// row (no identity holds a clean run), and a line that is not NOT TESTED is never waived. The
+/// waiver's own failure check cannot be reached for these rows, since a FAIL on the candidate's
+/// bytes always makes the groups' verdict FAIL or a clean PASS, so the detail names the groups'
+/// verdict (pre-freeze, producers item 5 (third review)).
+#[test]
+fn a_resource_row_fail_under_a_waiver_stays_the_groups_fail() {
+    let candidate = candidate();
+    for row in ["R01", "R02"] {
+        let mut records = ledger();
+        without(&mut records, row);
+        records.push(record(row, "FAIL", '1', &candidate.built, '8'));
+        records.push(release(
+            ReleaseKind::Waiver,
+            row,
+            &candidate.receipt_sha256,
+            "rc1",
+        ));
+        let lines = run(Read::Present(&candidate), &records, &receipt());
+        let line = verdict(&lines, &format!("P16-{row}"));
+        assert_eq!(line.verdict, Verdict::Fail, "{line:?}");
+        assert!(
+            line.detail.contains(&format!(
+                "a FAIL of P16-{row} is recorded on the candidate's bytes, and no identity holds a clean run of every row it needs"
+            )),
+            "{line:?}"
+        );
+        assert!(!line.detail.contains("USER waiver"), "{line:?}");
+    }
+}
+
 #[test]
 fn v03_has_no_producer_and_holds_only_with_a_waiver() {
     let candidate = candidate();

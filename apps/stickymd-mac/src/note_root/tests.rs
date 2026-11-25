@@ -338,18 +338,26 @@ fn one_key_is_exclusive_and_another_key_runs_beside_it() {
     }
 }
 
-/// Starts both copies (each must be the first) and counts the key directories made.
 /// Starts both copies (each must be the first) and counts the key directories made; then a copy
-/// of the same name in the other location must be the second instance.
-fn count_keys(upper: &Path, lower: &Path, same: &Path, roots: &Roots, home: &Path) -> usize {
+/// of the same name in the other location must be the second instance. An entry that cannot be
+/// read is an error, never counted (pre-freeze item 6), and the caller detaches the volume before
+/// it fails; only names are kept, so no entry holds the volume open past the count.
+fn count_keys(
+    upper: &Path,
+    lower: &Path,
+    same: &Path,
+    roots: &Roots,
+    home: &Path,
+) -> std::io::Result<usize> {
     let first = NoteRoot::resolve(upper, roots).unwrap();
     let second = NoteRoot::resolve(lower, roots).unwrap();
     let guards = (primary(&first), primary(&second));
     assert!(is_secondary(&NoteRoot::resolve(same, roots).unwrap()));
     drop(guards);
-    fs::read_dir(home.join("Library/Application Support/StickyMD"))
-        .unwrap()
-        .count()
+    let names = fs::read_dir(home.join("Library/Application Support/StickyMD"))?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    Ok(names.len())
 }
 
 /// P18-L08 on a case-sensitive volume: names differing only in case are two notes. Run with
@@ -401,7 +409,7 @@ fn on_a_case_sensitive_volume_case_makes_another_key() {
     let same = world.app("mount/home/Applications", "StickyMD");
     let outcome = count_keys(&upper, &lower, &same, &roots, &home);
     run(&["detach".as_ref(), "-quiet".as_ref(), mount.as_os_str()]);
-    assert_eq!(outcome, 2);
+    assert_eq!(outcome.unwrap(), 2);
 }
 
 /// P18-L10: on an installed root the ports keep the note directory opened at start, as P16-S14

@@ -60,9 +60,9 @@ pub(super) fn recorded(options: &Options) -> Result<Vec<Record>, String> {
 fn candidate(
     options: &Options,
     root: &Path,
-) -> Result<crate::release::macos::promote::Resolved, String> {
+) -> Result<crate::release::macos::resolve::Resolved, String> {
     candidate_with(options, |release| {
-        crate::release::macos::promote::resolve(root, release)
+        crate::release::macos::resolve::resolve(root, release)
     })
 }
 
@@ -70,8 +70,8 @@ fn candidate(
 /// and only if it is the one named as checked.
 fn candidate_with(
     options: &Options,
-    resolve: impl Fn(&str) -> Result<crate::release::macos::promote::Resolved, String>,
-) -> Result<crate::release::macos::promote::Resolved, String> {
+    resolve: impl Fn(&str) -> Result<crate::release::macos::resolve::Resolved, String>,
+) -> Result<crate::release::macos::resolve::Resolved, String> {
     let release = options
         .release
         .as_deref()
@@ -313,7 +313,7 @@ mod checked_tests {
     /// Fix round, SHOULD_FIX 10: through the entry that resolves the candidate for a record.
     #[test]
     fn the_recording_entry_refuses_a_candidate_other_than_the_one_checked() {
-        let resolved = |digest: &str| crate::release::macos::promote::Resolved {
+        let resolved = |digest: &str| crate::release::macos::resolve::Resolved {
             app: "StickyMD.app".into(),
             receipt_sha256: digest.to_owned(),
             zip_sha256: "c".repeat(64),
