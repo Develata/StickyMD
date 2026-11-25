@@ -153,6 +153,20 @@ fn a_zip_without_r03_or_not_a_digest_is_refused() {
     assert!(error.contains("only R03 opens a ZIP"), "{error}");
 }
 
+/// The importer's own digest check, which `Record::validate` cannot stand for: without an R03
+/// row no record carries the ZIP, so `validate` never sees it; with one, the importer refuses
+/// it before `validate` would (pre-freeze, producers item 5 (third review)).
+#[test]
+fn a_zip_digest_that_is_not_a_sha256_is_refused_where_the_evidence_is_read() {
+    for rows in [&["W02"][..], &["R03"], &["W02", "R03"]] {
+        let error = record(&gui_evidence(rows, ",\"zip_sha256\":\"dddd\"")).unwrap_err();
+        assert!(
+            error.contains("the evidence names a ZIP digest that is not a SHA-256: \"dddd\""),
+            "{rows:?}: {error}"
+        );
+    }
+}
+
 #[test]
 fn a_finished_resources_run_in_the_vm_records_r01_and_r02_with_both_digests() {
     let json = crate::mac_resources::evidence_json(false);
@@ -256,6 +270,21 @@ fn resources_evidence_outside_the_vm_unfinished_old_or_inconsistent_is_refused()
         let renamed = good.replacen(member, "\"other\"", 1);
         assert!(record(&renamed).is_err(), "{member}");
     }
+}
+
+/// Review S4: only R03 opens a ZIP, so resource evidence naming one, even a well-formed digest, is
+/// not this tool's and is not recorded (pre-freeze, producers item 5 (third review)).
+#[test]
+fn resources_evidence_naming_a_zip_is_refused() {
+    let good = crate::mac_resources::evidence_json(false);
+    let from = "\"tool\":\"mac-resources\",";
+    let zipped = good.replacen(from, &format!("{from}\"zip_sha256\":\"{}\",", hex('f')), 1);
+    assert_ne!(zipped, good);
+    let error = record(&zipped).unwrap_err();
+    assert!(
+        error.contains("mac-resources evidence names a ZIP, which only R03 opens"),
+        "{error}"
+    );
 }
 
 /// R03's checks as `(name, verdict, observation)`.
@@ -440,6 +469,31 @@ fn an_r03_row_without_facts_holds_r03_checks_and_never_passes() {
         let error = row(verdict, &r03_checks(Some(&hex('e'))), &top).unwrap_err();
         assert!(error.contains("names the ZIP it opened"), "{error}");
     }
+}
+
+/// R03's checks are judged in the driver's order: two of its own checks swapped are refused,
+/// with facts (they no longer follow from them) and without (they are not exactly R03's checks,
+/// the only guard on that path) (pre-freeze, producers item 5 (third review)).
+#[test]
+fn two_of_r03s_checks_swapped_are_refused() {
+    let zip = hex('f');
+    let top = format!(",\"zip_sha256\":\"{zip}\"");
+    // Index 0 names the ZIP; the two swapped are R03's first two own checks.
+    let mut swapped = r03_checks(Some(&zip));
+    swapped.swap(1, 2);
+    assert_eq!(swapped[1].0, crate::mac_gui::R03_CHECKS[1]);
+    for verdict in ["FAIL", "NOT_TESTED"] {
+        let error =
+            record(&with_scenarios(&[scenario("R03", verdict, &swapped)], &top)).unwrap_err();
+        assert!(
+            error.contains("an R03 row needs exactly the checks"),
+            "{verdict}: {error}"
+        );
+    }
+    let good = crate::mac_gui::r03_sample_facts(Some(&zip), &[("StickyMD.app", 0x08)]);
+    let swap = |checks: &mut Checks| checks.swap(1, 2);
+    let error = record(&with_scenarios(&[r03_row(&good, &swap)], &top)).unwrap_err();
+    assert!(error.contains("do not follow from its facts"), "{error}");
 }
 
 /// A calibration of R03's write watch is a bad sample of the driver, never acceptance evidence.
