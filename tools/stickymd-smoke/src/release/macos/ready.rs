@@ -133,8 +133,8 @@ pub(in super::super) fn ready_command(
             None,
         ),
     };
-    let candidate = match super::promote::receipt_present(root) {
-        Ok(true) => match super::promote::resolve(root, &release) {
+    let candidate = match super::resolve::receipt_present(root) {
+        Ok(true) => match super::resolve::resolve(root, &release) {
             Ok(resolved) => Read::Present(judge::Candidate {
                 receipt_sha256: resolved.receipt_sha256,
                 zip_sha256: resolved.zip_sha256,
@@ -185,8 +185,8 @@ pub(in super::super) fn ready_command(
         Read::Missing(_) => "missing".to_owned(),
         Read::Invalid(_) => "invalid".to_owned(),
     };
-    let now = match super::promote::receipt_present(root) {
-        Ok(true) => match super::promote::resolve(root, &release) {
+    let now = match super::resolve::receipt_present(root) {
+        Ok(true) => match super::resolve::resolve(root, &release) {
             Ok(resolved) => format!("present {}", resolved.receipt_sha256),
             Err(_) => "invalid".to_owned(),
         },

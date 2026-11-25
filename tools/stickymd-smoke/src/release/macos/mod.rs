@@ -13,6 +13,7 @@ pub(crate) mod promote;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod ready;
+pub(crate) mod resolve;
 #[cfg(target_os = "macos")]
 pub(super) use ready::{ready_command, source_tests_command};
 #[cfg(any(target_os = "macos", test))]
@@ -72,7 +73,7 @@ pub(super) fn promote_command(
 
 #[cfg(target_os = "macos")]
 pub(super) fn candidate_command(root: &Path, release: &str) -> Result<(), String> {
-    let resolved = promote::resolve(root, release)?;
+    let resolved = resolve::resolve(root, release)?;
     // The digest a USER release receipt or waiver names as checked (decision (c)).
     println!(
         "{{\"app\":\"{}\",\"candidate_receipt_sha256\":\"{}\"}}",

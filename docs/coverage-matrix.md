@@ -22,7 +22,7 @@
   P18-G03（发布用 USER 收据、waiver 与下载路径记录，USER 2026-11-24）；第二次复审后（同日，USER 决定 (a)–(d)）：源码测试收据 schema 2（逐个测试、
   显式运行）、`--candidate-sha256`、D04/D05 的结果与 `--macos-major`。
 - **代码：** `tools/stickymd-smoke/src/release/macos/ready/`（`rows` 分类表、`source_tests` 收据与运行器、`judge` 纯判定）；
-  `release/macos/promote.rs` 的 resolver 返回 receipt 摘要、两项字节身份与签名方式；`mac_ledger/release.rs`（发布用记录）与
+  `release/macos/resolve.rs` 的 resolver 返回 receipt 摘要、两项字节身份与签名方式；`mac_ledger/release.rs`（发布用记录）与
   `mac-ledger receipt --release-source`、`waive`、`revoke --release-source`。R03 接收候选 ZIP 与资源行的字节绑定另开分支落地（见上一条）。
 
 2026-11-21 平台构建输入收窄为打包 crate（USER 决定 2026-11-21，[验证报告](report/2026-11-20-phase-18-verification.md)末尾的 Resolution）：
