@@ -466,7 +466,7 @@ fork 整套 RaTeX、自行实现数学布局、运行外部 LaTeX、调用浏览
 <a id="display-math-in-paragraph"></a>
 ### 段落中的显示公式（USER 批准 2026-11-24）
 
-Comrak 0.59 把段落内的 `$$…$$` / `\[…\]` 标成 `display_math`；只要它与其他行内内容同处一个段落（前后没有空行），
+Comrak（0.59 起，当前 1.2.0 同样）把段落内的 `$$…$$` / `\[…\]` 标成 `display_math`；只要它与其他行内内容同处一个段落（前后没有空行），
 语义树里仍是行内节点。下面的排版规则是 StickyMD 的 Preview 规则（USER 批准），不是 Comrak 规定的渲染行为。
 
 - **规则。** Preview 对段落（含列表项与引用中的段落）里被 Comrak 标为 `display_math` 的公式，用显示样式
