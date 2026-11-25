@@ -3,9 +3,11 @@
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#semantic-math-delimiter-conversion
 //!
-//! The two steps stay independent modules; this only composes them and their
-//! position maps. Callers own the generation check, the transaction and the
-//! selection.
+//! The two steps stay independent modules; this only composes them, their
+//! position maps and the checks that tie step 1 to the Preview's readings of
+//! the original and of its result (`joins_keep_blocks`, `joins_lie_in_text`,
+//! and `surroundings`). Callers own the generation check, the transaction and
+//! the selection.
 
 use std::ops::Range;
 
@@ -13,9 +15,14 @@ use stickymd_core::DocumentSnapshot;
 
 use crate::math_text::{EqualsLineConversion, join_math_equals_lines};
 use crate::preview::{
-    MAX_PREVIEW_SOURCE_BYTES, MathDelimiterConversion, PreviewParseError, SemanticConversionError,
-    convert_latex_math_delimiters,
+    BlockNode, InlineNode, MAX_PREVIEW_SOURCE_BYTES, MathDelimiterConversion, OwnedDocumentTree,
+    PreviewParseError, PreviewParser, SemanticConversionError, SourceRange,
+    convert_parsed_latex_math_delimiters, validate_scope,
 };
+
+mod surroundings;
+
+use surroundings::{joins_keep_surroundings, pass_reads_back};
 
 /// The result of one pass that changed the text.
 #[derive(Debug)]
@@ -63,6 +70,21 @@ impl MathActionPass {
     }
 }
 
+/// `map_position` through the steps taken, for positions asked in non-decreasing order: each
+/// step's forward map passes its changes once, and both maps keep the order, so the
+/// composition does too.
+fn composed_forward_map<'a>(
+    joined: Option<&'a EqualsLineConversion>,
+    converted: Option<&'a MathDelimiterConversion>,
+) -> impl FnMut(usize) -> usize + 'a {
+    let mut joined = joined.map(EqualsLineConversion::forward_position_map);
+    let mut converted = converted.map(MathDelimiterConversion::forward_position_map);
+    move |position| {
+        let position = joined.as_mut().map_or(position, |map| map(position));
+        converted.as_mut().map_or(position, |map| map(position))
+    }
+}
+
 /// Runs step 1 on `snapshot` and step 2 on its result; a scope is mapped
 /// between them. Returns None when neither step changes anything.
 pub fn run_math_action(
@@ -84,31 +106,249 @@ pub fn run_math_action(
     if has_isolated_cr(&snapshot.text) {
         return Ok(None);
     }
+    // Step 1 scans with Setext off, so it can read a definition, indented code,
+    // an HTML block or inline code that a Setext heading starts in the Preview's
+    // dialect for formula text, and a join can change the blocks after its
+    // formula. When it joins anything, the Preview's parse of the original must
+    // see each join as one formula a Setext underline split
+    // (`joins_keep_blocks`); the Preview's parse of the result, which step 2
+    // converts, must hold each joined `=` as text (`joins_lie_in_text`); and
+    // everything outside the joined formulas must read as it did
+    // (`joins_keep_surroundings`). Otherwise step 1 is dropped whole.
+    //
+    // When step 2 rewrites delimiters, the final text is parsed once more and must
+    // read as the original does outside the joined formulas, each converted formula
+    // reading back as the same formula (`settle`, plan 07). Rewrites that do not read
+    // back are left out; when what fails is not down to one, step 1's joins are
+    // dropped and step 2 converts the original text, read back the same way; if that
+    // fails too, nothing changes.
+    validate_scope(&snapshot.text, scope.as_ref())?;
     let joined = join_math_equals_lines(&snapshot.text, scope.clone());
-    let joined_snapshot = joined.as_ref().map(|joined| DocumentSnapshot {
-        text: joined.text().into(),
+    let original = PreviewParser.parse(snapshot)?;
+    if let Some(joins) = joined
+        && let Some(result) = adopt_joins(&original, &joins, snapshot)?
+    {
+        let mapped = scope
+            .clone()
+            .map(|range| joins.map_position(range.start)..joins.map_position(range.end));
+        match convert_parsed_latex_math_delimiters(&result, mapped)? {
+            // The result check already compared this very text with the original.
+            None => return Ok(Some(MathActionPass::Joined(joins))),
+            Some(converted) => {
+                if let Some(pass) =
+                    settle(&original, Some(joins), converted, &result.source, snapshot)?
+                {
+                    return Ok(Some(pass));
+                }
+            }
+        }
+    }
+    let Some(converted) = convert_parsed_latex_math_delimiters(&original, scope)? else {
+        return Ok(None);
+    };
+    settle(&original, None, converted, &original.source, snapshot)
+}
+
+/// How many times one path reads its final text back.
+const READ_BACKS: usize = 3;
+
+/// Plan 07's read-back of step 2's rewrites of `base` (step 1's result when `joins` are kept,
+/// else the original): the final text must read as `original` does. When it does not, the
+/// rewrites whose formula does not read back as itself are left as they were (USER 乙) and the
+/// rest are read back again, up to `READ_BACKS` times. None when what fails is not down to a
+/// rewrite, or the final text cannot be parsed; with joins and no rewrite left, the joins
+/// alone, whose text the result check already compared.
+fn settle(
+    original: &OwnedDocumentTree,
+    joins: Option<EqualsLineConversion>,
+    mut converted: MathDelimiterConversion,
+    base: &str,
+    snapshot: &DocumentSnapshot,
+) -> Result<Option<MathActionPass>, SemanticConversionError> {
+    for _ in 0..READ_BACKS {
+        let Ok(final_tree) = PreviewParser.parse(&DocumentSnapshot {
+            text: converted.text().into(),
+            generation: snapshot.generation,
+            line_ending: snapshot.line_ending,
+        }) else {
+            return Ok(None);
+        };
+        // Every rewrite must read back as itself, and the whole text as the original.
+        let failing = converted.failing_replacements(&final_tree);
+        if failing.is_empty() {
+            return Ok(
+                pass_reads_back(original, &final_tree, joins.as_ref(), &converted)
+                    .then_some(MathActionPass::Converted(joins, converted)),
+            );
+        }
+        match converted.without(base, &failing)? {
+            Some(rest) => converted = rest,
+            None => return Ok(joins.map(MathActionPass::Joined)),
+        }
+    }
+    Ok(None)
+}
+
+/// The Preview's parse of step 1's result when the three checks on the joins pass, else None.
+fn adopt_joins(
+    original: &OwnedDocumentTree,
+    joins: &EqualsLineConversion,
+    snapshot: &DocumentSnapshot,
+) -> Result<Option<OwnedDocumentTree>, SemanticConversionError> {
+    if !joins_keep_blocks(original, joins) {
+        return Ok(None);
+    }
+    let result = PreviewParser.parse(&DocumentSnapshot {
+        text: joins.text().into(),
         generation: snapshot.generation,
         line_ending: snapshot.line_ending,
-    });
-    let source = joined_snapshot.as_ref().unwrap_or(snapshot);
-    let scope = scope.map(|range| match &joined {
-        Some(joined) => joined.map_position(range.start)..joined.map_position(range.end),
-        None => range,
-    });
-    Ok(match convert_latex_math_delimiters(source, scope)? {
-        Some(converted) => Some(MathActionPass::Converted(joined, converted)),
-        None => joined.map(MathActionPass::Joined),
+    })?;
+    Ok(
+        (joins_lie_in_text(&result, joins) && joins_keep_surroundings(original, &result, joins))
+            .then_some(result),
+    )
+}
+
+/// Whether every joined `=` lies as text in `tree`, the Preview's parse of
+/// step 1's result (`Leaves::text_block`).
+fn joins_lie_in_text(tree: &OwnedDocumentTree, joins: &EqualsLineConversion) -> bool {
+    let leaves = Leaves::new(tree);
+    joins
+        .joined_equals()
+        .all(|equal| leaves.text_block(equal).is_some())
+}
+
+/// Whether, in `tree` (the Preview's parse of the original text), every join
+/// is one formula that a Setext underline split: the line above and the `=`
+/// line are text of one block (the Setext heading, or one paragraph when the
+/// `=` is not an underline), and the line below is text of that block or of
+/// the next leaf block. So a join never reaches into a definition (no block),
+/// code, HTML or a table, nor across an ATX heading or any other block the
+/// `$$` pair spans. Leaf blocks follow document order and the three lines are
+/// adjacent, so "the next leaf block" is the block the line below starts.
+fn joins_keep_blocks(tree: &OwnedDocumentTree, joins: &EqualsLineConversion) -> bool {
+    let leaves = Leaves::new(tree);
+    joins.joins().all(|[above, equal, below]| {
+        let (Some(above), Some(equal), Some(below)) = (
+            leaves.text_block(above),
+            leaves.text_block(equal),
+            leaves.text_block(below),
+        ) else {
+            return false;
+        };
+        above == equal && (below == equal || below == equal + 1)
     })
 }
 
-/// Whether `text` holds a `\r` that is not followed by `\n`: one pass over the bytes, no
+/// The leaf blocks of one Preview parse that have a source range, in document
+/// order, each with whether it holds text a join may touch, and the ranges of
+/// the inline code, Raw HTML, links and images in those text blocks. Leaves do
+/// not overlap, nor do protected inlines (nothing inside one is recorded), so
+/// a lookup is two binary searches: O(nodes) to build, O(log nodes) a byte.
+struct Leaves {
+    blocks: Vec<(SourceRange, bool)>,
+    protected: Vec<SourceRange>,
+}
+
+impl Leaves {
+    fn new(tree: &OwnedDocumentTree) -> Self {
+        let mut leaves = Self {
+            blocks: Vec::new(),
+            protected: Vec::new(),
+        };
+        leaf_blocks(&tree.blocks, &mut leaves.blocks, &mut leaves.protected);
+        leaves
+    }
+
+    /// The index of the leaf block that holds byte `at` as text: a paragraph,
+    /// a heading or a display formula, outside its protected inlines. None in
+    /// a code block, an HTML block, a table, or on a line no block holds, such
+    /// as a link reference definition. A leaf without a source range holds no
+    /// byte, and a text block with a protected inline that has none is not
+    /// text, so such cases fail closed.
+    fn text_block(&self, at: usize) -> Option<usize> {
+        let index = self.blocks.partition_point(|(range, _)| range.end <= at);
+        let &(range, text) = self.blocks.get(index)?;
+        let protected = self.protected.partition_point(|range| range.end <= at);
+        (text
+            && range.start <= at
+            && self
+                .protected
+                .get(protected)
+                .is_none_or(|range| at < range.start))
+        .then_some(index)
+    }
+}
+
+/// The leaf blocks under `blocks` that have a source range, in document order,
+/// each with whether it holds text a join may touch; and, in `protected`, the
+/// ranges of the inline code, Raw HTML, links and images in those text blocks.
+fn leaf_blocks(
+    blocks: &[BlockNode],
+    output: &mut Vec<(SourceRange, bool)>,
+    protected: &mut Vec<SourceRange>,
+) {
+    for block in blocks {
+        let (range, text) = match block {
+            BlockNode::Paragraph {
+                source_range,
+                content,
+            }
+            | BlockNode::Heading {
+                source_range,
+                content,
+                ..
+            } => (*source_range, protected_inlines(content, protected)),
+            BlockNode::DisplayMath(math) => (math.source_range, true),
+            BlockNode::BlockQuote { blocks, .. } => {
+                leaf_blocks(blocks, output, protected);
+                continue;
+            }
+            BlockNode::List(list) => {
+                for item in &list.items {
+                    leaf_blocks(&item.blocks, output, protected);
+                }
+                continue;
+            }
+            BlockNode::CodeBlock(code) => (code.source_range, false),
+            BlockNode::Table(table) => (table.source_range, false),
+            BlockNode::ThematicBreak { source_range }
+            | BlockNode::HtmlLiteral { source_range, .. } => (*source_range, false),
+        };
+        output.extend(range.map(|range| (range, text)));
+    }
+}
+
+/// Adds the ranges of the protected inlines in `inlines` (inline code, Raw
+/// HTML, links, images; nothing inside them) to `protected`, in document
+/// order. False when one of them has no range, so no join is placed there.
+fn protected_inlines(inlines: &[InlineNode], protected: &mut Vec<SourceRange>) -> bool {
+    inlines.iter().all(|inline| match inline {
+        InlineNode::Emphasis { children, .. }
+        | InlineNode::Strong { children, .. }
+        | InlineNode::Strikethrough { children, .. } => protected_inlines(children, protected),
+        InlineNode::Code { source_range, .. }
+        | InlineNode::Link { source_range, .. }
+        | InlineNode::Image { source_range, .. }
+        | InlineNode::HtmlLiteral { source_range, .. } => match source_range {
+            Some(range) => {
+                protected.push(*range);
+                true
+            }
+            None => false,
+        },
+        InlineNode::Text { .. }
+        | InlineNode::InlineMath(_)
+        | InlineNode::SoftBreak { .. }
+        | InlineNode::HardBreak { .. } => true,
+    })
+}
+
+/// Whether `text` holds a `\r` that is not followed by `\n`: one SIMD search for `\r`, no
 /// allocation. A `\r\n` pair is one line break for both Comrak and the source maps.
 fn has_isolated_cr(text: &str) -> bool {
     let bytes = text.as_bytes();
-    bytes
-        .iter()
-        .enumerate()
-        .any(|(index, &byte)| byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
+    memchr::memchr_iter(b'\r', bytes).any(|index| bytes.get(index + 1) != Some(&b'\n'))
 }
 
 #[cfg(test)]
@@ -131,6 +371,325 @@ mod tests {
         assert_eq!(pass("$$a\n=\nb\n=\nc$$").change_count(), 2);
         assert_eq!(pass("$$a\n=\nb$$\n\n$$c\n=\nd$$").change_count(), 2);
         assert_eq!(pass("\\(x\\) and \\(y\\)").change_count(), 2);
+    }
+
+    /// Step 1 can shrink a document below the Preview's node limit, but the original is parsed
+    /// too when anything joins, so an original over the limit is refused with the parse error,
+    /// before any change.
+    #[test]
+    fn phase11b_math_action_reports_an_original_over_the_node_limit() {
+        let text = "$$a\n=\nb$$\n\n".repeat(50_001);
+        let snapshot = stickymd_core::DocumentSnapshot {
+            text: std::sync::Arc::from(text.as_str()),
+            generation: stickymd_core::Generation::initial(),
+            line_ending: stickymd_core::LineEnding::Lf,
+        };
+        assert!(matches!(
+            super::run_math_action(&snapshot, None),
+            Err(super::SemanticConversionError::Parse(
+                super::PreviewParseError::NodeLimit { .. }
+            ))
+        ));
+    }
+
+    /// An invalid scope is refused before either step parses, so a document over the node limit
+    /// still reports the scope.
+    #[test]
+    fn phase11b_math_action_refuses_an_invalid_scope_before_parsing() {
+        let text = "a\n\n".repeat(100_001);
+        let snapshot = stickymd_core::DocumentSnapshot {
+            text: std::sync::Arc::from(text.as_str()),
+            generation: stickymd_core::Generation::initial(),
+            line_ending: stickymd_core::LineEnding::Lf,
+        };
+        assert!(matches!(
+            super::run_math_action(&snapshot, None),
+            Err(super::SemanticConversionError::Parse(
+                super::PreviewParseError::NodeLimit { .. }
+            ))
+        ));
+        assert!(matches!(
+            super::run_math_action(&snapshot, Some(0..text.len() + 1)),
+            Err(super::SemanticConversionError::InvalidScope)
+        ));
+    }
+
+    /// Step 1 scans with Setext off. After a Setext heading, the Preview's dialect reads the
+    /// lines it joins as a link reference definition, indented code or an HTML block, so the
+    /// joined `=` is not text in the Preview's parse of the result: step 1 is dropped whole and
+    /// step 2 converts the original text (cross-model review, 2026-11-24). A formula after a
+    /// definition still joins (`math_text` tests).
+    #[test]
+    fn phase11b_math_action_drops_joins_the_preview_reads_outside_text() {
+        let pass = |text: &str| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            super::run_math_action(&snapshot, None)
+                .unwrap()
+                .map(|pass| pass.into_text())
+        };
+        for text in [
+            "[r]: /u\nHeading\n===\n[x]: /v \"$$a\n    =\nb$$\"\n\n[x]",
+            "Heading\n===\n[x]: /v \"$$a\n    =\nb$$\"\n\n[x]",
+            "Heading\n===\n    $$a\n    =\n    b$$",
+            "Heading\n===\n<custom-tag>\n$$a\n=\nb$$\n",
+            // The Setext heading leaves its backtick unpaired, so the lines below are one code
+            // span; with Setext off the backticks pair the other way (second review, 2026-11-24).
+            "H `\n===\n`$$a\n    =\nb$$`",
+            // The Preview's parse of the original text: the line below the joined `=` starts a
+            // definition, indented code or an HTML block, or the `$$` pair spans an ATX heading
+            // (third review, 2026-11-24). With a definition in front, `main` left them alone.
+            "$$a\n=\n[x]: /v \"b$$\"\n\n[x]",
+            "[p]: /p\n$$a\n=\n[x]: /v \"b$$\"\n\n[x]",
+            "$$a\n=\n    b$$",
+            "$$a\n=\n<custom-tag>\nb$$",
+            "$$a\n# H\n=\nb$$",
+            "[p]: /p\n$$a\n# H\n=\nb$$",
+            // Fourth review: an ATX heading below the `=`, one between the opener and the
+            // join, and a quote marker that only the raw source holds. Step 1 takes `$$`
+            // formulas from Comrak's nodes alone (USER 2026-11-25), so none of them joins.
+            "$$a\n=\n# b$$",
+            "[p]: /p\n$$open\n# H\nprose\n=\nnext$$",
+            "> $$a\n=\n> b$$",
+            // Fifth review: joining keeps the list item open past its formula, so the indented
+            // code after the blank line would become the item's paragraph and step 2 would
+            // convert it. The blocks around the formula must stay as they were.
+            "- $$a\n  =\nb$$\n\n    \\(z\\)",
+            "- $$a\n  =\nb$$$\n\n    \\(z\\)",
+            // Sixth review. Joining moves where the backticks after the closer pair, so the
+            // code span `\(z\)` on the closer's line would become math. And the item that the
+            // join keeps open takes in the next list, so `tail` would show as 8.
+            "$$a\n=\nb`c$$ d` e `\\(z\\)`",
+            "7. $$a\n   =\nb$$\n\n1. tail",
+            // The Setext heading shows `[ ] ` as text; joined, the item would be a task.
+            "- [ ] $$a\n  =\n  b$$",
+            // Seventh review: the item the join keeps open would take in the text after the
+            // closer.
+            "7. $$a\n   =\nb$$ tail",
+            "- $$a\n  =\nb$$ tail",
+        ] {
+            assert_eq!(pass(text), None, "{text:?}");
+            // Step 2 still converts the original text.
+            assert_eq!(
+                pass(&format!("{text}\n\n\\(x\\)")),
+                Some(format!("{text}\n\n$x$")),
+                "{text:?}"
+            );
+        }
+        // Control: the same lines without the heading join, a formula after a definition
+        // joins, and so does a chain the Setext underlines split into several blocks.
+        for (text, joined) in [
+            ("[x]: /w\n\n$$a\n    =\nb$$", "[x]: /w\n\n$$a=b$$"),
+            ("[p]: /p\n$$a\n=\nb$$", "[p]: /p\n$$a=b$$"),
+            ("$$a\n=\nb\n=\nc$$", "$$a=b=c$$"),
+            ("- $$a\n  =\n  b$$", "- $$a=b$$"),
+            // With Setext off Comrak reads the last line as the item's lazy continuation, so
+            // this is one formula; joining completes it inside the item (USER 2026-11-25).
+            ("- $$a\n  =\nb$$", "- $$a=b$$"),
+            ("> $$a\n=\nb$$", "> $$a=b$$"),
+            ("7. $$a\n   =\nb$$\n", "7. $$a=b$$\n"),
+            // Seventh review: a formula that is all of its paragraph joins, and so does the
+            // rest of the batch. Text before the opener goes from heading to paragraph text,
+            // since undoing that Setext split is what the join is for.
+            ("$a\n=\nb$", "$a=b$"),
+            ("\\(a\n=\nb\\)", "$a=b$"),
+            ("$a\n=\nb$\n\n$$c\n=\nd$$", "$a=b$\n\n$$c=d$$"),
+            ("Title $$a\n=\nb$$", "Title $$a=b$$"),
+            ("$$a\n=\nb`c$$ d", "$$a=b`c$$ d"),
+        ] {
+            assert_eq!(pass(text).as_deref(), Some(joined), "{text:?}");
+        }
+    }
+
+    /// Comrak's budget for reference links is the document's length (at least 100,000 bytes),
+    /// so a join, which shortens the document, can leave a link outside its formula without
+    /// one: here the 1,200th `[r]` would become text (sixth review). The join is dropped.
+    #[test]
+    fn phase11b_math_action_keeps_links_a_shorter_document_cannot_expand() {
+        let mut text = String::from("$$a\n=\nb$$\n\n[r]: /");
+        text.push_str(&"u".repeat(99));
+        text.push_str("\n\n");
+        text.push_str(&"[r]\n\n".repeat(1_200));
+        text.push_str(&"p\n\n".repeat((120_000 - text.len()) / 3));
+        text.push_str(&"p".repeat(120_000 - text.len()));
+        assert_eq!(text.len(), 120_000);
+        let links = |text: &str| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            let tree = super::PreviewParser.parse(&snapshot).unwrap();
+            tree.blocks
+                .iter()
+                .filter(|block| {
+                    matches!(block, super::BlockNode::Paragraph { content, .. }
+                        if matches!(content.as_slice(), [super::InlineNode::Link { .. }]))
+                })
+                .count()
+        };
+        assert_eq!(links(&text), 1_200);
+        // The control: joined anyway, the last reference is text.
+        assert_eq!(links(&text.replacen("$$a\n=\nb$$", "$$a=b$$", 1)), 1_199);
+        let snapshot = stickymd_core::DocumentSnapshot {
+            text: std::sync::Arc::from(text.as_str()),
+            generation: stickymd_core::Generation::initial(),
+            line_ending: stickymd_core::LineEnding::Lf,
+        };
+        assert!(super::run_math_action(&snapshot, None).unwrap().is_none());
+    }
+
+    /// Plan 07's read-back (USER 2026-11-25, "A", then "乙"): step 2 writes `\(…\)` as `$…$`, and
+    /// Comrak does not take a `$` that a digit follows as a closer. A formula that does not read
+    /// back as itself is left as it was and the rest are rewritten; the join stays, since the
+    /// joined formula reads as one. Without the read-back the first two would be `$a=b$2xyz$`,
+    /// with `$2xyz$` as the formula.
+    #[test]
+    fn phase11b_math_action_reads_the_final_text_back() {
+        let pass = |text: &str| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            super::run_math_action(&snapshot, None)
+                .unwrap()
+                .map(|pass| pass.into_text())
+        };
+        // The join and step 2 together: the join stays, the conversion does not.
+        assert_eq!(
+            pass("\\(a\n=\nb\\)2xyz$").as_deref(),
+            Some("\\(a=b\\)2xyz$")
+        );
+        // Step 2 alone, as on `main`: nothing else to convert, so nothing changes.
+        assert_eq!(pass("\\(a=b\\)2xyz$"), None);
+        // An escaped space before the closer stays, so `$a\ $` has a space before its `$`; a `$`
+        // inside the formula; a formula in a quote whose delimiters stand on their own lines
+        // (the `>` would land in the formula). Each is left as it was, and the formula next to
+        // it is still rewritten.
+        for (text, rewritten) in [
+            ("\\( a\\ \\)", None),
+            ("\\(a$b\\)", None),
+            ("> \\(\n> a\n> \\)", None),
+            ("\\(a\\)2 and \\(b\\)", Some("\\(a\\)2 and $b$")),
+            ("\\( a\\ \\) \\(c\\)", Some("\\( a\\ \\) $c$")),
+            ("\\(a$b\\) \\(c\\)", Some("\\(a$b\\) $c$")),
+            ("> \\(\n> a\n> \\) \\(c\\)", Some("> \\(\n> a\n> \\) $c$")),
+        ] {
+            assert_eq!(pass(text).as_deref(), rewritten, "{text:?}");
+        }
+        // Eighth review. Every rewrite must read back as itself even when the whole text reads
+        // alike: joined, `\($a=b$\)` would be written `$$a=b$$`, display math with another
+        // literal, so the join stays and the rewrite does not. A formula is judged by the
+        // literal Comrak read before the rewrite, so a quote's prefixes and a table's `\|` do not
+        // make a good one fail or a bad one pass, with or without a failing formula beside it.
+        for (text, rewritten) in [
+            ("\\($a\n=\nb$\\)", Some("\\($a=b$\\)")),
+            ("| $ x+\\|y $ |\n| --- |", Some("| $x+\\|y$ |\n| --- |")),
+            (
+                "| $ x+\\|y $ |\n| --- |\n\n\\(z\\)2",
+                Some("| $x+\\|y$ |\n| --- |\n\n\\(z\\)2"),
+            ),
+            (
+                "> \\[\n> a\n> \\]\n\n\\(x\\)2",
+                Some("> $$\n> a\n> $$\n\n\\(x\\)2"),
+            ),
+            ("> \\(\n> a\\)\n\n\\(c\\)", Some("> \\(\n> a\\)\n\n$c$")),
+            // Ninth review: a formula already in a table cell, whose literal Comrak reads with
+            // `\|` unescaped, next to one that does not read back.
+            (
+                "| \\(x+\\|y\\) |\n| --- |\n\n\\(z\\)2",
+                Some("| $x+\\|y$ |\n| --- |\n\n\\(z\\)2"),
+            ),
+        ] {
+            assert_eq!(pass(text).as_deref(), rewritten, "{text:?}");
+        }
+        // Full-width spaces just inside go like spaces (USER 2026-11-25).
+        assert_eq!(pass("\\(\u{3000}a\u{3000}\\)").as_deref(), Some("$a$"));
+        assert_eq!(pass("$\u{3000}a\u{3000}$").as_deref(), Some("$a$"));
+        assert_eq!(pass("$$\u{3000}a\u{3000}$$").as_deref(), Some("$$a$$"));
+        // With the whitespace just inside the delimiters dropped, these read back.
+        assert_eq!(pass("\\( a \\)").as_deref(), Some("$a$"));
+        assert_eq!(pass("\\(\na\n\\)").as_deref(), Some("$a$"));
+        assert_eq!(pass("- \\(\n  a\n  \\)").as_deref(), Some("- $a$"));
+        assert_eq!(pass("$$ a $$").as_deref(), Some("$$a$$"));
+        assert_eq!(
+            pass("> \\[\n> a\n> \\]").as_deref(),
+            Some("> $$\n> a\n> $$")
+        );
+        // Single-`$` text made a formula (plan 07's rule b) reads back as one formula, alone,
+        // after a join and next to a converted formula.
+        assert_eq!(pass("Both $ a $ here.").as_deref(), Some("Both $a$ here."));
+        assert_eq!(
+            pass("$$a\n=\nb$$ and $ c $").as_deref(),
+            Some("$$a=b$$ and $c$")
+        );
+        assert_eq!(pass("\\( x \\) $ y $").as_deref(), Some("$x$ $y$"));
+        assert_eq!(pass("Run $ npm test and check $ output."), None);
+        // Controls: with a space before the digit, or a letter after the closer, they read
+        // back.
+        assert_eq!(pass("\\(a\n=\nb\\) 2xyz$").as_deref(), Some("$a=b$ 2xyz$"));
+        assert_eq!(pass("\\(a=b\\)x").as_deref(), Some("$a=b$x"));
+        assert_eq!(pass("\\(a\\)").as_deref(), Some("$a$"));
+    }
+
+    /// The read-back also covers Comrak's reference budget (the document's length, at least
+    /// 100,000 bytes, 100 bytes a use of `[r]` here). At 120,003 bytes, joining and converting
+    /// `\(z\)` together would leave 119,999 and make the 1,200th `[r]` text, while step 2 alone
+    /// leaves 120,001: the join is dropped and `\(z\)` still converts. At 120,001 bytes step 2
+    /// alone would leave 119,999, so nothing changes.
+    #[test]
+    fn phase11b_math_action_reads_links_back_after_both_steps() {
+        let document = |formula: &str, len: usize| {
+            let mut text = format!("{formula}\\(z\\)\n\n[r]: /");
+            text.push_str(&"u".repeat(99));
+            text.push_str("\n\n");
+            text.push_str(&"[r]\n\n".repeat(1_200));
+            text.push_str(&"p".repeat(len - text.len()));
+            text
+        };
+        let links = |text: &str| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            let tree = super::PreviewParser.parse(&snapshot).unwrap();
+            tree.blocks
+                .iter()
+                .filter(|block| {
+                    matches!(block, super::BlockNode::Paragraph { content, .. }
+                        if matches!(content.as_slice(), [super::InlineNode::Link { .. }]))
+                })
+                .count()
+        };
+        let pass = |text: &str| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            super::run_math_action(&snapshot, None)
+                .unwrap()
+                .map(|pass| pass.into_text())
+        };
+        let both = document("$$a\n=\nb$$\n\n", 120_003);
+        assert_eq!(links(&both), 1_200);
+        // The controls: both steps by hand lose the link, step 2 alone keeps it.
+        let joined_and_converted = both
+            .replacen("$$a\n=\nb$$", "$$a=b$$", 1)
+            .replacen("\\(z\\)", "$z$", 1);
+        assert_eq!(links(&joined_and_converted), 1_199);
+        let converted = both.replacen("\\(z\\)", "$z$", 1);
+        assert_eq!(links(&converted), 1_200);
+        assert_eq!(pass(&both), Some(converted));
+        let alone = document("", 120_001);
+        assert_eq!(links(&alone), 1_200);
+        assert_eq!(links(&alone.replacen("\\(z\\)", "$z$", 1)), 1_199);
+        assert_eq!(pass(&alone), None);
     }
 
     /// Known limit (plan 07): plan 05 keeps an isolated `\r` as an ordinary character and the
@@ -216,12 +775,13 @@ mod tests {
     use stickymd_core::{DocumentSnapshot, Generation, LineEnding};
 
     use super::run_math_action;
+    use crate::preview::convert_latex_math_delimiters;
     use crate::preview::markdown_options;
 
     /// 1000 units that each need both steps, leave a bare `=` line outside a
     /// formula (so the second pass parses in full) and hold a paragraph that
-    /// starts with a link reference definition (so both steps look for
-    /// shifted blocks), padded to 1 MiB with `filler`.
+    /// starts with a link reference definition (so step 1 protects the lines
+    /// that no block covers), padded to 1 MiB with `filler`.
     fn workload(filler: &str) -> String {
         let unit = "\\[\nx^2\n=\ny^2\n\\]\n\nHeading\n=\ntext\n\n[r]: u\nt \\(q\\)\n\n";
         let mut source = unit.repeat(1_000);
@@ -250,7 +810,9 @@ mod tests {
         assert!(again.is_none());
         assert_eq!(pass.text().matches("$$\nx^2=y^2\n$$").count(), 1_000);
         assert_eq!(pass.text().matches("Heading\n=\ntext").count(), 1_000);
-        assert_eq!(pass.text().matches("t \\(q\\)").count(), 1_000);
+        // The paragraph after the definition `[r]: u` converts: Comrak 1.0 and
+        // later report its positions in place.
+        assert_eq!(pass.text().matches("[r]: u\nt $q$").count(), 1_000);
         elapsed
     }
 
@@ -351,12 +913,12 @@ mod tests {
 
     #[test]
     #[ignore = "Release-only Phase 11-B math button receipt"]
-    fn phase11b_performance_math_action_stays_linear_in_shifted_paragraphs() {
+    fn phase11b_performance_math_action_stays_linear_after_reference_definitions() {
         // 23,717 paragraphs that start with a definition, under the Preview's
         // node limit. Parsing so many blocks takes far longer than one large
         // paragraph, so this guards the shape, not the 100 ms bound: the
-        // button parses four times, while a per-node search over past
-        // shifted paragraphs would cost hundreds of parses.
+        // button parses four times, while a per-node search over the lines
+        // the definitions leave uncovered would cost hundreds of parses.
         let source = workload("[r]: u\nplain text filler plain text filler\n\n");
         let input = snapshot(&source);
         let mut parses: Vec<_> = (0..9).map(|_| parse_once(&source)).collect();
@@ -364,9 +926,359 @@ mod tests {
         let (parse, _, _) = summary(&mut parses);
         let (median, p95, max) = summary(&mut samples);
         eprintln!(
-            "phase11b math_action_1mib_shifted_paragraphs parse_median={parse:?} \
+            "phase11b math_action_1mib_definition_paragraphs parse_median={parse:?} \
              median={median:?} p95={p95:?} max={max:?}"
         );
         assert!(median < parse * 12, "median={median:?} parse={parse:?}");
+    }
+
+    /// What a join may never change, read from one Preview parse in document order: around
+    /// each quote, list and item (with the list's numbering and tightness, and the item's task
+    /// state), ATX heading texts, code and HTML block literals, tables (with their alignments
+    /// and header rows) and rules; and, outside `formula`, the source of the text, merged across
+    /// text nodes, links with their targets and titles, images with their alt text, inline
+    /// code, Raw HTML, formulas and each kind of emphasis. Paragraphs and Setext headings are
+    /// not read: undoing a Setext split is the point of a join. Written apart from
+    /// `joins_keep_surroundings`, so the two do not share a projection.
+    fn untouchable(text: &str, formula: &std::ops::Range<usize>) -> Vec<String> {
+        use crate::preview::{BlockNode, InlineNode, PreviewParser};
+        fn text_part(out: &mut Vec<String>, part: &str) {
+            if part.is_empty() {
+                return;
+            }
+            match out.last_mut() {
+                Some(last) if last.starts_with("text ") => last.push_str(part),
+                _ => out.push(format!("text {part}")),
+            }
+        }
+        fn inlines(
+            text: &str,
+            nodes: &[InlineNode],
+            formula: &std::ops::Range<usize>,
+            out: &mut Vec<String>,
+        ) {
+            for node in nodes {
+                if node
+                    .source_range()
+                    .is_some_and(|range| formula.start <= range.start && range.end <= formula.end)
+                {
+                    continue;
+                }
+                match node {
+                    InlineNode::Link {
+                        destination,
+                        title,
+                        children,
+                        ..
+                    } => {
+                        out.push(format!("link {destination:?} {title:?} {{"));
+                        inlines(text, children, formula, out);
+                        out.push("}".to_owned());
+                    }
+                    InlineNode::Emphasis { children, .. } => {
+                        out.push("emphasis {".to_owned());
+                        inlines(text, children, formula, out);
+                        out.push("}".to_owned());
+                    }
+                    InlineNode::Strong { children, .. } => {
+                        out.push("strong {".to_owned());
+                        inlines(text, children, formula, out);
+                        out.push("}".to_owned());
+                    }
+                    InlineNode::Strikethrough { children, .. } => {
+                        out.push("strikethrough {".to_owned());
+                        inlines(text, children, formula, out);
+                        out.push("}".to_owned());
+                    }
+                    InlineNode::Image {
+                        destination,
+                        title,
+                        alt,
+                        ..
+                    } => out.push(format!("image {destination:?} {title:?} {alt:?}")),
+                    InlineNode::Code { literal, .. } => out.push(format!("code {literal:?}")),
+                    InlineNode::HtmlLiteral { literal, .. } => {
+                        out.push(format!("html {literal:?}"))
+                    }
+                    InlineNode::InlineMath(math) => {
+                        out.push(format!("math {:?} {}", math.literal, math.display))
+                    }
+                    InlineNode::Text {
+                        literal,
+                        source_range,
+                    } => match source_range {
+                        Some(range) => {
+                            if range.start < formula.start {
+                                text_part(out, &text[range.start..range.end.min(formula.start)]);
+                            }
+                            if formula.end < range.end {
+                                text_part(out, &text[range.start.max(formula.end)..range.end]);
+                            }
+                        }
+                        None => text_part(out, literal),
+                    },
+                    InlineNode::SoftBreak { .. } | InlineNode::HardBreak { .. } => {}
+                }
+            }
+        }
+        fn blocks(
+            text: &str,
+            formula: &std::ops::Range<usize>,
+            nodes: &[BlockNode],
+            out: &mut Vec<String>,
+        ) {
+            for node in nodes {
+                match node {
+                    BlockNode::Paragraph { content, .. } => inlines(text, content, formula, out),
+                    BlockNode::Heading {
+                        content,
+                        source_range,
+                        ..
+                    } => {
+                        let source = source_range.and_then(|range| range.text(text));
+                        if source.is_some_and(|source| source.starts_with('#')) {
+                            out.push(format!("atx {source:?}"));
+                        }
+                        inlines(text, content, formula, out);
+                    }
+                    BlockNode::BlockQuote { blocks: inner, .. } => {
+                        out.push("quote {".to_owned());
+                        blocks(text, formula, inner, out);
+                        out.push("}".to_owned());
+                    }
+                    BlockNode::List(list) => {
+                        out.push(format!(
+                            "list {} {} {} {{",
+                            list.ordered, list.start, list.tight
+                        ));
+                        for item in &list.items {
+                            out.push(format!("item {:?} {{", item.checked));
+                            blocks(text, formula, &item.blocks, out);
+                            out.push("}".to_owned());
+                        }
+                        out.push("}".to_owned());
+                    }
+                    BlockNode::CodeBlock(code) => out.push(format!("codeblock {:?}", code.literal)),
+                    BlockNode::HtmlLiteral { literal, .. } => {
+                        out.push(format!("htmlblock {literal:?}"))
+                    }
+                    BlockNode::Table(table) => {
+                        out.push(format!("table {:?} {{", table.alignments));
+                        for row in &table.rows {
+                            out.push(format!("row {}", row.header));
+                            for cell in &row.cells {
+                                out.push("cell".to_owned());
+                                inlines(text, &cell.content, formula, out);
+                            }
+                        }
+                        out.push("}".to_owned());
+                    }
+                    BlockNode::ThematicBreak { .. } => out.push("rule".to_owned()),
+                    BlockNode::DisplayMath(math) => {
+                        if math.source_range.is_none_or(|range| {
+                            range.start < formula.start || formula.end < range.end
+                        }) {
+                            out.push(format!("math {:?} true", math.literal));
+                        }
+                    }
+                }
+            }
+        }
+        let tree = PreviewParser.parse(&snapshot(text)).unwrap();
+        let mut out = Vec::new();
+        blocks(text, formula, &tree.blocks, &mut out);
+        out
+    }
+
+    /// Formula shapes × the block starts a Setext heading lets begin × containers (with every
+    /// line prefixed, or the lines after the first lazy, or only the last) × an optional
+    /// definition in front × what follows the formula (a reference probe, indented code after a
+    /// blank line, code spans on the closer's line, or the next ordered list), through the
+    /// whole action. `formula` is the range from the opener to the closer, as the generator
+    /// writes them. Whenever step 1's joins are kept:
+    ///
+    /// - `untouchable` is as it was, after step 1 and again after step 2;
+    /// - outside the formula, the result is byte for byte what step 2 alone makes of the
+    ///   original: the join converts nothing step 2 would not;
+    /// - without the definition in front, a selection of just the formula changes nothing
+    ///   outside it either.
+    ///
+    /// The kept joins are counted per container, each input once.
+    #[derive(Clone, Copy)]
+    enum Lazy {
+        None,
+        All,
+        Last,
+    }
+
+    #[test]
+    fn phase11b_math_action_joins_touch_nothing_but_formula_text() {
+        let lines = [
+            "b",
+            "# h",
+            "[x]: /v \"t\"",
+            "    code",
+            "<custom-tag>",
+            "<div>",
+            "```",
+            "- item",
+            "1. item",
+            "> q",
+            "***",
+            "`b`",
+            "[x]",
+            "b `c",
+        ];
+        // (marker, the prefix of the lines after the first, which of them go without it).
+        let containers = [
+            ("", "", Lazy::None),
+            ("> ", "> ", Lazy::None),
+            ("> ", "> ", Lazy::All),
+            ("> ", "> ", Lazy::Last),
+            ("- ", "  ", Lazy::None),
+            ("- ", "  ", Lazy::All),
+            ("- ", "  ", Lazy::Last),
+            ("7. ", "   ", Lazy::None),
+            ("7. ", "   ", Lazy::All),
+            ("7. ", "   ", Lazy::Last),
+            ("- [ ] ", "  ", Lazy::None),
+            ("- [ ] ", "  ", Lazy::All),
+            ("- [ ] ", "  ", Lazy::Last),
+            ("> - ", ">   ", Lazy::None),
+            ("> - ", ">   ", Lazy::All),
+            ("> - ", ">   ", Lazy::Last),
+        ];
+        // (shape, the bytes before its opener, the bytes after its closer).
+        let shapes = [
+            ("$$a\n=\n{below}$$", 0, 0),
+            ("$${above}\n=\n{below}$$", 0, 0),
+            ("\\[a\n=\n{below}\\]", 0, 0),
+            ("$$a\n{above}\n=\n{below}$$", 0, 0),
+            ("x \\(a\n=\n{below}\\) y", 2, 2),
+            // A formula that is all of its paragraph (seventh review).
+            ("\\(a\n=\n{below}\\)", 0, 0),
+            ("$a\n=\n{below}$", 0, 0),
+        ];
+        let mut kept = [0_usize; 16];
+        let mut kept_in_scope = 0_usize;
+        for prefix in ["", "[p]: /p\n", "[x]: /v \"t\"\n\n"] {
+            for suffix in [
+                "\n\n[x]\n",
+                "\n\n    \\(z\\)\n\n[x]\n",
+                " d` `\\(z\\)`\n\n[x]\n",
+                "\n\n1. tail\n\n[x]\n",
+            ] {
+                for (slot, &(marker, continuation, lazy)) in containers.iter().enumerate() {
+                    for (index, above) in lines.into_iter().enumerate() {
+                        for below in lines {
+                            for (shape, lead, trail) in shapes {
+                                // A shape without `{above}` is the same input for every line.
+                                if index > 0 && !shape.contains("{above}") {
+                                    continue;
+                                }
+                                let formula =
+                                    shape.replace("{above}", above).replace("{below}", below);
+                                let last = formula.lines().count() - 1;
+                                let body = formula
+                                    .lines()
+                                    .enumerate()
+                                    .map(|(index, line)| match (index, lazy) {
+                                        (0, _) => format!("{marker}{line}"),
+                                        (_, Lazy::All) => line.to_owned(),
+                                        (index, Lazy::Last) if index == last => line.to_owned(),
+                                        _ => format!("{continuation}{line}"),
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                let text = format!("{prefix}{body}{suffix}");
+                                let span = prefix.len() + marker.len() + lead
+                                    ..prefix.len() + body.len() - trail;
+                                let Some(pass) = run_math_action(&snapshot(&text), None).unwrap()
+                                else {
+                                    continue;
+                                };
+                                let joins = match &pass {
+                                    super::MathActionPass::Joined(joins)
+                                    | super::MathActionPass::Converted(Some(joins), _) => joins,
+                                    super::MathActionPass::Converted(None, _) => continue,
+                                };
+                                kept[slot] += 1;
+                                let joined =
+                                    joins.map_position(span.start)..joins.map_position(span.end);
+                                assert_eq!(
+                                    untouchable(joins.text(), &joined),
+                                    untouchable(&text, &span),
+                                    "{text:?} -> {:?}",
+                                    joins.text()
+                                );
+                                let shown =
+                                    pass.map_position(span.start)..pass.map_position(span.end);
+                                assert_eq!(
+                                    untouchable(pass.text(), &shown),
+                                    untouchable(&text, &span),
+                                    "{text:?} -> {:?}",
+                                    pass.text()
+                                );
+                                let alone =
+                                    convert_latex_math_delimiters(&snapshot(&text), None).unwrap();
+                                let (alone_text, around) = match &alone {
+                                    Some(alone) => (
+                                        alone.text(),
+                                        alone.map_position(span.start)
+                                            ..alone.map_position(span.end),
+                                    ),
+                                    None => (text.as_str(), span.clone()),
+                                };
+                                assert_eq!(
+                                    (&pass.text()[..shown.start], &pass.text()[shown.end..]),
+                                    (&alone_text[..around.start], &alone_text[around.end..]),
+                                    "{text:?} -> {:?}",
+                                    pass.text()
+                                );
+                                if prefix.is_empty() {
+                                    // Selecting just the formula keeps the same join.
+                                    let scoped =
+                                        run_math_action(&snapshot(&text), Some(span.clone()))
+                                            .unwrap();
+                                    let Some(
+                                        scoped @ (super::MathActionPass::Joined(_)
+                                        | super::MathActionPass::Converted(Some(_), _)),
+                                    ) = scoped
+                                    else {
+                                        panic!("{text:?} {span:?}: {scoped:?}");
+                                    };
+                                    kept_in_scope += 1;
+                                    let shown = scoped.map_position(span.start)
+                                        ..scoped.map_position(span.end);
+                                    assert_eq!(
+                                        (
+                                            &scoped.text()[..shown.start],
+                                            &scoped.text()[shown.end..]
+                                        ),
+                                        (&text[..span.start], &text[span.end..]),
+                                        "{text:?} -> {:?}",
+                                        scoped.text()
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Every container shape keeps joins, so none is checked only vacuously, except two
+        // kinds. Quotes whose `=` line keeps its `>`: `> =` is not a bare `=`, so step 1 never
+        // joins there. And task items whose `=` line is indented: the Setext heading leaves
+        // `[ ] ` as text, the joined item is a task with a checkbox, so the join would change
+        // the item and is dropped.
+        let never = [1, 3, 10, 12, 13, 15];
+        assert!(never.iter().all(|&slot| kept[slot] == 0), "{kept:?}");
+        assert!(
+            (0..kept.len())
+                .filter(|slot| !never.contains(slot))
+                .all(|slot| kept[slot] > 500),
+            "{kept:?}"
+        );
+        assert!(kept_in_scope > 1_000, "{kept_in_scope}");
     }
 }

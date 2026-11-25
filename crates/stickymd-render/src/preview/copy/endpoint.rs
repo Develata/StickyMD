@@ -187,17 +187,6 @@ impl CopyMap {
     ) -> Result<Endpoint, PreviewCopyError> {
         let block = self.block_source(owner);
         let leaf_index = u32::try_from(leaf).map_err(|_| PreviewCopyError::Unmapped)?;
-        let edge = |at| Endpoint::AtBlockEdge {
-            at,
-            leaf: leaf_index,
-        };
-        if let Some(lines) = block.and_then(|range| self.outline.shifted_lines(range)) {
-            // Comrak's inline positions in this block may name other text: whole lines (rule 6).
-            return Ok(edge(match side {
-                Side::Start => lines.start,
-                Side::End => lines.end,
-            }));
-        }
         let byte = match side {
             Side::Start => boundary,
             Side::End => boundary - 1,

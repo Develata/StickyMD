@@ -57,7 +57,9 @@ pub use selection::{PreviewRect, PreviewSelection, PreviewTextBox, PreviewTextIn
 pub use semantic_conversion::{
     MathDelimiterConversion, SemanticConversionError, convert_latex_math_delimiters,
 };
+pub(crate) use semantic_conversion::{
+    convert_parsed_latex_math_delimiters, trimmed_math_literal, validate_scope,
+};
 use source_map::SourceMap;
-pub(crate) use source_map::inlines_shifted;
 
 pub use horizontal::{PreviewBlockId, PreviewHorizontalOffsets, PreviewHorizontalTarget};

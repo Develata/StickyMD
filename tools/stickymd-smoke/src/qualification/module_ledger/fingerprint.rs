@@ -522,6 +522,10 @@ const FEATURE_SOURCES: &[(&str, u64)] = &[
         "crates/stickymd-render/src/math_action.rs",
         PREVIEW | EDITOR | MATH | IMAGES | EXPORT,
     ),
+    (
+        "crates/stickymd-render/src/math_action/",
+        PREVIEW | EDITOR | MATH | IMAGES | EXPORT,
+    ),
     // Image paste staging and local image paths; the storage itself runs every session.
     (
         "apps/stickymd-win/src/assets/",

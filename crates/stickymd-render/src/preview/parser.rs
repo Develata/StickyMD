@@ -10,7 +10,6 @@ use comrak::{Arena, Options, parse_document};
 use stickymd_core::DocumentSnapshot;
 use thiserror::Error;
 
-use super::source_map::{TableCellSourceMap, shifted_block_spans};
 use super::{
     BlockNode, CodeBlockNode, ImageKind, InlineNode, LinkKind, ListItem, ListNode, MathNode,
     OwnedDocumentTree, SourceMap, SourceRange, TableAlignment, TableCell, TableNode, TableRow,
@@ -78,17 +77,17 @@ impl PreviewParser {
         let root = parse_document(&arena, &snapshot.text, &markdown_options());
         let comrak_parse = parse_started.elapsed();
         let conversion_started = Instant::now();
-        let (blocks, node_count, shifted_blocks) = {
+        let (blocks, node_count) = {
             let source_map = SourceMap::new(&snapshot.text);
-            let shifted_blocks = shifted_block_spans(root, &snapshot.text, &source_map);
             let mut context = ConvertContext {
                 source: &snapshot.text,
                 source_map: &source_map,
                 node_count: 0,
-                table_cell_map: None,
+                pipes_unescaped: false,
+                first_isolated_cr: first_isolated_cr(&snapshot.text),
             };
             let blocks = context.convert_blocks(root, 0)?;
-            (blocks, context.node_count, shifted_blocks)
+            (blocks, context.node_count)
         };
         let owned_conversion = conversion_started.elapsed();
 
@@ -98,7 +97,6 @@ impl PreviewParser {
                 source: Arc::clone(&snapshot.text),
                 blocks,
                 node_count,
-                shifted_blocks,
             },
             PreviewParseMetrics {
                 comrak_parse,
@@ -112,7 +110,11 @@ struct ConvertContext<'a> {
     source: &'a str,
     source_map: &'a SourceMap,
     node_count: usize,
-    table_cell_map: Option<TableCellSourceMap>,
+    /// Set while the inlines of a table cell, or of the paragraph Comrak splits off above a
+    /// table, convert: Comrak removed the backslash of each `\|` there (`escaped_pipe_text_range`).
+    pipes_unescaped: bool,
+    /// The byte of the first `\r` that no `\n` follows, or the source length.
+    first_isolated_cr: usize,
 }
 
 impl ConvertContext<'_> {
@@ -137,30 +139,35 @@ impl ConvertContext<'_> {
     }
 
     fn source_range<'arena>(&self, node: &'arena AstNode<'arena>) -> Option<SourceRange> {
-        let mut position = node.data.borrow().sourcepos;
-        if let Some(map) = &self.table_cell_map {
-            position = map.restore(position)?;
-        }
-        self.source_map.range(self.source, position)
+        self.source_map
+            .range(self.source, node.data.borrow().sourcepos)
     }
 
-    /// Comrak 0.59 can hand over a list item whose end column is 0, for example an item whose last
-    /// child is a nested list followed by a blank line (`2:1-4:0` for the second item of
-    /// `- one\n- two\n  - deep\n\n1. x`), even though it repairs zero end columns of list
-    /// descendants (`fix_zero_end_columns`). Such an item ends where its last child block ends,
-    /// which is what that repair assigns (`deepest_last_end`).
-    fn zero_end_item_range<'arena>(
+    /// In a table cell, and in the paragraph Comrak splits off above a table, Comrak drops the
+    /// backslash of `\|` from the text, and a text node that starts with such a pipe (at the
+    /// cell's start, or after emphasis, a link or code) is reported from the `|`, leaving the
+    /// backslash outside every node. The range is widened
+    /// by that one byte, so the text no longer reads as identical to its source and a copy
+    /// that starts there keeps the escape (plan 06 #preview-copy-semantics rule 6). A pipe a
+    /// backslash escapes is always text: `\\|` ends the cell instead. Elsewhere the range is
+    /// Comrak's. Past the first isolated `\r` the line index disagrees with Comrak's lines
+    /// (`SourceMap`), so no range there is widened. O(1).
+    fn escaped_pipe_text_range(
         &self,
-        item: &'arena AstNode<'arena>,
-        blocks: &[BlockNode],
+        literal: &str,
+        range: Option<SourceRange>,
     ) -> Option<SourceRange> {
-        let mut position = item.data.borrow().sourcepos;
-        if position.end.column != 0 {
-            return None;
-        }
-        position.end = position.start;
-        let start = self.source_map.range(self.source, position)?.start;
-        SourceRange::new(start, blocks.last()?.source_range()?.end)
+        let range = range?;
+        let widened = range.start.checked_sub(1).and_then(|start| {
+            (self.pipes_unescaped
+                && range.start < self.first_isolated_cr
+                && literal.starts_with('|')
+                && self.source.as_bytes().get(start) == Some(&b'\\')
+                && self.source.as_bytes().get(range.start) == Some(&b'|'))
+            .then(|| SourceRange::new(start, range.end))
+            .flatten()
+        });
+        Some(widened.unwrap_or(range))
     }
 
     fn convert_blocks<'arena>(
@@ -194,8 +201,20 @@ impl ConvertContext<'_> {
                     self.touch(depth + 1)?;
                     output.push(BlockNode::DisplayMath(self.math_node(only, math)));
                 } else {
+                    // Comrak also unescapes the pipes of the paragraph it splits off above a
+                    // table's header row: that table starts on the very next line. Comrak's own
+                    // line numbers say so even past an isolated `\r`, where the byte ranges of
+                    // `SourceMap` do not hold.
+                    let last_line = node.data.borrow().sourcepos.end.line;
+                    self.pipes_unescaped = node.next_sibling().is_some_and(|next| {
+                        let next = next.data.borrow();
+                        matches!(next.value, NodeValue::Table(_))
+                            && next.sourcepos.start.line == last_line + 1
+                    });
+                    let content = self.convert_inlines(node, depth);
+                    self.pipes_unescaped = false;
                     output.push(BlockNode::Paragraph {
-                        content: self.convert_inlines(node, depth)?,
+                        content: content?,
                         source_range,
                     });
                 }
@@ -219,9 +238,7 @@ impl ConvertContext<'_> {
                         _ => None,
                     };
                     let blocks = self.convert_blocks(item, depth + 1)?;
-                    let source_range = self
-                        .source_range(item)
-                        .or_else(|| self.zero_end_item_range(item, &blocks));
+                    let source_range = self.source_range(item);
                     items.push(ListItem {
                         checked,
                         blocks,
@@ -247,7 +264,7 @@ impl ConvertContext<'_> {
                 literal: html.literal,
                 source_range,
             }),
-            NodeValue::ThematicBreak => output.push(BlockNode::ThematicBreak { source_range }),
+            NodeValue::ThematicBreak(_) => output.push(BlockNode::ThematicBreak { source_range }),
             NodeValue::Table(table) => {
                 let alignments = table
                     .alignments
@@ -258,19 +275,17 @@ impl ConvertContext<'_> {
                 let mut rows = Vec::new();
                 for row in node.children() {
                     self.touch(depth + 1)?;
-                    let header = matches!(row.data.borrow().value, NodeValue::TableRow(true));
+                    let header =
+                        matches!(&row.data.borrow().value, NodeValue::TableRow(row) if row.header);
                     let mut cells = Vec::new();
                     for cell in row.children() {
                         self.touch(depth + 2)?;
-                        let source_range = self.source_range(cell);
-                        self.table_cell_map = self
-                            .source_map
-                            .table_cell(self.source, cell.data.borrow().sourcepos);
+                        self.pipes_unescaped = true;
                         let content = self.convert_inlines(cell, depth + 2);
-                        self.table_cell_map = None;
+                        self.pipes_unescaped = false;
                         cells.push(TableCell {
                             content: content?,
-                            source_range,
+                            source_range: self.source_range(cell),
                         });
                     }
                     rows.push(TableRow {
@@ -346,18 +361,18 @@ impl ConvertContext<'_> {
         let source_range = self.source_range(node);
         let inline = match value {
             NodeValue::Text(text) => InlineNode::Text {
+                source_range: self.escaped_pipe_text_range(&text, source_range),
                 literal: text.into_owned(),
-                source_range,
             },
-            NodeValue::Emph => InlineNode::Emphasis {
+            NodeValue::Emph(_) => InlineNode::Emphasis {
                 children: self.convert_inlines(node, depth)?,
                 source_range,
             },
-            NodeValue::Strong => InlineNode::Strong {
+            NodeValue::Strong(_) => InlineNode::Strong {
                 children: self.convert_inlines(node, depth)?,
                 source_range,
             },
-            NodeValue::Strikethrough => InlineNode::Strikethrough {
+            NodeValue::Strikethrough(_) => InlineNode::Strikethrough {
                 children: self.convert_inlines(node, depth)?,
                 source_range,
             },
@@ -458,6 +473,15 @@ impl ConvertContext<'_> {
         }
         Ok(text)
     }
+}
+
+/// The byte of the first `\r` that no `\n` follows, or `source.len()`. O(source bytes) with a
+/// SIMD search for `\r`, no allocation.
+fn first_isolated_cr(source: &str) -> usize {
+    let bytes = source.as_bytes();
+    memchr::memchr_iter(b'\r', bytes)
+        .find(|&index| bytes.get(index + 1) != Some(&b'\n'))
+        .unwrap_or(bytes.len())
 }
 
 fn table_alignment(alignment: ComrakAlignment) -> TableAlignment {
@@ -571,17 +595,12 @@ mod tests {
 
     use super::*;
 
-    /// The raw Comrak position of the second list item has end column 0, and the parser repairs
-    /// it to end with that item's last child block.
+    /// A list item whose last child is a nested list followed by a blank line ends with that
+    /// list. Comrak 0.59 reported its end column as 0 (`2:1-4:0` here), which the parser had to
+    /// repair; 1.0 and later report `2:1-3:8`.
     #[test]
-    fn a_list_item_comrak_ends_at_column_zero_ends_with_its_last_block() {
+    fn a_list_item_ending_in_a_nested_list_before_a_blank_line_ends_with_it() {
         let source = "- one\n- two\n  - deep\n\n1. x\n";
-        let arena = Arena::new();
-        let root = parse_document(&arena, source, &markdown_options());
-        let list = root.first_child().unwrap();
-        let second = list.children().nth(1).unwrap();
-        assert_eq!(second.data.borrow().sourcepos.end.column, 0);
-
         let tree = PreviewParser.parse(&snapshot(source)).unwrap();
         let BlockNode::List(list) = &tree.blocks[0] else {
             panic!("expected a list");
@@ -607,6 +626,7 @@ mod tests {
         assert!(options.extension.tasklist);
         assert!(options.extension.math_dollars);
         assert!(options.extension.math_latex);
+        assert!(!options.extension.math_dollars_block);
         assert!(!options.extension.footnotes);
         assert!(!options.extension.math_code);
         assert!(!options.extension.wikilinks_title_after_pipe);
@@ -831,6 +851,177 @@ mod tests {
                 .expect("bounded malformed input must remain representable");
             assert!(Arc::ptr_eq(&tree.source, &snapshot.text));
         }
+    }
+
+    /// What StickyMD stopped repairing when it moved to Comrak 1.2 (2026-11-24), on the three
+    /// inputs 0.59 got wrong: their exact ranges. Then, on 30,000 fixed-seed inputs, three
+    /// necessary conditions: no node below the document ends at column 0 (a list item did in
+    /// 0.59); no paragraph's or Setext heading's inlines all end before its last text line (0.59
+    /// shifted the inlines after link reference definitions up); a link's range ends in `)`,
+    /// `]` or an autolink's `>`, or is exactly its text for a bare autolink (0.59 cut short a
+    /// link whose `)` is on the next line). The conditions do not prove every range exact.
+    #[test]
+    fn comrak_positions_hold_what_the_removed_repairs_relied_on() {
+        let text_of = |source: &str, find: &dyn Fn(&NodeValue) -> bool| {
+            let arena = Arena::new();
+            let root = parse_document(&arena, source, &markdown_options());
+            let node = root
+                .descendants()
+                .find(|node| find(&node.data.borrow().value))
+                .expect("node");
+            let position = node.data.borrow().sourcepos;
+            SourceMap::new(source)
+                .range(source, position)
+                .and_then(|range| range.text(source))
+                .map(str::to_owned)
+        };
+        let source = "- one\n- two\n  - deep\n\n1. x\n";
+        let arena = Arena::new();
+        let root = parse_document(&arena, source, &markdown_options());
+        let second = root.first_child().unwrap().children().nth(1).unwrap();
+        let second = SourceMap::new(source).range(source, second.data.borrow().sourcepos);
+        assert_eq!(
+            second.and_then(|range| range.text(source)),
+            Some("- two\n  - deep")
+        );
+        assert_eq!(
+            text_of(
+                "[a]: http://x\n[b]: http://y\npara **bold** text",
+                &|value| { matches!(value, NodeValue::Strong(_)) }
+            )
+            .as_deref(),
+            Some("**bold**")
+        );
+        assert_eq!(
+            text_of("see [a](http://x\n) end", &|value| matches!(
+                value,
+                NodeValue::Link(_)
+            ))
+            .as_deref(),
+            Some("[a](http://x\n)")
+        );
+        let alphabet = [
+            '#', '*', '_', '~', '`', '$', '\\', '[', ']', '(', ')', '<', '>', '|', ':', '\n', '中',
+            'a', ' ', '-', '&', ';', '=', '!', 'h', 't', 'p', '/', '.', '"', '1', '\t', '@',
+        ];
+        let mut sources = vec![
+            "- one\n- two\n  - deep\n\n1. x\n".to_owned(),
+            "[a]: http://x\n[b]: http://y\npara **bold** text".to_owned(),
+            "see [a](http://x\n) end".to_owned(),
+        ];
+        let mut state = 0x5eed_1234_89ab_cdef_u64;
+        for case in 0..30_000 {
+            let mut source = String::new();
+            for _ in 0..case % 61 + 1 {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                source.push(alphabet[((state >> 33) as usize) % alphabet.len()]);
+            }
+            sources.push(source);
+        }
+        for source in sources {
+            let arena = Arena::new();
+            let root = parse_document(&arena, &source, &markdown_options());
+            let map = SourceMap::new(&source);
+            for node in root.descendants().skip(1) {
+                let data = node.data.borrow();
+                let position = data.sourcepos;
+                assert_ne!(position.end.column, 0, "{source:?}");
+                let text_end = match &data.value {
+                    NodeValue::Paragraph => Some(position.end.line),
+                    NodeValue::Heading(heading) if heading.setext => Some(position.end.line - 1),
+                    _ => None,
+                };
+                let last_inline = node
+                    .descendants()
+                    .skip(1)
+                    .map(|inline| inline.data.borrow().sourcepos.end.line)
+                    .max();
+                if let (Some(text_end), Some(last_inline)) = (text_end, last_inline) {
+                    assert!(last_inline >= text_end, "{source:?}");
+                }
+                if let NodeValue::Link(_) = &data.value {
+                    let text = map
+                        .range(&source, position)
+                        .and_then(|range| range.text(&source))
+                        .unwrap_or_else(|| panic!("{source:?}"));
+                    let label = node
+                        .first_child()
+                        .map(|child| match &child.data.borrow().value {
+                            NodeValue::Text(label) => label.to_string(),
+                            _ => String::new(),
+                        });
+                    assert!(
+                        text.ends_with([')', ']'])
+                            || (text.starts_with('<') && text.ends_with('>'))
+                            || label.as_deref() == Some(text),
+                        "{source:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// An escaped pipe that starts a text in the paragraph Comrak splits off above a table is
+    /// widened by its backslash, but not past the first isolated `\r`, where the line index
+    /// no longer agrees with Comrak's lines.
+    #[test]
+    fn escaped_pipe_ranges_widen_only_where_the_line_index_holds() {
+        // The source text of every text that starts with `|`, in paragraphs and table cells.
+        let starts = |source: &str| {
+            let tree = PreviewParser.parse(&snapshot(source)).unwrap();
+            let mut texts = Vec::new();
+            let mut take = |inlines: &[InlineNode]| {
+                for inline in inlines {
+                    if let InlineNode::Text {
+                        literal,
+                        source_range,
+                    } = inline
+                        && literal.starts_with('|')
+                    {
+                        texts.push(
+                            source_range
+                                .and_then(|range| range.text(source))
+                                .map(str::to_owned),
+                        );
+                    }
+                }
+            };
+            for block in &tree.blocks {
+                match block {
+                    BlockNode::Paragraph { content, .. } => take(content),
+                    BlockNode::Table(table) => {
+                        for cell in table.rows.iter().flat_map(|row| &row.cells) {
+                            take(&cell.content);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            texts
+        };
+        assert_eq!(starts("p\n\\|x\n| h |\n| - |"), [Some("\\|x".to_owned())]);
+        // A blank line before the table: Comrak did not split this paragraph off it, so the
+        // range stays Comrak's (an escape that starts a text omits its backslash everywhere).
+        assert_eq!(starts("p\n\\|x\n\n| h |\n| - |"), [Some("|x".to_owned())]);
+        // An isolated `\r` only after the table does not stop the paragraph above it.
+        assert_eq!(
+            starts("p\n\\|x\n| h |\n| - |\r| y |")[0],
+            Some("\\|x".to_owned())
+        );
+        assert_eq!(
+            starts("| h |\n| - |\n| \\|x |\n| \\|y |"),
+            [Some("\\|x".to_owned()), Some("\\|y".to_owned())]
+        );
+        // After an isolated `\r`, Comrak's line 6 is the index's line 5: the cell `\|x` is
+        // reported on the next row. Its range is wrong either way, but not widened into it.
+        assert!(
+            starts("p\rq\n\n| h |\n| - |\n| \\|x |\n| \\|y |")
+                .iter()
+                .flatten()
+                .all(|text| !text.starts_with('\\'))
+        );
     }
 
     #[test]

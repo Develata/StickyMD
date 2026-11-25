@@ -24,9 +24,7 @@ fn phase11b_equals_lines_join_chains_and_preserve_other_bytes() {
             "$$\n甲🙂=乙\n$$",
         ),
         ("$$a\n=\nb\nc\n=\nd$$", "$$a=b\nc=d$$"),
-        ("$$a\n=\nb\n\nc\n=\nd$$", "$$a=b\n\nc=d$$"),
         ("$$a\n=\nb$$\n\n$$c\n=\nd$$", "$$a=b$$\n\n$$c=d$$"),
-        ("$$a\n=\n\nb\n=\nc$$", "$$a\n=\n\nb=c$$"),
         ("$$=\na\n=\nb\n=$$", "$$=\na=b\n=$$"),
         ("$$a\n=\nb$$\r\nTAIL\r\n", "$$a=b$$\r\nTAIL\r\n"),
         ("- $$a\n  =\n  b$$", "- $$a=b$$"),
@@ -282,17 +280,73 @@ fn phase11b_equals_lines_locate_misreported_multiline_formula_ends() {
     }
 }
 
+/// Comrak 1.2's escape parity (its math spec): `\\` no longer escapes the closer after it, so
+/// `$a\n\\$` closes at its `\\$`, `\(a\n\\)b\)` at its last `\)`, and `\(a\n\\\)` at its `\)`. The
+/// multiline closer is found the same way, so these inline formulas are located and the step
+/// still joins the display formula after them instead of failing closed.
+#[test]
+fn phase11b_equals_lines_locate_closers_after_escaped_backslashes() {
+    for formula in [
+        "$a\n\\\\$ b$",
+        "\\(a\n\\\\)b\\)",
+        "\\(a\n\\\\\\)",
+        "$a\n\\$\\\\$",
+    ] {
+        assert_conversion(
+            &format!("{formula}\n\n\\[x\n=\ny\\]"),
+            &format!("{formula}\n\n\\[x=y\\]"),
+        );
+    }
+}
+
+/// The located formulas themselves: each multiline closer is the first unescaped one on the
+/// end line, `$$` included (`\$$` does not close, `\\$$` does).
+#[test]
+fn phase11b_equals_lines_locate_each_closer_kind() {
+    for (source, formula) in [
+        ("$a\n\\\\$ b$", "$a\n\\\\$"),
+        ("\\(a\n\\\\)b\\)", "\\(a\n\\\\)b\\)"),
+        ("\\(a\n\\\\\\)", "\\(a\n\\\\\\)"),
+        ("$$a\nb\\$$c$$", "$$a\nb\\$$c$$"),
+        ("$$a\nb\\\\$$ c$$", "$$a\nb\\\\$$"),
+    ] {
+        let formulas = super::scan_formulas(source).expect(source);
+        let outer: Vec<&str> = formulas
+            .iter()
+            .map(|found| &source[found.outer.clone()])
+            .collect();
+        assert_eq!(outer, [formula], "{source:?}");
+    }
+    assert_conversion("$$a\n=\nb\\$$c$$", "$$a=b\\$$c$$");
+}
+
+/// A paragraph that starts with link reference definitions: Comrak 1.0 and later report its
+/// inline positions in place (0.59 shifted them up by the removed lines), so its real formulas
+/// join, while a title that repeats one stays as written.
+#[test]
+fn phase11b_equals_lines_join_formulas_after_reference_definitions() {
+    for (source, expected) in [
+        (
+            "[x]: u \"\\(a\n=\nb\\)\"\n12345678$$c\n=\nd$$",
+            "[x]: u \"\\(a\n=\nb\\)\"\n12345678$$c=d$$",
+        ),
+        (
+            "[x]: u \"a\n=\nb$\"\n1234567890123$c\n=\nd$",
+            "[x]: u \"a\n=\nb$\"\n1234567890123$c=d$",
+        ),
+        (
+            "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
+            "[x]: u \"$a\n=\nb$\"\n12345678$a=b$",
+        ),
+        ("[x]: u\n\\[a\n=\nb\\]", "[x]: u\n\\[a=b\\]"),
+    ] {
+        assert_conversion(source, expected);
+    }
+}
+
 #[test]
 fn phase11b_equals_lines_reject_positions_that_disagree_with_the_formula() {
     for source in [
-        // A paragraph that starts with a link reference definition has every
-        // inline position Comrak 0.59 reports in it shifted up, so it is left
-        // alone whole: its title is never joined, even when it repeats the
-        // real formula, and its real formulas wait for a sound position.
-        "[x]: u \"\\(a\n=\nb\\)\"\n12345678$$c\n=\nd$$",
-        "[x]: u \"a\n=\nb$\"\n1234567890123$c\n=\nd$",
-        "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
-        "[x]: u\n\\[a\n=\nb\\]",
         // Lazy continuation lines put the quote marker inside the range.
         "> $a\n=\n> b$",
         "> \\(a\n=\n> b\\)",
@@ -321,21 +375,27 @@ fn phase11b_equals_lines_reject_positions_that_disagree_with_the_formula() {
             "{source:?}"
         );
     }
-    // An empty block quote or list item inside a `$$` pair is markup, not a
-    // detached definition, so the pair still joins.
-    for marker in [">", "-", "1.", "> -", "- >", "- -", "1. >", "> - >", ">>"] {
+    // A `$$` pair across blank lines is not one formula for Comrak (USER
+    // 2026-11-25: a formula is what Comrak finds with Setext off), so nothing
+    // in it joins, an empty block quote or list item between them or not.
+    for marker in [
+        "", ">", "-", "1.", "> -", "- >", "- -", "1. >", "> - >", ">>",
+    ] {
         for newline in ["\n", "\r\n"] {
             let source = format!(
                 "[x]: u{newline}{newline}$$a{newline}={newline}b{newline}{newline}{marker}{newline}{newline}c$$"
             );
-            let expected = format!(
-                "[x]: u{newline}{newline}$$a=b{newline}{newline}{marker}{newline}{newline}c$$"
+            assert!(
+                join_math_equals_lines(&source, None).is_none(),
+                "{source:?}"
             );
-            assert_conversion(&source, &expected);
         }
     }
-    // A link whose destination and title span lines also ends early in
-    // Comrak's report; without any `]:` no definition can have shifted it.
+    for source in ["$$a\n=\nb\n\nc\n=\nd$$", "$$a\n=\n\nb\n=\nc$$"] {
+        assert!(join_math_equals_lines(source, None).is_none(), "{source:?}");
+    }
+    // A paragraph that ends in a link whose destination and title span lines
+    // joins like any other.
     assert_conversion("\\(a\n=\nb\\)\n[x](u\n\"t\")", "\\(a=b\\)\n[x](u\n\"t\")");
     // Deeply nested quotes are walked once, with no per-node ancestor scan.
     let deep = format!("{}\\[a\n=\nb\\]", "> ".repeat(20_000));
@@ -356,4 +416,40 @@ fn phase11b_equals_lines_leave_tables_whole() {
         "| \\(x\\|y\\) | `b\\|c` |\n| --- | --- |\n\n\\[x\n=\ny\\]",
         "| \\(x\\|y\\) | `b\\|c` |\n| --- | --- |\n\n\\[x=y\\]",
     );
+}
+
+/// `joined_equals` names the `=` of every joined line in the joined text.
+#[test]
+fn phase11b_equals_lines_name_each_joined_equals_in_the_result() {
+    let source = "$$\na \n =\n b\n=\nc$$ x \\[d\n=\ne\\]";
+    let conversion = join_math_equals_lines(source, None).unwrap();
+    let text = conversion.text();
+    let equals: Vec<_> = conversion.joined_equals().collect();
+    assert_eq!(text, "$$\na=b=c$$ x \\[d=e\\]");
+    assert_eq!(equals.len(), conversion.joined_lines());
+    assert!(equals.iter().all(|&at| text.as_bytes()[at] == b'='));
+    assert!(equals.windows(2).all(|pair| pair[0] < pair[1]));
+}
+/// `forward_position_map` gives `map_position`'s answer for every position, mapped in order,
+/// and still after a step back.
+#[test]
+fn phase11b_equals_lines_forward_position_map_matches_map_position() {
+    let source = "$$\na \n =\n b\n=\nc$$ x \\[d\n=\ne\\] 甲\n\\(f\n  =\ng\\)";
+    let conversion = join_math_equals_lines(source, None).unwrap();
+    assert_eq!(conversion.joined_lines(), 4);
+    let mut map = conversion.forward_position_map();
+    for position in 0..=source.len() {
+        assert_eq!(
+            map(position),
+            conversion.map_position(position),
+            "{position}"
+        );
+    }
+    for position in [3, source.len(), 0, 9, 9, 40] {
+        assert_eq!(
+            map(position),
+            conversion.map_position(position),
+            "{position}"
+        );
+    }
 }

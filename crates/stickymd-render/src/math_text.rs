@@ -2,16 +2,18 @@
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#semantic-math-delimiter-conversion
 //!
-//! A stopgap until Comrak parses display math as blocks (kivikakk/comrak#880).
-//! The `$` action runs it before the delimiter conversion, so a lone `=` line
-//! can no longer turn the line above into a Setext heading and hide the formula
+//! Written as a stopgap for kivikakk/comrak#880 and kept after it: Comrak 1.0's
+//! opt-in block math (`math_dollars_block`, off in StickyMD) only covers `$$`
+//! fence lines, while `\[...\]`, `$$a...b$$` and multiline inline formulas
+//! still lose a lone `=` line to a Setext heading. The `$` action runs it
+//! before the delimiter conversion, so that line can no longer hide the formula
 //! from that conversion. It has one caller and no dependency on the converter,
 //! so it can be removed on its own.
 
 use std::ops::Range;
 
 use comrak::arena_tree::NodeEdge;
-use comrak::nodes::{AstNode, NodeMath, NodeValue, Sourcepos};
+use comrak::nodes::{NodeMath, NodeValue, Sourcepos};
 use comrak::{Arena, parse_document};
 
 /// A pure text projection; callers own the edit transaction and selection.
@@ -19,6 +21,9 @@ use comrak::{Arena, parse_document};
 pub struct EqualsLineConversion {
     text: String,
     removed: Vec<Range<usize>>,
+    /// The source of each formula that had a line joined, delimiters included, in the input
+    /// and in document order. Comrak's formulas do not overlap.
+    formulas: Vec<Range<usize>>,
 }
 
 impl EqualsLineConversion {
@@ -29,12 +34,87 @@ impl EqualsLineConversion {
         self.removed.len() / 2
     }
 
+    /// The position in `text()` of the `=` of each joined line, in order. Invariant:
+    /// `removed` is sorted and holds each join as two adjacent ranges, the one that ends at its
+    /// `=` and the one that starts after it. So an `=` moves left by every byte removed before
+    /// it: the earlier pairs and its own first range. One pass, O(joins).
+    pub fn joined_equals(&self) -> impl Iterator<Item = usize> + '_ {
+        let mut removed_before = 0;
+        self.removed.chunks_exact(2).map(move |join| {
+            let (before, after) = (&join[0], &join[1]);
+            let equal = before.end - removed_before - before.len();
+            removed_before += before.len() + after.len();
+            equal
+        })
+    }
+
+    /// Each joined line in the input, in order: the last byte of the line above it, its `=`,
+    /// and the first byte of the line below it. Same invariant as `joined_equals`; the lines
+    /// above and below hold text, so both bytes exist. O(joins).
+    pub fn joins(&self) -> impl Iterator<Item = [usize; 3]> + '_ {
+        self.removed
+            .chunks_exact(2)
+            .map(|join| [join[0].start - 1, join[0].end, join[1].end])
+    }
+
+    /// The formulas that had a line joined, in the input (see `formulas`).
+    pub fn joined_formulas(&self) -> &[Range<usize>] {
+        &self.formulas
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }
 
     pub fn into_text(self) -> String {
         self.text
+    }
+
+    /// The inverse of `map_position` for positions of the joined text asked in non-decreasing
+    /// order, none of them at a join (each removed range is passed once). A formula step 2
+    /// makes of single-`$` text lies outside every joined formula, so its ends qualify.
+    pub(crate) fn forward_unmap(&self) -> impl FnMut(usize) -> usize + '_ {
+        let mut next = 0;
+        let mut shift = 0;
+        move |position| {
+            // Invariant: `shift` is the length of `removed[..next]`, each of which the joined
+            // text holds at or before `position`.
+            while let Some(range) = self.removed.get(next)
+                && range.start - shift <= position
+            {
+                shift += range.len();
+                next += 1;
+            }
+            position + shift
+        }
+    }
+
+    /// `map_position` for a caller that maps positions in non-decreasing order, as a walk over
+    /// a document does: the removed ranges are passed once, so each call is amortized O(1)
+    /// instead of O(joins). A position below the previous one falls back to `map_position`,
+    /// so the result is always the same.
+    pub fn forward_position_map(&self) -> impl FnMut(usize) -> usize + '_ {
+        let mut next = 0;
+        let mut shift = 0;
+        let mut last = 0;
+        move |position| {
+            if position < last {
+                return self.map_position(position);
+            }
+            last = position;
+            // Invariant: `shift` is the length of `removed[..next]`, every range of which ends at
+            // or before `position`.
+            while let Some(range) = self.removed.get(next)
+                && range.end <= position
+            {
+                shift += range.len();
+                next += 1;
+            }
+            match self.removed.get(next) {
+                Some(range) if range.start < position => range.start - shift,
+                _ => position - shift,
+            }
+        }
     }
 
     /// Retained bytes keep their position relative to each other; positions
@@ -54,10 +134,11 @@ impl EqualsLineConversion {
     }
 }
 
-/// Joins bare equals lines inside formulas: complete, unescaped `$$` pairs,
-/// and the `\[...\]`, `\(...\)` and `$...$` formulas Comrak finds with Setext
-/// off. A scope must contain the entire formula. Invalid scopes/source maps,
-/// protected Markdown, structured TeX, overlapping joins and no matches all
+/// Joins bare equals lines inside formulas: the `$$...$$`, `\[...\]`,
+/// `\(...\)` and `$...$` formulas Comrak finds with Setext off. Comrak never
+/// finds one in code, HTML or a link reference definition, so nothing else
+/// needs protecting. A scope must contain the entire formula. Invalid
+/// scopes/source maps, structured TeX, overlapping joins and no matches all
 /// fail closed as None. This function neither converts delimiters nor changes
 /// preview semantics.
 pub fn join_math_equals_lines(
@@ -72,22 +153,25 @@ pub fn join_math_equals_lines(
     {
         return None;
     }
-    let scan = scan_formulas(source)?;
     let mut removed = Vec::new();
-    collect_dollar_pairs(source, &scan.protected, scope.as_ref(), &mut removed);
-    for formula in &scan.formulas {
+    let mut formulas = Vec::new();
+    for formula in scan_formulas(source)? {
         if scope.as_ref().is_none_or(|range| {
             formula.outer.start >= range.start && formula.outer.end <= range.end
         }) {
+            let before = removed.len();
             collect_joins(
                 &source[formula.body.clone()],
                 formula.body.start,
                 &mut removed,
             );
+            if removed.len() > before {
+                formulas.push(formula.outer);
+            }
         }
     }
-    // A `\[...\]` inside a `$$` pair yields the same joins twice; any other
-    // overlap means the two scans disagree, so the action fails closed.
+    // Comrak's formulas do not nest, so joins never overlap; if they did, the
+    // positions would disagree and the action fails closed.
     removed.sort_unstable_by_key(|range| (range.start, range.end));
     removed.dedup();
     if removed.is_empty() || removed.windows(2).any(|pair| pair[0].end > pair[1].start) {
@@ -100,236 +184,68 @@ pub fn join_math_equals_lines(
         cursor = range.end;
     }
     text.push_str(source.get(cursor..)?);
-    Some(EqualsLineConversion { text, removed })
+    Some(EqualsLineConversion {
+        text,
+        removed,
+        formulas,
+    })
 }
 
-/// The original display-dollar scan: complete, unescaped `$$` pairs, which may
-/// span blank lines. A pair that meets a protected range is left alone.
-fn collect_dollar_pairs(
-    source: &str,
-    protected: &[Range<usize>],
-    scope: Option<&Range<usize>>,
-    removed: &mut Vec<Range<usize>>,
-) {
-    let bytes = source.as_bytes();
-    let mut cursor = 0;
-    let mut protection = 0;
-    let mut open: Option<(usize, bool)> = None;
-    while cursor < bytes.len() {
-        if let Some(range) = protected.get(protection)
-            && cursor >= range.start
-        {
-            if let Some((_, blocked)) = &mut open {
-                *blocked = true;
-            }
-            cursor = cursor.max(range.end);
-            protection += 1;
-            continue;
-        }
-        match bytes[cursor] {
-            // Escaped dollars cannot become delimiters. Advancing
-            // by bytes is safe here: slices are taken only at ASCII markers.
-            b'\\' => cursor = (cursor + 2).min(bytes.len()),
-            b'$' => {
-                let start = cursor;
-                while cursor < bytes.len() && bytes[cursor] == b'$' {
-                    cursor += 1;
-                }
-                if cursor - start != 2 || (start > 0 && bytes[start - 1] == b'$') {
-                    continue;
-                }
-                if let Some((body_start, blocked)) = open.take() {
-                    if !blocked
-                        && scope.is_none_or(|range| {
-                            body_start - 2 >= range.start && cursor <= range.end
-                        })
-                    {
-                        collect_joins(&source[body_start..start], body_start, removed);
-                    }
-                } else {
-                    open = Some((cursor, false));
-                }
-            }
-            _ => cursor += 1,
-        }
-    }
-}
-
-struct FormulaScan {
-    /// Code, HTML, links, images, tables and inline math, sorted by start.
-    protected: Vec<Range<usize>>,
-    formulas: Vec<Formula>,
-}
-
-/// A `\[...\]`, `\(...\)` or `$...$` formula: `outer` includes the delimiters,
-/// `body` excludes them.
+/// A `$$...$$`, `\[...\]`, `\(...\)` or `$...$` formula: `outer` includes the
+/// delimiters, `body` excludes them.
 struct Formula {
     outer: Range<usize>,
     body: Range<usize>,
 }
 
-/// Comrak owns Markdown exclusions and formula recognition, in the Preview's
-/// dialect. The local Setext option only keeps equals lines from splitting
-/// multiline code/math during this explicit text action; PreviewParser and
-/// delimiter conversion are not involved.
-fn scan_formulas(source: &str) -> Option<FormulaScan> {
+/// Comrak owns formula recognition, in the Preview's dialect. The local Setext
+/// option only keeps equals lines from splitting multiline math during this
+/// explicit text action; PreviewParser and delimiter conversion are not
+/// involved. Formulas in tables (one line each, so never joined) and in link
+/// or image text are left out, as is a `$...$` touching another `$`; a formula
+/// whose place does not check out (`locate`) is skipped.
+fn scan_formulas(source: &str) -> Option<Vec<Formula>> {
     let arena = Arena::new();
     let mut options = crate::preview::markdown_options();
     options.parse.ignore_setext = true;
     let root = parse_document(&arena, source, &options);
     let lines = Lines::new(source);
-    // Only a source holding `]:` can contain a link reference definition.
-    let may_shift = source.contains("]:");
-    let mut protected = Vec::new();
     let mut formulas = Vec::new();
     // Container state is kept on entry and exit, so no node walks its
-    // ancestors. Tables do not nest and paragraphs do not nest.
+    // ancestors. Tables do not nest.
     let mut in_table = false;
     let mut in_links = 0_usize;
-    let mut shifted: Option<&AstNode<'_>> = None;
     for edge in root.traverse() {
         let node = match edge {
             NodeEdge::End(node) => {
                 let value = &node.data.borrow().value;
-                if let Some(paragraph) = shifted {
-                    if std::ptr::eq(paragraph, node) {
-                        shifted = None;
-                    }
-                } else if in_table {
+                if in_table {
                     in_table = !matches!(value, NodeValue::Table(_));
                 } else if matches!(value, NodeValue::Link(_) | NodeValue::Image(_)) {
                     in_links = in_links.saturating_sub(1);
                 }
                 continue;
             }
-            NodeEdge::Start(_) if shifted.is_some() || in_table => continue,
+            NodeEdge::Start(_) if in_table => continue,
             NodeEdge::Start(node) => node,
         };
         let data = node.data.borrow();
         match &data.value {
-            // A table is protected whole, by its lines: formulas in cells sit on
-            // one line and never join, and Comrak shifts cell inline columns
-            // around `\|`, so nothing inside a table is located by column.
-            NodeValue::Table(_) => {
-                protected.push(lines.whole(data.sourcepos)?);
-                in_table = true;
-            }
-            // Its lines are right, its inline positions are not (see
-            // `inlines_shifted`), so it is protected whole and left alone.
-            NodeValue::Paragraph if may_shift && crate::preview::inlines_shifted(node) => {
-                protected.push(lines.whole(data.sourcepos)?);
-                shifted = Some(node);
-            }
-            NodeValue::Code(_)
-            | NodeValue::CodeBlock(_)
-            | NodeValue::HtmlInline(_)
-            | NodeValue::HtmlBlock(_) => {
-                protected.push(source_range(source, &lines, data.sourcepos)?)
-            }
-            NodeValue::Link(_) | NodeValue::Image(_) => {
-                protected.push(source_range(source, &lines, data.sourcepos)?);
-                in_links += 1;
-            }
-            NodeValue::Math(math) => match locate(source, &lines, data.sourcepos, math) {
-                Some(Located::DollarPair) => {}
-                Some(Located::Formula { open, close, outer }) => {
-                    if !math.display_math {
-                        protected.push(outer.clone());
-                    }
-                    if in_links == 0 && !(open == "$" && touches_dollar(source, &outer)) {
-                        let body = outer.start + open.len()..outer.end - close.len();
-                        formulas.push(Formula { outer, body });
-                    }
+            NodeValue::Table(_) => in_table = true,
+            NodeValue::Link(_) | NodeValue::Image(_) => in_links += 1,
+            NodeValue::Math(math) if in_links == 0 => {
+                if let Some(Located { open, close, outer }) =
+                    locate(source, &lines, data.sourcepos, math)
+                    && !(open == "$" && touches_dollar(source, &outer))
+                {
+                    let body = outer.start + open.len()..outer.end - close.len();
+                    formulas.push(Formula { outer, body });
                 }
-                // Inline math stays protected for the dollar-pair scan, as
-                // before, so an inline formula that cannot be located fails
-                // the whole step closed; a display one is only skipped.
-                None if !math.display_math => return None,
-                None => {}
-            },
+            }
             _ => {}
         }
     }
-    if may_shift {
-        protect_detached_lines(source, root, &lines, &mut protected);
-    }
-    protected.sort_unstable_by_key(|range| range.start);
-    Some(FormulaScan {
-        protected,
-        formulas,
-    })
-}
-
-/// Comrak detaches a paragraph that held only link reference definitions, so
-/// its lines, a multiline title included, belong to no node. With the lines of
-/// every leaf block marked, each line left over that carries text is protected
-/// whole, so the dollar-pair scan cannot join inside a definition title: any
-/// join needs a bare `=` line, and that line is never blank or bare markup.
-/// Lines of an empty block quote or list item (`>`, `-`, `1.`) are left alone.
-/// A block type not listed here leaves its lines protected, which fails closed.
-fn protect_detached_lines<'a>(
-    source: &str,
-    root: &'a AstNode<'a>,
-    lines: &Lines,
-    protected: &mut Vec<Range<usize>>,
-) {
-    let count = lines.starts.len();
-    let mut covered = vec![false; count + 1];
-    for node in root.descendants() {
-        let data = node.data.borrow();
-        if matches!(
-            data.value,
-            NodeValue::Paragraph
-                | NodeValue::Heading(_)
-                | NodeValue::CodeBlock(_)
-                | NodeValue::HtmlBlock(_)
-                | NodeValue::ThematicBreak
-                | NodeValue::Table(_)
-        ) {
-            let first = data.sourcepos.start.line.max(1);
-            let last = data.sourcepos.end.line.min(count);
-            if let Some(lines) = covered.get_mut(first..=last) {
-                lines.fill(true);
-            }
-        }
-    }
-    for (line, &covered) in covered.iter().enumerate().skip(1) {
-        if let (false, Some(start), Some(end)) = (covered, lines.start(line), lines.end(line))
-            && source
-                .get(start..end)
-                .is_some_and(|text| !markup_only(text))
-        {
-            protected.push(start..end);
-        }
-    }
-}
-
-/// A line with nothing but nested container markup and spaces: block quote
-/// `>`s and list markers (`-`, `*`, `+`, or one to nine digits then `.` or
-/// `)`, each followed by a space or the line end) in any order, as in `- >`.
-/// It never holds a bare `=`, so leaving it unprotected cannot open a join
-/// inside a definition title.
-fn markup_only(line: &str) -> bool {
-    let mut rest = line.trim_start();
-    while !rest.is_empty() {
-        let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-        let (width, list) = if rest.starts_with('>') {
-            (1, false)
-        } else if rest.starts_with(['-', '*', '+']) {
-            (1, true)
-        } else if (1..=9).contains(&digits) && rest[digits..].starts_with(['.', ')']) {
-            (digits + 1, true)
-        } else {
-            return false;
-        };
-        let after = &rest[width..];
-        // A list marker must be followed by a space or end the line.
-        if list && !(after.is_empty() || after.starts_with(char::is_whitespace)) {
-            return false;
-        }
-        rest = after.trim_start();
-    }
-    true
+    Some(formulas)
 }
 
 /// Line starts of the scanned source; Comrak lines and columns are 1-based
@@ -358,32 +274,23 @@ impl Lines {
         self.start(line)?;
         Some(self.starts.get(line).map_or(self.len, |next| next - 1))
     }
-
-    /// Whole lines from a block's first line to its last.
-    fn whole(&self, position: Sourcepos) -> Option<Range<usize>> {
-        Some(self.start(position.start.line)?..self.end(position.end.line)?)
-    }
 }
 
 /// Where a math node sits in the source.
-enum Located {
-    /// A `$$` node: the dollar-pair scan owns it, so its end is never read.
-    DollarPair,
-    /// A `\[...\]`, `\(...\)` or `$...$` node; `outer` includes the delimiters.
-    Formula {
-        open: &'static str,
-        close: &'static str,
-        outer: Range<usize>,
-    },
+struct Located {
+    open: &'static str,
+    close: &'static str,
+    /// The formula's source, delimiters included.
+    outer: Range<usize>,
 }
 
 /// Locates a math node and checks the place against the node itself. Comrak
 /// has misreported positions: before 0.56 the end column of an inline that
 /// spans lines and starts after its block's first line (kivikakk/comrak#855),
-/// and up to 0.59 every inline position in a paragraph that began with link
-/// reference definitions, whose removed lines it still counts (that paragraph
-/// is skipped earlier, but the checks stay as a guard). So the opener must
-/// sit on the reported start line and match the node's kind,
+/// and before 1.0 every inline position in a paragraph that began with link
+/// reference definitions, whose removed lines it still counted. The checks
+/// stay as a guard. So the opener must sit on the reported start line and
+/// match the node's kind,
 /// and the body must hold exactly the node's content apart from ASCII
 /// whitespace (Comrak normalizes only that). A misplaced range, or one that
 /// takes in a container marker such as `>`, fails these checks.
@@ -398,9 +305,6 @@ fn locate(source: &str, lines: &Lines, position: Sourcepos, math: &NodeMath) -> 
     if math.display_math != matches!(open, "$$" | "\\[") {
         return None;
     }
-    if open == "$$" {
-        return Some(Located::DollarPair);
-    }
     let end = formula_end(source, lines, position, close)?;
     let body = source.get(start.checked_add(open.len())?..end.checked_sub(close.len())?)?;
     let visible = |text: &str| {
@@ -408,7 +312,7 @@ fn locate(source: &str, lines: &Lines, position: Sourcepos, math: &NodeMath) -> 
             .filter(|byte| !byte.is_ascii_whitespace())
             .collect::<Vec<_>>()
     };
-    (visible(body) == visible(&math.literal)).then_some(Located::Formula {
+    (visible(body) == visible(&math.literal)).then_some(Located {
         open,
         close,
         outer: start..end,
@@ -417,25 +321,53 @@ fn locate(source: &str, lines: &Lines, position: Sourcepos, math: &NodeMath) -> 
 
 /// The exclusive end of a formula whose closer is `close`. A multiline end is
 /// taken from the end line, never from the column: the closer Comrak matched
-/// is the first `\)` or `\]`, or the first `$` not after a backslash, on that
-/// line, since none can occur earlier in the formula.
+/// is the first unescaped one on that line (`unescaped_closer_end`), since
+/// none can occur earlier in the formula.
 fn formula_end(source: &str, lines: &Lines, position: Sourcepos, close: &str) -> Option<usize> {
     let line_start = lines.start(position.end.line)?;
     let line_end = lines.end(position.end.line)?;
     let end = if position.start.line == position.end.line {
         line_start.checked_add(position.end.column)?
     } else {
-        let line = source.get(line_start..line_end)?;
-        let closer = if close == "$" {
-            line.bytes()
-                .enumerate()
-                .position(|(index, byte)| byte == b'$' && !line[..index].ends_with('\\'))?
-        } else {
-            line.find(close)?
-        };
-        line_start + closer + close.len()
+        line_start + unescaped_closer_end(source.get(line_start..line_end)?, close)?
     };
     (end <= line_end && source.get(..end)?.ends_with(close)).then_some(end)
+}
+
+/// The end of the first unescaped `close` (`$$`, `$`, `\)` or `\]`) in `line`.
+/// As in Comrak's math spec, a backslash escapes the byte after it unless it is
+/// itself escaped: `$` and `$$` close after an even run of backslashes, and
+/// `\)` or `\]` where its backslash ends an odd run, so `a\\$`, `a\$$b$$` and
+/// `\\)b\)` close at their last delimiter. The scan starts at the line start, which no escape
+/// crosses. Skipping the escaped byte may stop inside a multi-byte character;
+/// its continuation bytes are never ASCII, so the result is a char boundary.
+/// O(line bytes).
+fn unescaped_closer_end(line: &str, close: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    if close == "$$" {
+        let mut index = 0;
+        while index < bytes.len() {
+            match bytes[index] {
+                b'\\' => index += 2,
+                b'$' if bytes.get(index + 1) == Some(&b'$') => return Some(index + 2),
+                _ => index += 1,
+            }
+        }
+        return None;
+    }
+    let latex_close = close.as_bytes().get(1).copied();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if latex_close.is_some() && bytes.get(index + 1).copied() == latex_close => {
+                return Some(index + 2);
+            }
+            b'\\' => index += 2,
+            b'$' if close == "$" => return Some(index + 1),
+            _ => index += 1,
+        }
+    }
+    None
 }
 
 /// A `$...$` formula touching another `$` (as in `\$$a$$`) reads as a broken
@@ -447,17 +379,6 @@ fn touches_dollar(source: &str, outer: &Range<usize>) -> bool {
         || source
             .get(outer.end..)
             .is_none_or(|after| after.starts_with('$'))
-}
-
-fn source_range(source: &str, lines: &Lines, position: Sourcepos) -> Option<Range<usize>> {
-    let start = lines
-        .start(position.start.line)?
-        .checked_add(position.start.column.checked_sub(1)?)?;
-    let end = lines
-        .start(position.end.line)?
-        .checked_add(position.end.column)?;
-    source.get(start..end)?;
-    Some(start..end)
 }
 
 fn collect_joins(body: &str, offset: usize, removed: &mut Vec<Range<usize>>) {

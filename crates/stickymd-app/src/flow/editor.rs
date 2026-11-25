@@ -1040,29 +1040,93 @@ mod tests {
 
     #[test]
     fn phase11b_math_button_refuses_a_result_it_would_change_again() {
-        // `$$a…\[b\]`: the `$$` step 2 writes pairs with the unclosed one on
-        // the next click. `\( a…\(b\) c\)`: step 2 ends the outer formula at
-        // the inner closer and leaves `\(b$ c\)` for the next click.
-        for source in ["$$a\n=\nc \\[b\\]", "\\( a\n=\n\\(b\\) c\\)"] {
-            refuses(source);
+        // The checks on joins and the read-back of the final text (plan 07)
+        // now settle most such inputs: a fixed-seed search of 400,000 random
+        // token strings found two whose result still changes on the next
+        // pass. In this one step 2 converts `\(\(b\)` to `$\(b$`, and the next
+        // pass joins the `$$` pair that the trailing `$` then completes.
+        refuses("$$\\)`\n=\n\\)\\(\\(b\\)$");
+        // Refused before the sixth review and the read-back, final now. In the
+        // first, the join the next pass would make is dropped, since it would
+        // turn the formula `$$b$$` into text. In the second, the formula with
+        // Setext off ends at the inner closer; written in the standard form
+        // (`$a=\(b$`, without the space after the opener) it reads back as one
+        // formula, so the join is kept. The click commits, and a second click
+        // changes nothing.
+        for (source, converted) in [
+            ("$$a\n=\nc \\[b\\]", "$$a\n=\nc $$b$$"),
+            ("\\( a\n=\n\\(b\\) c\\)", "$a=\\(b$ c\\)"),
+            // Eighth review: the join is kept, while `$$a=b$$`, display math with another
+            // literal, is not written.
+            ("\\($a\n=\nb$\\)", "\\($a=b$\\)"),
+        ] {
+            let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+            edit(&mut coordinator, source);
+            let mut effects = Vec::new();
+            for timestamp_ms in [10, 11] {
+                effects.push(
+                    coordinator
+                        .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                            expected_generation: coordinator.view().generation,
+                            selection: Selection::caret(0),
+                            scope_to_selection: false,
+                            timestamp_ms,
+                        })
+                        .unwrap(),
+                );
+                assert_eq!(coordinator.view().text, converted, "{source:?}");
+            }
+            assert_ne!(effects[0], AppEffect::NoOp, "{source:?}");
+            assert_eq!(effects[1], AppEffect::NoOp, "{source:?}");
         }
     }
 
     #[test]
-    fn phase11b_math_button_leaves_paragraphs_shifted_by_reference_definitions() {
-        // Comrak 0.59 shifts every inline position in a paragraph that starts
-        // with a link reference definition; neither step may touch the title.
-        for source in [
-            "[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$",
-            "[x]: u \"\\(a\\)\"\n12345678\\(c\\)",
-            // A paragraph of definitions only: Comrak detaches it.
-            "[x]: u \"$$a\n=\nb$$\"\n\n[x]",
+    fn phase11b_math_button_leaves_reference_definition_titles() {
+        // Comrak 1.0 and later report the positions of a paragraph that starts
+        // with a link reference definition in place (0.59 shifted them up), so
+        // both steps reach its formulas and neither touches the title.
+        for (source, expected) in [
+            (
+                "[x]: u \"$a$\"\n12345678$a\n=\nb$",
+                "[x]: u \"$a$\"\n12345678$a=b$",
+            ),
+            (
+                "[x]: u \"\\(a\\)\"\n12345678\\(c\\)",
+                "[x]: u \"\\(a\\)\"\n12345678$c$",
+            ),
         ] {
-            refuses(source);
+            let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+            edit(&mut coordinator, source);
+            coordinator
+                .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                    expected_generation: coordinator.view().generation,
+                    selection: Selection::caret(0),
+                    scope_to_selection: false,
+                    timestamp_ms: 10,
+                })
+                .unwrap();
+            assert_eq!(coordinator.view().text, expected, "{source:?}");
         }
+        // A paragraph of definitions only: Comrak detaches it.
+        refuses("[x]: u \"$$a\n=\nb$$\"\n\n[x]");
+        // With an `=` line in the title, the Preview's dialect reads the first
+        // line as a Setext heading, not a definition, and its formula is
+        // `$"\n12345678$`. The `$a…b$` that step 1 reads with Setext off is no
+        // formula in the Preview's parse of the joined text, so the join is
+        // dropped (sixth review, 2026-11-25).
+        refuses("[x]: u \"$a\n=\nb$\"\n12345678$a\n=\nb$");
+        // After a Setext heading the definition is real, though step 1's Setext-off scan reads
+        // it as paragraph text: the Preview's parse of the joined text puts the joined `=`
+        // on a definition line, so step 1 is dropped (cross-model review, 2026-11-24).
+        refuses("[r]: /u\nHeading\n===\n[x]: /v \"$$a\n    =\nb$$\"\n\n[x]");
+        // The line below the joined `=` starts a definition, or the `$$` pair spans an ATX
+        // heading: the Preview's parse of the original text keeps them apart (third review).
+        refuses("[p]: /p\n$$a\n=\n[x]: /v \"b$$\"\n\n[x]");
+        refuses("[p]: /p\n$$a\n# H\n=\nb$$");
         // Only Setext parsing makes these definition paragraphs: step 1 still
-        // joins the `$$` pair, and step 2 leaves the title alone, also when a
-        // trailing inline's shifted end runs past its line.
+        // joins the `$$` pair, and step 2 leaves the title alone, with or
+        // without text after the formula.
         for tail in ["", " tail"] {
             let source = format!("foo\n=\n[x]: u \"\\(abc\\)\"\n12345678$$c\n=\nd$${tail}");
             let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
