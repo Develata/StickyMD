@@ -48,9 +48,11 @@ impl MathDelimiterConversion {
     }
 
     /// The indices of the rewrites whose formula `converted`, the Preview's parse of this
-    /// conversion's text, does not read back as itself: one math node at the rewritten range,
-    /// its literal (without the whitespace just inside) the rewritten body's, and display math
-    /// exactly when the new delimiters are `$$`. Linear in the nodes and the rewrites.
+    /// conversion's text, does not read back as itself (plan 07): one math node at the
+    /// rewritten range, display math exactly when the new delimiters are `$$`, and, for a
+    /// rewritten formula, its literal (without the whitespace just inside) the one Comrak read
+    /// before the rewrite. Single-`$` text was no formula, so its literal is not compared.
+    /// O(M log M + R log M) for M math nodes and R rewrites.
     pub(crate) fn failing_replacements(&self, converted: &OwnedDocumentTree) -> Vec<usize> {
         let mut maths = Vec::new();
         math_nodes(&converted.blocks, &mut maths);
@@ -61,15 +63,16 @@ impl MathDelimiterConversion {
             let start = shifted(replacement.range.start, shift);
             shift += replacement.byte_delta();
             let end = start + replacement.replacement.len();
-            let body = &replacement.replacement[replacement.new_open_len
-                ..replacement.replacement.len() - replacement.new_close_len];
             let reads = maths
                 .binary_search_by_key(&start, |(range, ..)| range.start)
                 .is_ok_and(|at| {
                     let (range, literal, display) = maths[at];
                     range.end == end
                         && display == (replacement.new_open_len == 2)
-                        && trimmed_math_literal(literal) == trimmed_math_literal(body)
+                        && replacement
+                            .expected
+                            .as_deref()
+                            .is_none_or(|expected| trimmed_math_literal(literal) == expected)
                 });
             if !reads {
                 failing.push(index);
@@ -104,7 +107,7 @@ impl MathDelimiterConversion {
     pub(crate) fn new_formulas(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.replacements
             .iter()
-            .filter(|replacement| replacement.new_formula)
+            .filter(|replacement| replacement.expected.is_none())
             .map(|replacement| replacement.range.as_range())
     }
 
@@ -158,8 +161,9 @@ impl MathDelimiterConversion {
 }
 
 /// One formula rewritten: its old range, the new text, the old and new delimiters' lengths,
-/// how many bytes of whitespace the rewrite dropped just inside each old delimiter, and
-/// whether the old text was single-`$` text rather than a Comrak formula.
+/// how many bytes of whitespace the rewrite dropped just inside each old delimiter, and the
+/// literal Comrak read before the rewrite, without that whitespace; None when the old text was
+/// single-`$` text rather than a Comrak formula.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DelimiterReplacement {
     range: SourceRange,
@@ -169,7 +173,7 @@ struct DelimiterReplacement {
     new_close_len: usize,
     lead: usize,
     trail: usize,
-    new_formula: bool,
+    expected: Option<String>,
 }
 
 impl DelimiterReplacement {
@@ -424,6 +428,12 @@ fn collect_math(
     if source.len() < 2 * old || range.end - range.start != source.len() {
         return;
     }
+    // A formula with nothing but whitespace in what Comrak read (quote prefixes and line
+    // breaks left out) is not rewritten, whatever its delimiters keep.
+    let expected = trimmed_math_literal(&math.literal);
+    if expected.is_empty() {
+        return;
+    }
     let body = &source[old..source.len() - old];
     let Some((lead, mut trail)) = math_body_trim(body, line_breaks) else {
         return;
@@ -451,7 +461,7 @@ fn collect_math(
         new_close_len: close.len(),
         lead,
         trail,
-        new_formula: false,
+        expected: Some(expected.to_owned()),
     });
 }
 
@@ -609,7 +619,6 @@ fn dollar_pair(
     let inner = &source[open + 1..close];
     let (lead, trail) = math_body_trim(inner, false)?;
     let content = &inner[lead..inner.len() - trail];
-    let bytes = source.as_bytes();
     let formula_like = content
         .bytes()
         .any(|byte| matches!(byte, b'\\' | b'^' | b'_' | b'{' | b'=' | b'+'))
@@ -619,8 +628,8 @@ fn dollar_pair(
     let ends_blank = content.ends_with([' ', '\t', '\u{3000}']);
     let accepted = (lead > 0 || trail > 0)
         && !ends_blank
-        && !content.starts_with(|c: char| c.is_ascii_digit())
-        && !bytes.get(close + 1).is_some_and(u8::is_ascii_digit)
+        && !content.starts_with(char::is_numeric)
+        && !source[close + 1..].starts_with(char::is_numeric)
         && formula_like;
     accepted.then(|| DelimiterReplacement {
         range: SourceRange {
@@ -633,7 +642,7 @@ fn dollar_pair(
         new_close_len: 1,
         lead,
         trail,
-        new_formula: true,
+        expected: None,
     })
 }
 
@@ -779,6 +788,9 @@ mod tests {
             ("\\(\\)", None),
             ("\\[ \\]", None),
             ("$$ $$", None),
+            // Nothing but line breaks, or a quote's prefixes, in what Comrak read.
+            ("\\[\n\\]", None),
+            ("> \\[\n> \\]", None),
             ("$$a$$", None),
             ("$$\na\n$$", None),
             ("$a$", None),
@@ -837,6 +849,11 @@ mod tests {
             ("$ *a* $", None),
             ("Cross $ a\nb $ line.", None),
             ("$ a b $", None),
+            // Full-width digits count as digits for the price rule.
+            ("$ \u{ff12}+\u{ff13} $", None),
+            ("$ x $\u{ff12}", None),
+            // A known false positive of rule b: one ASCII word.
+            ("Currency $ USD $ today.", Some("Currency $USD$ today.")),
             ("$ a\\ $", None),
             ("$  $", None),
             ("a $b$c d", None),
@@ -923,7 +940,7 @@ mod tests {
                 new_close_len: 1,
                 lead: 0,
                 trail: 0,
-                new_formula: false,
+                expected: None,
             },
             DelimiterReplacement {
                 range: SourceRange { start: 3, end: 7 },
@@ -933,7 +950,7 @@ mod tests {
                 new_close_len: 1,
                 lead: 0,
                 trail: 0,
-                new_formula: false,
+                expected: None,
             },
         ];
         assert_eq!(

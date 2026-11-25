@@ -1056,6 +1056,9 @@ mod tests {
         for (source, converted) in [
             ("$$a\n=\nc \\[b\\]", "$$a\n=\nc $$b$$"),
             ("\\( a\n=\n\\(b\\) c\\)", "$a=\\(b$ c\\)"),
+            // Eighth review: the join is kept, while `$$a=b$$`, display math with another
+            // literal, is not written.
+            ("\\($a\n=\nb$\\)", "\\($a=b$\\)"),
         ] {
             let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
             edit(&mut coordinator, source);

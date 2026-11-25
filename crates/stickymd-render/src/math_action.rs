@@ -173,12 +173,13 @@ fn settle(
         }) else {
             return Ok(None);
         };
-        if pass_reads_back(original, &final_tree, joins.as_ref(), &converted) {
-            return Ok(Some(MathActionPass::Converted(joins, converted)));
-        }
+        // Every rewrite must read back as itself, and the whole text as the original.
         let failing = converted.failing_replacements(&final_tree);
         if failing.is_empty() {
-            return Ok(None);
+            return Ok(
+                pass_reads_back(original, &final_tree, joins.as_ref(), &converted)
+                    .then_some(MathActionPass::Converted(joins, converted)),
+            );
         }
         match converted.without(base, &failing)? {
             Some(rest) => converted = rest,
@@ -577,6 +578,26 @@ mod tests {
             ("\\( a\\ \\) \\(c\\)", Some("\\( a\\ \\) $c$")),
             ("\\(a$b\\) \\(c\\)", Some("\\(a$b\\) $c$")),
             ("> \\(\n> a\n> \\) \\(c\\)", Some("> \\(\n> a\n> \\) $c$")),
+        ] {
+            assert_eq!(pass(text).as_deref(), rewritten, "{text:?}");
+        }
+        // Eighth review. Every rewrite must read back as itself even when the whole text reads
+        // alike: joined, `\($a=b$\)` would be written `$$a=b$$`, display math with another
+        // literal, so the join stays and the rewrite does not. A formula is judged by the
+        // literal Comrak read before the rewrite, so a quote's prefixes and a table's `\|` do not
+        // make a good one fail or a bad one pass, with or without a failing formula beside it.
+        for (text, rewritten) in [
+            ("\\($a\n=\nb$\\)", Some("\\($a=b$\\)")),
+            ("| $ x+\\|y $ |\n| --- |", Some("| $x+\\|y$ |\n| --- |")),
+            (
+                "| $ x+\\|y $ |\n| --- |\n\n\\(z\\)2",
+                Some("| $x+\\|y$ |\n| --- |\n\n\\(z\\)2"),
+            ),
+            (
+                "> \\[\n> a\n> \\]\n\n\\(x\\)2",
+                Some("> $$\n> a\n> $$\n\n\\(x\\)2"),
+            ),
+            ("> \\(\n> a\\)\n\n\\(c\\)", Some("> \\(\n> a\\)\n\n$c$")),
         ] {
             assert_eq!(pass(text).as_deref(), rewritten, "{text:?}");
         }
