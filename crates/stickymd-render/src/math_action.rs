@@ -598,6 +598,12 @@ mod tests {
                 Some("> $$\n> a\n> $$\n\n\\(x\\)2"),
             ),
             ("> \\(\n> a\\)\n\n\\(c\\)", Some("> \\(\n> a\\)\n\n$c$")),
+            // Ninth review: a formula already in a table cell, whose literal Comrak reads with
+            // `\|` unescaped, next to one that does not read back.
+            (
+                "| \\(x+\\|y\\) |\n| --- |\n\n\\(z\\)2",
+                Some("| $x+\\|y$ |\n| --- |\n\n\\(z\\)2"),
+            ),
         ] {
             assert_eq!(pass(text).as_deref(), rewritten, "{text:?}");
         }
