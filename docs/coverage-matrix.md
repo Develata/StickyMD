@@ -1,5 +1,14 @@
 # coverage-matrix.md - 契约覆盖矩阵
 
+2026-11-26 macOS 视图诊断（审查 F7 的 A，USER 2026-11-24；自 `737d95e` 移植，[审查修复报告](report/2026-11-24-m5-producers-review-fixes.md)末节）：
+
+- **Plan：** `10` `macos-gates`（“macOS 视图诊断”：`STICKYMD_DIAGNOSTIC_VIEW`，默认关闭）、`11` `phase-16-macos-host`（“资源运行进账本”：
+  `mac-resources` schema 7 记每次运行的视图，`VIEW_UNREPORTED`、`WRONG_VIEW` 的运行无效，`--wrong-view` 校准）。
+- **验收：** [Phase 16](acceptance-cases/phase-16.md) P16-R01、R02 的要求；[Phase 18](acceptance-cases/phase-18.md) P18-G04。
+- **代码：** `crates/stickymd-desktop/src/geometry.rs`（`ViewGeometry::shown_view`）、`host.rs` 与 `shell/render.rs`（`PresentFacts.view`）；
+  `apps/stickymd-mac/src/platform/macos/view_report.rs`（报告的写出）；`tools/stickymd-smoke/src/mac_resources/view.rs`（报告的读取）、
+  `runner.rs`（每次运行读报告、校准）、`rows.rs` 与 `report.rs`（有效运行须报告其场景的视图）、`mac_ledger/resources.rs`（schema 7、拒绝校准）。
+
 2026-11-24 macOS 发布门的两项生产者改动（M5 报告 Resolution 第 3 项，[M5 报告](report/2026-11-24-m5-macos-readiness-check.md)“生产者改动”节）：
 
 - **Plan：** `11` `phase-16-macos-host`（“R03 的输入 ZIP”“资源运行进账本”：`mac-gui --zip`、证据与账本的 `zip_sha256`、`mac-resources` schema 5、

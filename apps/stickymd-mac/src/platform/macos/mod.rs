@@ -15,6 +15,7 @@ pub mod pointer_band;
 pub mod shell;
 pub mod sigterm;
 pub mod tray;
+pub mod view_report;
 pub mod window;
 
 pub use stickymd_posix::{atomic_file, child_directory, file, instance, user};

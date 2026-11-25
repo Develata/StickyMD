@@ -243,6 +243,7 @@ impl<H: Host> DesktopShell<H> {
                 view_complete: geometry.preview.is_none() || self.preview_frame.is_some(),
                 ledger: surface.ledger_mut(),
                 draw: draw_started.elapsed(),
+                view: geometry.shown_view(),
             };
             if self.host.after_present(&facts) {
                 match event_loop {

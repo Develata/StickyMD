@@ -4,22 +4,12 @@
 
 use super::model::SCENARIOS;
 use super::report::Evidence;
-use super::rows::{RowVerdict, VIEW_UNCONFIRMED, from_evidence};
-use super::tests::{BUSY_TICKS, evidence, measured};
+use super::rows::{RowVerdict, from_evidence};
+use super::tests::{BUSY_TICKS, calibration, evidence, measured};
 use crate::release::json;
 
-/// Each row's verdict, with `MEASURED` for complete runs within the line: NOT_TESTED until the
-/// views are confirmed (review F7).
 fn verdicts(evidence: &Evidence) -> [(&'static str, &'static str); 2] {
-    evidence.rows().map(|row| {
-        if row.measured {
-            assert_eq!(row.verdict, "NOT_TESTED", "{row:?}");
-            assert!(row.detail.contains(VIEW_UNCONFIRMED), "{row:?}");
-            (row.row, "MEASURED")
-        } else {
-            (row.row, row.verdict)
-        }
-    })
+    evidence.rows().map(|row| (row.row, row.verdict))
 }
 
 fn read(text: &str) -> Result<[RowVerdict; 2], String> {
@@ -34,19 +24,11 @@ fn refused(text: &str, words: &str) {
 #[test]
 fn a_complete_campaign_within_both_lines_passes_both_rows() {
     let good = evidence();
-    assert_eq!(verdicts(&good), [("R01", "MEASURED"), ("R02", "MEASURED")]);
-    // Fail closed (review F7): complete runs within both lines are not a PASS while no run
-    // confirms its view.
+    assert_eq!(verdicts(&good), [("R01", "PASS"), ("R02", "PASS")]);
+    // Every run reported its scenario's view (review F7, USER 2026-11-24): a PASS.
     let rows = read(&good.json()).unwrap();
-    assert_eq!(
-        rows.clone().map(|row| row.verdict),
-        ["NOT_TESTED", "NOT_TESTED"]
-    );
-    assert!(
-        rows.iter()
-            .all(|row| row.measured && row.detail.contains(VIEW_UNCONFIRMED))
-    );
-    assert!(good.measured());
+    assert_eq!(rows.clone().map(|row| row.verdict), ["PASS", "PASS"]);
+    assert!(good.passed());
     assert!(rows[0].detail.contains("hidden max"), "{:?}", rows[0]);
 }
 
@@ -54,8 +36,8 @@ fn a_complete_campaign_within_both_lines_passes_both_rows() {
 fn one_run_over_its_memory_gate_fails_r01_alone_and_names_the_bytes() {
     let mut over = evidence();
     let limit = SCENARIOS[2].limit;
-    over.scenarios[2][4] = measured(5, limit + 1, super::tests::IDLE_TICKS);
-    assert_eq!(verdicts(&over), [("R01", "FAIL"), ("R02", "MEASURED")]);
+    over.scenarios[2][4] = measured("split", 5, limit + 1, super::tests::IDLE_TICKS);
+    assert_eq!(verdicts(&over), [("R01", "FAIL"), ("R02", "PASS")]);
     // One byte over is visible in the detail, not rounded away.
     assert!(
         over.rows()[0]
@@ -64,12 +46,12 @@ fn one_run_over_its_memory_gate_fails_r01_alone_and_names_the_bytes() {
         "{:?}",
         over.rows()[0]
     );
-    assert!(!over.measured());
+    assert!(!over.passed());
     // The evidence written for it reads back the same.
     assert_eq!(read(&over.json()).unwrap()[0].verdict, "FAIL");
     // At the gate is within it.
-    over.scenarios[2][4] = measured(5, limit, super::tests::IDLE_TICKS);
-    assert_eq!(verdicts(&over), [("R01", "MEASURED"), ("R02", "MEASURED")]);
+    over.scenarios[2][4] = measured("split", 5, limit, super::tests::IDLE_TICKS);
+    assert_eq!(verdicts(&over), [("R01", "PASS"), ("R02", "PASS")]);
 }
 
 /// The history of the row: periodic caret-layer toggling gave Split a median of 0.103%. Each case
@@ -80,16 +62,18 @@ fn a_median_idle_cpu_above_the_hard_line_fails_r02_and_a_single_spike_does_not()
         let mut evidence = evidence();
         let limit = SCENARIOS[scenario].limit;
         for (index, run) in evidence.scenarios[scenario].iter_mut().enumerate() {
-            *run = super::tests::measured_over(index + 1, limit, ticks(index), window);
+            *run = super::tests::measured_over(
+                SCENARIOS[scenario].mode,
+                index + 1,
+                limit,
+                ticks(index),
+                window,
+            );
         }
         let verdict = verdicts(&evidence)[1].1;
         assert_eq!(
             read(&evidence.json()).unwrap()[1].verdict,
-            if verdict == "MEASURED" {
-                "NOT_TESTED"
-            } else {
-                verdict
-            },
+            verdict,
             "read back"
         );
         (verdict, evidence.rows()[1].detail.clone())
@@ -108,14 +92,14 @@ fn a_median_idle_cpu_above_the_hard_line_fails_r02_and_a_single_spike_does_not()
             super::tests::IDLE_TICKS
         }
     };
-    assert_eq!(with_ticks(2, &spike, 60.0).0, "MEASURED");
+    assert_eq!(with_ticks(2, &spike, 60.0).0, "PASS");
     // Exactly 60 ms of CPU (1,440,000 ticks at 125/3) is at the line, and within it; one tick
     // more is over it. Compared in raw ticks, the review's late sample (the second at
     // 91.500012 s) whose percent of the budget reads 0.10000000000000002 is still at the line.
     const AT_THE_LINE: u64 = 1_440_000;
-    assert_eq!(with_ticks(1, &|_| AT_THE_LINE, 60.0).0, "MEASURED");
+    assert_eq!(with_ticks(1, &|_| AT_THE_LINE, 60.0).0, "PASS");
     assert_eq!(with_ticks(1, &|_| AT_THE_LINE + 1, 60.0).0, "FAIL");
-    assert_eq!(with_ticks(1, &|_| AT_THE_LINE, 60.000012).0, "MEASURED");
+    assert_eq!(with_ticks(1, &|_| AT_THE_LINE, 60.000012).0, "PASS");
 }
 
 /// The exact median against the 60 ms budget (in nanoseconds, timebase denominator 1): the
@@ -186,7 +170,7 @@ fn a_missing_invalid_or_uncleaned_run_leaves_both_rows_not_tested() {
         [("R01", "NOT_TESTED"), ("R02", "NOT_TESTED")]
     );
     // A violation stays a FAIL in an incomplete campaign.
-    short.scenarios[0][0] = measured(1, u64::MAX / 2, super::tests::IDLE_TICKS);
+    short.scenarios[0][0] = measured("source", 1, u64::MAX / 2, super::tests::IDLE_TICKS);
     assert_eq!(verdicts(&short), [("R01", "FAIL"), ("R02", "NOT_TESTED")]);
 }
 
@@ -211,10 +195,7 @@ fn a_finished_campaign_whose_evidence_lists_three_scenarios_is_refused() {
 fn outside_plan_10s_environment_the_rows_are_not_tested() {
     let mut scale_1 = evidence();
     scale_1.conditions.scale = [1.0, 1.0];
-    assert_eq!(
-        verdicts(&scale_1),
-        [("R01", "NOT_TESTED"), ("R02", "MEASURED")]
-    );
+    assert_eq!(verdicts(&scale_1), [("R01", "NOT_TESTED"), ("R02", "PASS")]);
     assert!(scale_1.rows()[0].detail.contains("at scale 1x1"));
     let mut other_system = evidence();
     other_system.conditions.macos_version = "26.4".into();
@@ -226,7 +207,7 @@ fn outside_plan_10s_environment_the_rows_are_not_tested() {
     other_system.conditions.macos_version = "270.1".into();
     assert_eq!(verdicts(&other_system)[1].1, "NOT_TESTED");
     // Even over its gate: a FAIL measured elsewhere does not stand for macOS 27 at scale 2.
-    scale_1.scenarios[0][0] = measured(1, u64::MAX / 2, super::tests::IDLE_TICKS);
+    scale_1.scenarios[0][0] = measured("source", 1, u64::MAX / 2, super::tests::IDLE_TICKS);
     assert_eq!(verdicts(&scale_1)[0].1, "NOT_TESTED");
     // The reader takes the environment from the evidence, not from the rows written beside it.
     let good = evidence().json();
@@ -295,16 +276,16 @@ fn the_reader_recomputes_readings_from_raw_samples() {
     // A run's status changed: the rows no longer hold.
     let errored = good.replacen("\"status\":\"VALID\"", "\"status\":\"ERROR\"", 1);
     refused(&errored, "its runs give");
-    // Rows claimed by a status field are not taken: a PASS stated where the runs give NOT_TESTED
-    // (views unconfirmed, review F7) is refused, and so is another reason for the same verdict.
+    // Rows claimed by a status field are not taken: a FAIL stated where the runs give PASS is
+    // refused, and so is another reason for the same verdict.
     let claimed = good.replacen(
-        "\"id\":\"P16-R02\",\"verdict\":\"NOT_TESTED\"",
         "\"id\":\"P16-R02\",\"verdict\":\"PASS\"",
+        "\"id\":\"P16-R02\",\"verdict\":\"FAIL\"",
         1,
     );
     assert_ne!(claimed, good);
     refused(&claimed, "its runs give");
-    let reason = good.replacen(VIEW_UNCONFIRMED, "views confirmed", 1);
+    let reason = good.replacen("all runs within the memory gates", "all runs fine", 1);
     assert_ne!(reason, good);
     refused(&reason, "its runs give");
 }
@@ -315,7 +296,7 @@ fn the_reader_refuses_runs_that_are_not_the_repetitions_in_order() {
     repeated.scenarios[1][1].repetition = 1;
     refused(&repeated.json(), "repetitions 1..=5 in order");
     let mut extra = evidence();
-    extra.scenarios[0].push(measured(6, 1024, super::tests::IDLE_TICKS));
+    extra.scenarios[0].push(measured("source", 6, 1024, super::tests::IDLE_TICKS));
     // A finished campaign ran each scenario exactly its repetitions (review S3); a checkpoint
     // cannot list more runs than repetitions either.
     refused(&extra.json(), "ran other than 5 times");
@@ -447,7 +428,7 @@ fn the_environment_must_agree_with_itself() {
     // Two displays: the recorded scale need not be the window's, so R01 is not judged.
     let mut two = evidence();
     two.conditions.displays = 2;
-    assert_eq!(verdicts(&two), [("R01", "NOT_TESTED"), ("R02", "MEASURED")]);
+    assert_eq!(verdicts(&two), [("R01", "NOT_TESTED"), ("R02", "PASS")]);
     refused(
         &good.replacen("\"display_count\":1", "\"display_count\":2", 1),
         "its runs give",
@@ -469,14 +450,14 @@ fn a_late_sample_cannot_turn_a_hard_failure_into_a_pass() {
         let mut evidence = evidence();
         let limit = SCENARIOS[1].limit;
         for (index, run) in evidence.scenarios[1].iter_mut().enumerate() {
-            *run = measured_over(index + 1, limit, ticks(cpu_seconds), window);
+            *run = measured_over("preview", index + 1, limit, ticks(cpu_seconds), window);
         }
         evidence
     };
     let undecided = with(0.0603, 60.5);
     assert_eq!(
         verdicts(&undecided),
-        [("R01", "MEASURED"), ("R02", "NOT_TESTED")]
+        [("R01", "PASS"), ("R02", "NOT_TESTED")]
     );
     assert!(
         undecided.rows()[1].detail.contains("cannot be told"),
@@ -490,7 +471,7 @@ fn a_late_sample_cannot_turn_a_hard_failure_into_a_pass() {
     let over = with(0.062, 60.5);
     assert_eq!(verdicts(&over)[1].1, "FAIL");
     assert_eq!(read(&over.json()).unwrap()[1].verdict, "FAIL");
-    assert_eq!(verdicts(&with(0.0599, 60.5))[1].1, "MEASURED");
+    assert_eq!(verdicts(&with(0.0599, 60.5))[1].1, "PASS");
     assert_eq!(verdicts(&with(0.0603, 60.0))[1].1, "FAIL");
     // The review's counterexample: 31 ms at the start and 31 ms in the last 31 ms of a 60.5 s
     // window. No 60 s window exceeds the line, and none is shown to: the middle sample has 31 ms,
@@ -539,10 +520,101 @@ fn a_late_sample_cannot_turn_a_hard_failure_into_a_pass() {
             } else {
                 super::tests::IDLE_TICKS
             };
-            *run = measured(index + 1, limit, cpu);
+            *run = measured("split", index + 1, limit, cpu);
         }
         evidence
     };
     assert_eq!(verdicts(&mixed(3))[1].1, "FAIL");
-    assert_eq!(verdicts(&mixed(2))[1].1, "MEASURED");
+    assert_eq!(verdicts(&mixed(2))[1].1, "PASS");
+}
+/// Review F7 (USER 2026-11-24): a run counts only when the product reported its scenario's view.
+#[test]
+fn only_runs_that_showed_their_scenarios_view_count() {
+    // The product showed Source where Preview was configured: the run is not valid, and the
+    // evidence the tool writes for it reads back the same.
+    let mut wrong = evidence();
+    let run = &mut wrong.scenarios[1][2];
+    run.status = "WRONG_VIEW";
+    run.view = Some("source".into());
+    run.samples.clear();
+    run.metrics = None;
+    assert_eq!(
+        verdicts(&wrong),
+        [("R01", "NOT_TESTED"), ("R02", "NOT_TESTED")]
+    );
+    assert!(
+        wrong.rows()[0]
+            .detail
+            .contains("preview (4 of 5 runs valid)")
+    );
+    assert_eq!(
+        read(&wrong.json()).unwrap().map(|row| row.verdict),
+        ["NOT_TESTED", "NOT_TESTED"]
+    );
+    // No report, or one the tool could not read: the same.
+    let mut unreported = evidence();
+    let run = &mut unreported.scenarios[2][0];
+    run.status = "VIEW_UNREPORTED";
+    run.view = None;
+    run.samples.clear();
+    run.metrics = None;
+    assert_eq!(
+        read(&unreported.json()).unwrap().map(|row| row.verdict),
+        ["NOT_TESTED", "NOT_TESTED"]
+    );
+    // A VALID run cannot report another view or none: the tool marks it WRONG_VIEW. Neither the
+    // tool's own rows nor the reader count it.
+    for view in [Some("source"), None] {
+        let mut forged = evidence();
+        forged.scenarios[2][0].view = view.map(str::to_owned);
+        assert!(!forged.passed(), "{view:?}");
+        refused(&forged.json(), "WRONG_VIEW");
+    }
+    // Hidden opens in Source: its runs report Source.
+    let good = evidence();
+    assert_eq!(good.scenarios[3][0].view.as_deref(), Some("source"));
+    assert!(good.passed());
+}
+
+/// Review F7: the calibration holds only when the tool told every configured-as-Source run apart,
+/// and its evidence is never finished, so even a reader that ignored `calibration` would refuse
+/// it (as for mac-gui's calibration, review fix round B1).
+#[test]
+fn the_wrong_view_calibration_holds_only_when_every_run_was_told_apart() {
+    let good = calibration();
+    assert!(good.calibration_held());
+    assert!(!good.passed());
+    let text = good.json();
+    assert!(text.contains("\"calibration\":\"wrong-view\""), "{text}");
+    assert!(text.contains("\"finished\":false"), "{text}");
+    // Its runs are this tool's: the reader takes them, and neither row is judged.
+    assert_eq!(
+        read(&text).unwrap().map(|row| row.verdict),
+        ["NOT_TESTED", "NOT_TESTED"]
+    );
+    // An ordinary campaign is finished and names no calibration.
+    let ordinary = evidence().json();
+    assert!(ordinary.contains("\"finished\":true") && !ordinary.contains("calibration"));
+    // The product followed the configuration but the tool took it for the scenario's view; a run
+    // that reported nothing; a Source run taken for a wrong one; a missing run.
+    let mut accepted = calibration();
+    accepted.scenarios[2][1].status = "VIEW_CHECKED";
+    let mut silent = calibration();
+    silent.scenarios[1][4].status = "VIEW_UNREPORTED";
+    silent.scenarios[1][4].view = None;
+    let mut source = calibration();
+    source.scenarios[0][0].status = "WRONG_VIEW";
+    let mut short = calibration();
+    short.scenarios[3].pop();
+    let mut uncleaned = calibration();
+    uncleaned.scenarios[3][0].cleanup_error = Some("left running".into());
+    for (bad, what) in [
+        (accepted, "accepted"),
+        (silent, "silent"),
+        (source, "source"),
+        (short, "short"),
+        (uncleaned, "uncleaned"),
+    ] {
+        assert!(!bad.calibration_held(), "{what}");
+    }
 }

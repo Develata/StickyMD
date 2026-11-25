@@ -18,8 +18,11 @@ pub(crate) mod rows;
 mod runner;
 #[cfg(test)]
 mod tests;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod view;
 #[cfg(test)]
-pub(crate) use tests::evidence_json;
+pub(crate) use tests::{calibration_json, evidence_json};
 
 pub(crate) use options::{Options, parse};
 
