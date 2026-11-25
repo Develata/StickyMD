@@ -421,3 +421,27 @@ Develata 2026-11-26 在协调会话中决定由该会话处理冻结前清单，
    `"finished":true`，schema 7；在账本的副本上 `record` 登记为 R01、R02，判定与证据写下的相同。
 
 冻结前清单第 2 项（账本中没有 `kind:"resources"` 的 R02 FAIL）在这次登记之后要再核一次。
+
+### 虚拟机运行（2026-11-26）
+
+USER 2026-11-26 同意现在跑（“现在跑（推荐）”）。运行环境：`mac-test`（macOS 27.2，26B123，`hv_vmm_present=1`），镜像
+`ghcr.io/cirruslabs/macos-golden-gate-vanilla@sha256:b35695ce…`。程序是 `701e240` 的本机 release 构建，不是晋升的候选：可执行文件 `730cae5e…`、
+产品输入 `1f3f3834…`。驱动是同一提交的 unwind release 构建 `b59f1365…`。两者拷入虚拟机后，哈希与主机上的相同。证据与运行日志在已忽略的
+`dist/evidence/mac-vm-2026-11-26-f7/`。
+
+1. **`--wrong-view` 校准：** 以 0 退出。Source、Hidden 各 5 次 `VIEW_CHECKED`，Preview、Split 各 5 次 `WRONG_VIEW`，20 次报告的视图都是 source。
+   证据 `cal/mac-resources.json`（`8486df56…`）为 schema 7，`"calibration":"wrong-view"`，`"finished":false`。`mac-ledger record` 拒绝登记它：
+   “calibration evidence (--wrong-view) is a bad sample; it cannot be recorded”。
+2. **完整运行：** 以 0 退出。四个场景各 5 次全部 `VALID`，每次的 `view` 等于场景的视图，Hidden 为 source。证据 `res/mac-resources.json`（`cfc3b705…`）为
+   schema 7，`"finished":true`。
+   - 内存中位/最大：Source 37.2/37.3、Preview 45.5/51.1、Split 46.0/48.8、Hidden 27.8/27.8 MiB。
+   - 空闲 CPU 中位：0.0013%、0.0015%、0.0005%、0.0012%。
+   - R01、R02 都为 PASS。
+3. **登记：** 登记在真实账本的副本上（scratchpad），新增两条 `kind:"resources"` 记录，R01 PASS、R02 PASS。真实账本未改动，仍为 337 行、`6feb4e7e…`。
+   冻结前清单第 2 项的复核：副本中的资源记录只有这两条 PASS，没有要重判的 R02 FAIL；真实账本中仍为 0 条。
+
+P16-R01、R02 证据栏的说明随之改为这次运行，状态仍为 `AUTOMATED PASS`（USER 2026-11-26，“保持 PASS 并加注（推荐）”）。这次运行证明的是 F7 的校准与
+视图确认在真实虚拟机里成立。它不是发布门要的证据：发布门要正式候选上的资源测量（冻结前清单第 3 项），那时再登记进真实账本。
+
+另：运行中途我在虚拟机里调用了 `python3` 读证据。虚拟机没有开发者工具，于是弹出了安装提示（`Install Command Line Developer Tools`）。该进程已结束，
+没有安装任何东西；截屏确认桌面上没有对话框之后，才开始完整运行。此后证据都在主机上读取。虚拟机已停止。
