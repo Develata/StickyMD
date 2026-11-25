@@ -66,6 +66,41 @@ pub(in super::super) fn listing(output: &str) -> Result<Vec<String>, String> {
         .collect()
 }
 
+/// rustdoc's closing line after merged doc-tests, which it prints even for `--list` (rustc 1.99.1,
+/// 2024 edition): `all doctests ran in <s>s; merged doctests compilation took <s>s`, each `<s>` a
+/// decimal number.
+fn doc_timing(line: &str) -> bool {
+    let seconds = |text: &str| {
+        text.strip_suffix('s')
+            .and_then(|number| number.split_once('.'))
+            .is_some_and(|(whole, fraction)| {
+                !whole.is_empty()
+                    && !fraction.is_empty()
+                    && whole
+                        .bytes()
+                        .chain(fraction.bytes())
+                        .all(|b| b.is_ascii_digit())
+            })
+    };
+    line.strip_prefix("all doctests ran in ")
+        .and_then(|rest| rest.split_once("; merged doctests compilation took "))
+        .is_some_and(|(ran, took)| seconds(ran) && seconds(took))
+}
+
+/// A library's doc-test listing (`cargo test --doc -- --list --format terse`): a [`listing`] that
+/// may end with rustdoc's timing line, once, as its last line; anywhere else that line is an error
+/// like any other (pre-freeze item 4).
+pub(in super::super) fn doc_listing(output: &str) -> Result<Vec<String>, String> {
+    let mut lines: Vec<&str> = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if lines.last().is_some_and(|line| doc_timing(line)) {
+        lines.pop();
+    }
+    listing(&lines.join("\n"))
+}
+
 /// The cases of one binary: every listed test, with whether it is listed as ignored and the
 /// outcome the run printed for it (`NotRun` when it printed none); a printed test the listing
 /// does not hold is returned apart.

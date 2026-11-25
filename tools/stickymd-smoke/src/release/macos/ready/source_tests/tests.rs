@@ -440,6 +440,28 @@ test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fini
         ["a::b", "a::c"]
     );
     assert!(output::listing("a::b: test\n3 tests, 0 benchmarks\n").is_err());
+    // Pre-freeze item 4 (fix-round review 15): the exact stdout of `cargo test --doc -- --list
+    // --format terse` (rustc 1.99.1) for a 2024-edition library whose doc-tests are all merged;
+    // with `--ignored` only the closing line remains.
+    let merged = "src/lib.rs - one (line 1): test\nsrc/lib.rs - two (line 6): test\nall doctests ran in 0.48s; merged doctests compilation took 0.16s\n";
+    let ignored = "all doctests ran in 0.52s; merged doctests compilation took 0.20s\n";
+    assert_eq!(
+        output::doc_listing(merged).unwrap(),
+        ["src/lib.rs - one (line 1)", "src/lib.rs - two (line 6)"]
+    );
+    assert_eq!(output::doc_listing(ignored).unwrap(), Vec::<String>::new());
+    // Only rustdoc's own line, once, last, and only in a doc-test listing.
+    assert!(output::listing(merged).is_err());
+    let timing = "all doctests ran in 0.48s; merged doctests compilation took 0.16s";
+    for bad in [
+        format!("{timing}\nsrc/lib.rs - one (line 1): test\n"),
+        format!("src/lib.rs - one (line 1): test\n{timing}\n{timing}\n"),
+        "all doctests ran in 0.48s; merged doctests compilation took soon\n".to_owned(),
+        "all doctests ran in s; merged doctests compilation took 0.16s\n".to_owned(),
+        "all doctests ran in 0.48s\n".to_owned(),
+    ] {
+        assert!(output::doc_listing(&bad).is_err(), "{bad:?}");
+    }
     let (cases, unlisted) = output::cases(
         &["a::b".to_owned(), "a::e".to_owned()],
         &[],
