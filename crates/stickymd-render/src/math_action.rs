@@ -523,11 +523,12 @@ mod tests {
         assert!(super::run_math_action(&snapshot, None).unwrap().is_none());
     }
 
-    /// Plan 07's read-back (USER 2026-11-25, "A"): step 2 writes `\(…\)` as `$…$`, Comrak does
-    /// not take a `$` that a digit follows as a closer, and `$ a $` is no formula. With step 1's
-    /// joins, the join is dropped and step 2 converts the original text; when that does not
-    /// read back either, nothing changes. Without the read-back the first three would be
-    /// `$a=b$2xyz$` (with `$2xyz$` as the formula) twice and `$ a $` (plain text).
+    /// Plan 07's read-back (USER 2026-11-25, "A"): step 2 writes `\(…\)` as `$…$`, and Comrak
+    /// does not take a `$` that a digit follows as a closer. With step 1's joins, the join is
+    /// dropped and step 2 converts the original text; when that does not read back either,
+    /// nothing changes. Without the read-back the first two would be `$a=b$2xyz$`, with
+    /// `$2xyz$` as the formula. The other inputs that still do not read back once the
+    /// whitespace inside the delimiters is gone (plan 07) change nothing either.
     #[test]
     fn phase11b_math_action_reads_the_final_text_back() {
         let pass = |text: &str| {
@@ -544,7 +545,21 @@ mod tests {
         assert_eq!(pass("\\(a\n=\nb\\)2xyz$"), None);
         // Step 2 alone, as on `main`.
         assert_eq!(pass("\\(a=b\\)2xyz$"), None);
-        assert_eq!(pass("\\( a \\)"), None);
+        // An escaped space before the closer stays, so `$a\ $` has a space before its `$`; a `$`
+        // inside the formula; a formula in a quote whose delimiters stand on their own lines
+        // (the `>` would land in the formula).
+        assert_eq!(pass("\\( a\\ \\)"), None);
+        assert_eq!(pass("\\(a$b\\)"), None);
+        assert_eq!(pass("> \\(\n> a\n> \\)"), None);
+        // With the whitespace just inside the delimiters dropped, these read back.
+        assert_eq!(pass("\\( a \\)").as_deref(), Some("$a$"));
+        assert_eq!(pass("\\(\na\n\\)").as_deref(), Some("$a$"));
+        assert_eq!(pass("- \\(\n  a\n  \\)").as_deref(), Some("- $a$"));
+        assert_eq!(pass("$$ a $$").as_deref(), Some("$$a$$"));
+        assert_eq!(
+            pass("> \\[\n> a\n> \\]").as_deref(),
+            Some("> $$\n> a\n> $$")
+        );
         // Controls: with a space before the digit, or a letter after the closer, they read
         // back.
         assert_eq!(pass("\\(a\n=\nb\\) 2xyz$").as_deref(), Some("$a=b$ 2xyz$"));

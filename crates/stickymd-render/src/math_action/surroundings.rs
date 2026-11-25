@@ -9,6 +9,7 @@ use super::MathActionPass;
 use crate::math_text::EqualsLineConversion;
 use crate::preview::{
     BlockNode, ImageKind, InlineNode, LinkKind, OwnedDocumentTree, SourceRange, TableAlignment,
+    trimmed_math_literal,
 };
 
 /// Whether the Preview reads the result as it reads the original everywhere but inside the
@@ -120,7 +121,8 @@ enum Mark<'a> {
 }
 
 /// A node's kind and every field the Preview's rendering or step 2 reads, apart from its
-/// children and source range. Text is a `Mark` of its own.
+/// children and source range; a formula's literal without the whitespace just inside its
+/// delimiters, which step 2 drops and TeX ignores. Text is a `Mark` of its own.
 #[derive(Debug, PartialEq, Eq)]
 enum Node<'a> {
     Quote,
@@ -321,9 +323,8 @@ where
                 })
             }
             BlockNode::DisplayMath(math) => {
-                self.node(Node::DisplayMath(&math.literal), range, Role::Part, |_| {
-                    true
-                })
+                let literal = trimmed_math_literal(&math.literal);
+                self.node(Node::DisplayMath(literal), range, Role::Part, |_| true)
             }
             BlockNode::CodeBlock(code) => {
                 let node = Node::CodeBlock {
@@ -397,7 +398,7 @@ where
                 InlineNode::Code { literal, .. } => (Node::Code(literal), &[]),
                 InlineNode::InlineMath(math) => (
                     Node::InlineMath {
-                        literal: &math.literal,
+                        literal: trimmed_math_literal(&math.literal),
                         display: math.display,
                     },
                     &[],

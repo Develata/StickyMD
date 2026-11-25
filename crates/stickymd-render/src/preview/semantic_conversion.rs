@@ -1,4 +1,6 @@
-//! Semantic batch conversion of Comrak-owned LaTeX math delimiters.
+//! Semantic batch conversion of Comrak-owned LaTeX math delimiters, written in the
+//! standard form: `\(…\)` as `$…$` and `\[…\]` as `$$…$$`, with the whitespace just inside
+//! the delimiters removed, which also normalizes `$$ … $$` (USER 2026-11-25).
 //!
 //! plan_ref: docs/plan/07_editor_and_ime.md#semantic-math-delimiter-conversion
 
@@ -94,12 +96,17 @@ impl MathDelimiterConversion {
     }
 }
 
+/// One formula rewritten: its old range, the new text, the new delimiters' lengths, and how
+/// many bytes of whitespace the rewrite dropped just inside each old delimiter. Every old
+/// delimiter (`\(`, `\)`, `\[`, `\]`, `$$`) is two bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DelimiterReplacement {
     range: SourceRange,
     replacement: String,
     new_open_len: usize,
     new_close_len: usize,
+    lead: usize,
+    trail: usize,
 }
 
 impl DelimiterReplacement {
@@ -107,21 +114,72 @@ impl DelimiterReplacement {
         self.replacement.len() as i64 - (self.range.end - self.range.start) as i64
     }
 
+    /// A position inside the old formula: in a delimiter it clamps into the new delimiter, in
+    /// dropped whitespace to the edge of the kept body, and in the kept body it keeps its
+    /// offset.
     fn map_inner_position(&self, position: usize, shift: i64) -> usize {
         const OLD_DELIMITER_LEN: usize = 2;
         let old_body_start = self.range.start + OLD_DELIMITER_LEN;
         let old_body_end = self.range.end - OLD_DELIMITER_LEN;
+        let kept_start = old_body_start + self.lead;
+        let kept_end = old_body_end - self.trail;
         let new_start = shifted(self.range.start, shift);
         let new_body_start = new_start + self.new_open_len;
         let new_body_end = new_start + self.replacement.len() - self.new_close_len;
 
         if position <= old_body_start {
             new_start + (position - self.range.start).min(self.new_open_len)
+        } else if position <= kept_start {
+            new_body_start
+        } else if position <= kept_end {
+            new_body_start + position - kept_start
         } else if position <= old_body_end {
-            new_body_start + position - old_body_start
+            new_body_end
         } else {
             new_body_end + (position - old_body_end).min(self.new_close_len)
         }
+    }
+}
+
+/// How many bytes of whitespace to drop at the start and at the end of a formula body: the
+/// spaces and tabs just inside the delimiters, and line breaks too when `line_breaks`. A
+/// whitespace character right after an odd number of backslashes is a TeX control space
+/// (`\ `), so it stays, with what follows it. None when nothing else is left.
+///
+/// Postcondition: `lead + trail < body.len()`, and both cut at UTF-8 boundaries (the dropped
+/// bytes are ASCII).
+pub(crate) fn math_body_trim(body: &str, line_breaks: bool) -> Option<(usize, usize)> {
+    let blank =
+        |byte: u8| matches!(byte, b' ' | b'\t') || line_breaks && matches!(byte, b'\n' | b'\r');
+    let bytes = body.as_bytes();
+    let lead = bytes.iter().take_while(|&&byte| blank(byte)).count();
+    if lead == bytes.len() {
+        return None;
+    }
+    let mut end = bytes.len() - bytes.iter().rev().take_while(|&&byte| blank(byte)).count();
+    let backslashes = bytes[..end]
+        .iter()
+        .rev()
+        .take_while(|&&byte| byte == b'\\')
+        .count();
+    if backslashes % 2 == 1 && end < bytes.len() {
+        // Keep a `\r\n` pair whole, so no isolated `\r` is left.
+        end += if bytes[end..].starts_with(b"\r\n") {
+            2
+        } else {
+            1
+        };
+    }
+    Some((lead, bytes.len() - end))
+}
+
+/// A formula literal without the whitespace that `math_body_trim` drops, line breaks
+/// included: the read-back compares formulas by it, since that whitespace does not change
+/// TeX math.
+pub(crate) fn trimmed_math_literal(literal: &str) -> &str {
+    match math_body_trim(literal, true) {
+        Some((lead, trail)) => &literal[lead..literal.len() - trail],
+        None => "",
     }
 }
 
@@ -277,23 +335,47 @@ fn collect_math(
     if scope.is_some_and(|scope| range.start < scope.start || range.end > scope.end) {
         return;
     }
-    let (open, close) =
-        if math.source_literal.starts_with("\\(") && math.source_literal.ends_with("\\)") {
-            ("$", "$")
-        } else if math.source_literal.starts_with("\\[") && math.source_literal.ends_with("\\]") {
-            ("$$", "$$")
-        } else {
-            return;
-        };
-    if range.end - range.start < 4 {
+    let source = &math.source_literal;
+    // `$` may have no whitespace beside it, so `\(…\)` drops line breaks too; `$$…$$` keeps
+    // them, as `$$\n…\n$$` is the standard block form.
+    let (open, close, line_breaks) = if source.starts_with("\\(") && source.ends_with("\\)") {
+        ("$", "$", true)
+    } else if source.starts_with("\\[") && source.ends_with("\\]")
+        || source.starts_with("$$") && source.ends_with("$$")
+    {
+        ("$$", "$$", false)
+    } else {
+        return;
+    };
+    if range.end - range.start < 4 || source.len() < 4 {
         return;
     }
-    let body = &math.source_literal[2..math.source_literal.len() - 2];
+    let body = &source[2..source.len() - 2];
+    let Some((lead, mut trail)) = math_body_trim(body, line_breaks) else {
+        return;
+    };
+    // A `$$` closer alone on its line keeps what stands before it there: that is the line's
+    // indentation, or a quote's `> `, not the formula's. Comrak's literal, which leaves the
+    // container prefixes out, tells whether the closer is alone.
+    if !line_breaks
+        && math
+            .literal
+            .rsplit_once('\n')
+            .is_some_and(|(_, last)| last.bytes().all(|byte| matches!(byte, b' ' | b'\t')))
+    {
+        trail = 0;
+    }
+    // `$$…$$` that is already in the standard form stays as it is.
+    if source.starts_with("$$") && lead == 0 && trail == 0 {
+        return;
+    }
     output.push(DelimiterReplacement {
         range,
-        replacement: format!("{open}{body}{close}"),
+        replacement: format!("{open}{}{close}", &body[lead..body.len() - trail]),
         new_open_len: open.len(),
         new_close_len: close.len(),
+        lead,
+        trail,
     });
 }
 
@@ -387,9 +469,10 @@ mod tests {
     /// order, and still after a step back.
     #[test]
     fn phase11b_conversion_forward_position_map_matches_map_position() {
-        let source = "a \\(b\\) c \\[d\n\\] 甲 \\(e\\)\\(f\\)";
+        let source = "a \\( b\t\\) c \\[ d \\] 甲 $$ e $$ \\(f\\)";
         let conversion = converted(source, None).unwrap();
         assert_eq!(conversion.replacement_count(), 4);
+        assert_eq!(conversion.text(), "a $b$ c $$d$$ 甲 $$e$$ $f$");
         let mut map = conversion.forward_position_map();
         for position in 0..=source.len() {
             assert_eq!(
@@ -407,6 +490,58 @@ mod tests {
         }
     }
 
+    /// The standard form (plan 07, USER 2026-11-25): the whitespace just inside the
+    /// delimiters goes, line breaks too for `$…$`, which may have no whitespace beside its
+    /// `$`; `$$…$$` keeps its line breaks. An escaped space stays; a formula with nothing
+    /// else is not rewritten; one already in the standard form is left alone.
+    #[test]
+    fn phase11b_conversion_writes_the_standard_form() {
+        for (source, expected) in [
+            ("\\( a \\)", Some("$a$")),
+            ("\\(a \\)", Some("$a$")),
+            ("\\( a\\)", Some("$a$")),
+            ("\\(\ta\t\\)", Some("$a$")),
+            ("\\(\na\n\\)", Some("$a$")),
+            ("\\(\r\na\r\n\\)", Some("$a$")),
+            ("\\(\na b\n\\)", Some("$a b$")),
+            ("\\( a\\ \\)", Some("$a\\ $")),
+            ("\\( a\\\\ \\)", Some("$a\\\\$")),
+            ("\\(a\\\r\n\\)", Some("$a\\\r\n$")),
+            ("\\[ a \\]", Some("$$a$$")),
+            ("\\[\na\n\\]", Some("$$\na\n$$")),
+            ("\\[ \na\n \\]", Some("$$\na\n $$")),
+            ("- \\[\n  a\n  \\]", Some("- $$\n  a\n  $$")),
+            ("> \\[ \n> a\n> \\]", Some("> $$\n> a\n> $$")),
+            ("$$ a $$", Some("$$a$$")),
+            ("$$\ta$$", Some("$$a$$")),
+            ("$$ \na\n $$", Some("$$\na\n $$")),
+            ("x $$ a $$ y", Some("x $$a$$ y")),
+            ("\\( \\)", None),
+            ("\\(  \\)", None),
+            ("\\(\\)", None),
+            ("\\[ \\]", None),
+            ("$$ $$", None),
+            ("$$a$$", None),
+            ("$$\na\n$$", None),
+            ("$a$", None),
+        ] {
+            assert_eq!(
+                converted(source, None).map(|conversion| conversion.text().to_owned()),
+                expected.map(str::to_owned),
+                "{source:?}"
+            );
+        }
+    }
+
+    /// Positions in the whitespace a rewrite drops clamp to the edge of the kept body.
+    #[test]
+    fn phase11b_conversion_maps_dropped_whitespace_to_the_kept_body() {
+        let conversion = converted("\\(  a  \\) z", None).unwrap();
+        assert_eq!(conversion.text(), "$a$ z");
+        let mapped: Vec<_> = (0..=11).map(|at| conversion.map_position(at)).collect();
+        assert_eq!(mapped, [0, 1, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5]);
+    }
+
     #[test]
     fn phase11b_overlapping_projection_ranges_fail_before_building_text() {
         let replacements = [
@@ -415,12 +550,16 @@ mod tests {
                 replacement: "$a$".to_owned(),
                 new_open_len: 1,
                 new_close_len: 1,
+                lead: 0,
+                trail: 0,
             },
             DelimiterReplacement {
                 range: SourceRange { start: 3, end: 7 },
                 replacement: "$b$".to_owned(),
                 new_open_len: 1,
                 new_close_len: 1,
+                lead: 0,
+                trail: 0,
             },
         ];
         assert_eq!(
