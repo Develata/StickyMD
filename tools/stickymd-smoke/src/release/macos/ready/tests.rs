@@ -1056,24 +1056,33 @@ fn only_the_driver_built_on_r_holds_a_gui_row() {
     use super::judge::r_driver;
     let receipt = receipt();
     assert_eq!(
-        r_driver(R_DRIVER, Read::Present(&receipt), R).unwrap(),
+        r_driver(Ok(R_DRIVER), Read::Present(&receipt), R).unwrap(),
         R_DRIVER
     );
-    let stale = r_driver(&hex('2'), Read::Present(&receipt), R).unwrap_err();
+    let stale = r_driver(Ok(&hex('2')), Read::Present(&receipt), R).unwrap_err();
     assert!(
         stale.contains("not to the driver the run on R built"),
         "{stale}"
     );
-    assert!(r_driver(R_DRIVER, Read::Missing("none".into()), R).is_err());
+    assert!(r_driver(Ok(R_DRIVER), Read::Missing("none".into()), R).is_err());
+    // Pre-freeze item 5 (fix-round review 16): a `--driver` that cannot be hashed is judged like
+    // a wrong one, never a reason to stop before the ledger's FAILs are printed.
+    let unhashable = "cannot hash the driver /gone: No such file or directory";
+    let missing = r_driver(Err(unhashable), Read::Present(&receipt), R).unwrap_err();
+    assert!(missing.contains(unhashable), "{missing}");
     let candidate = candidate();
     let mut failing = ledger();
     failing.push(record("W03", "FAIL", '2', &candidate.built, '9'));
-    for records in [ledger(), failing] {
+    for (records, reason) in [
+        (ledger(), &stale),
+        (failing.clone(), &stale),
+        (failing, &missing),
+    ] {
         let lines = judge(&Inputs {
             release: R,
             batch: Some("rc1"),
             macos_major: 27,
-            driver: Err(&stale),
+            driver: Err(reason),
             candidate: Read::Present(&candidate),
             ledger: Read::Present(&records),
             source_tests: Read::Present(&receipt),

@@ -395,12 +395,14 @@ fn members(row: &str) -> Vec<String> {
 
 /// R's driver for the `mac-gui` rows: `given` (the SHA-256 of `--driver`) when it is the driver
 /// the run on R built, as R's source-test receipt records it; otherwise why not (review round 4,
-/// BLOCKER 1).
+/// BLOCKER 1). A `--driver` that could not be hashed (`given` is why) is no driver of R's either
+/// (pre-freeze item 5).
 pub(super) fn r_driver(
-    given: &str,
+    given: Result<&str, &str>,
     receipt: Read<&source_tests::Receipt>,
     release: &str,
 ) -> Result<String, String> {
+    let given = given.map_err(str::to_owned)?;
     match receipt {
         Read::Present(receipt) => match source_tests::driver_of(receipt, release) {
             Ok(built) if built == given => Ok(built),
