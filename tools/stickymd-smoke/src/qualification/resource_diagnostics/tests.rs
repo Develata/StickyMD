@@ -41,13 +41,28 @@ impl Root {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "stickymd-resource-resume-{}-{nonce}",
-            std::process::id()
-        ));
+        let path = Self::path(std::process::id(), nonce);
         fs::create_dir(&path).unwrap();
         Self(path)
     }
+
+    /// A name no other root of this process takes, even at the same clock reading: parallel tests
+    /// can read the same time (macOS gives microseconds), so a sequence number tells them apart,
+    /// as `stickymd_package::temporary` does (pre-freeze, producers item 6).
+    fn path(process: u32, nonce: u128) -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "stickymd-resource-resume-{process}-{nonce}-{sequence}"
+        ))
+    }
+}
+
+/// Pre-freeze, producers item 6: two roots made at the same clock reading in the same process
+/// get two names, so parallel tests no longer collide (`AlreadyExists`).
+#[test]
+fn two_roots_at_the_same_instant_get_two_names() {
+    assert_ne!(Root::path(7, 42), Root::path(7, 42));
 }
 impl Drop for Root {
     fn drop(&mut self) {
