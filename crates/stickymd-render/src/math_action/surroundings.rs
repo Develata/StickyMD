@@ -5,6 +5,7 @@
 
 use std::ops::Range;
 
+use super::MathActionPass;
 use crate::math_text::EqualsLineConversion;
 use crate::preview::{
     BlockNode, ImageKind, InlineNode, LinkKind, OwnedDocumentTree, SourceRange, TableAlignment,
@@ -48,14 +49,42 @@ pub(super) fn joins_keep_surroundings(
     result: &OwnedDocumentTree,
     joins: &EqualsLineConversion,
 ) -> bool {
-    let spans = joins.joined_formulas();
-    let mut map = joins.forward_position_map();
+    reads_alike(original, result, joins.joined_formulas(), || {
+        joins.forward_position_map()
+    })
+}
+
+/// Plan 07's read-back of a pass that rewrote delimiters: the Preview's parse of its final
+/// text against the parse of the original, by the same rule, with positions mapped through
+/// both steps. A converted formula is compared like any other node, so it must read back as
+/// one formula with the same literal and display, at its mapped range.
+pub(super) fn pass_reads_back(
+    original: &OwnedDocumentTree,
+    final_tree: &OwnedDocumentTree,
+    pass: &MathActionPass,
+) -> bool {
+    let spans = pass
+        .joined()
+        .map_or(&[][..], EqualsLineConversion::joined_formulas);
+    reads_alike(original, final_tree, spans, || pass.forward_position_map())
+}
+
+/// The comparison of `original` with `other`, the parse of a text derived from it: `spans`
+/// are the joined formulas in the original's positions, and `map` makes a fresh forward map
+/// from those positions to `other`'s.
+fn reads_alike<M: FnMut(usize) -> usize>(
+    original: &OwnedDocumentTree,
+    other: &OwnedDocumentTree,
+    spans: &[Range<usize>],
+    map: impl Fn() -> M,
+) -> bool {
+    let mut forward = map();
     let mapped: Vec<Range<usize>> = spans
         .iter()
-        .map(|span| map(span.start)..map(span.end))
+        .map(|span| forward(span.start)..forward(span.end))
         .collect();
     let mut before = Vec::new();
-    let mut reading = Reading::new(spans, joins.forward_position_map(), |mark| {
+    let mut reading = Reading::new(spans, map(), |mark| {
         before.push(mark);
         true
     });
@@ -71,7 +100,7 @@ pub(super) fn joins_keep_surroundings(
             same
         },
     );
-    let same = reading.blocks(&result.blocks) && reading.finish();
+    let same = reading.blocks(&other.blocks) && reading.finish();
     let formulas = reading.formulas;
     same && compared == before.len() && formulas == mapped.len()
 }

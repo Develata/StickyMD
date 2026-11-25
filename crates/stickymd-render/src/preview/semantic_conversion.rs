@@ -62,6 +62,36 @@ impl MathDelimiterConversion {
         }
         shifted(position, shift)
     }
+
+    /// `map_position` for positions asked in non-decreasing order, as a walk over a document
+    /// asks them: the replacements are passed once, so each call is amortized O(1) instead of
+    /// O(replacements). A position below the previous one falls back to `map_position`, so the
+    /// result is always the same.
+    pub(crate) fn forward_position_map(&self) -> impl FnMut(usize) -> usize + '_ {
+        let mut next = 0;
+        let mut shift = 0_i64;
+        let mut last = 0;
+        move |position| {
+            if position < last {
+                return self.map_position(position);
+            }
+            last = position;
+            // Invariant: `shift` is the byte delta of `replacements[..next]`, each of which ends
+            // at or before `position`.
+            while let Some(replacement) = self.replacements.get(next)
+                && replacement.range.end <= position
+            {
+                shift += replacement.byte_delta();
+                next += 1;
+            }
+            match self.replacements.get(next) {
+                Some(replacement) if replacement.range.start <= position => {
+                    replacement.map_inner_position(position, shift)
+                }
+                _ => shifted(position, shift),
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -351,6 +381,30 @@ mod tests {
             convert_latex_math_delimiters(&snapshot(source), Some(1..source.len())),
             Err(SemanticConversionError::InvalidScope)
         );
+    }
+
+    /// `forward_position_map` gives `map_position`'s answer for every position, mapped in
+    /// order, and still after a step back.
+    #[test]
+    fn phase11b_conversion_forward_position_map_matches_map_position() {
+        let source = "a \\(b\\) c \\[d\n\\] 甲 \\(e\\)\\(f\\)";
+        let conversion = converted(source, None).unwrap();
+        assert_eq!(conversion.replacement_count(), 4);
+        let mut map = conversion.forward_position_map();
+        for position in 0..=source.len() {
+            assert_eq!(
+                map(position),
+                conversion.map_position(position),
+                "{position}"
+            );
+        }
+        for position in [3, source.len(), 0, 9, 9, 20] {
+            assert_eq!(
+                map(position),
+                conversion.map_position(position),
+                "{position}"
+            );
+        }
     }
 
     #[test]

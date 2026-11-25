@@ -22,7 +22,7 @@ use crate::preview::{
 
 mod surroundings;
 
-use surroundings::joins_keep_surroundings;
+use surroundings::{joins_keep_surroundings, pass_reads_back};
 
 /// The result of one pass that changed the text.
 #[derive(Debug)]
@@ -54,6 +54,29 @@ impl MathActionPass {
         match self {
             Self::Joined(joined) => joined.into_text(),
             Self::Converted(_, converted) => converted.into_text(),
+        }
+    }
+
+    /// Step 1's joins, if the pass kept them.
+    pub(crate) fn joined(&self) -> Option<&EqualsLineConversion> {
+        match self {
+            Self::Joined(joined) => Some(joined),
+            Self::Converted(joined, _) => joined.as_ref(),
+        }
+    }
+
+    /// `map_position` for positions asked in non-decreasing order: each step's forward map
+    /// passes its changes once, and both maps keep the order, so the composition does too.
+    pub(crate) fn forward_position_map(&self) -> impl FnMut(usize) -> usize + '_ {
+        let (joined, converted) = match self {
+            Self::Joined(joined) => (Some(joined), None),
+            Self::Converted(joined, converted) => (joined.as_ref(), Some(converted)),
+        };
+        let mut joined = joined.map(EqualsLineConversion::forward_position_map);
+        let mut converted = converted.map(MathDelimiterConversion::forward_position_map);
+        move |position| {
+            let position = joined.as_mut().map_or(position, |map| map(position));
+            converted.as_mut().map_or(position, |map| map(position))
         }
     }
 
@@ -98,41 +121,73 @@ pub fn run_math_action(
     // see each join as one formula a Setext underline split
     // (`joins_keep_blocks`); the Preview's parse of the result, which step 2
     // converts, must hold each joined `=` as text (`joins_lie_in_text`); and
-    // every block outside the joined formulas must stay as it was
-    // (`joins_keep_surroundings`). Otherwise step 1 is dropped whole and step 2
-    // converts the original text with the tree it already has.
+    // everything outside the joined formulas must read as it did
+    // (`joins_keep_surroundings`). Otherwise step 1 is dropped whole.
+    //
+    // When step 2 rewrites delimiters, the final text is parsed once more and must
+    // read as the original does outside the joined formulas, each converted formula
+    // reading back as the same formula (`pass_reads_back`, plan 07). If it does not
+    // with step 1's joins, they are dropped and step 2 converts the original text,
+    // read back the same way; if that fails too, nothing changes.
     validate_scope(&snapshot.text, scope.as_ref())?;
-    let mut joined = join_math_equals_lines(&snapshot.text, scope.clone());
-    let tree = match &joined {
-        None => PreviewParser.parse(snapshot)?,
-        Some(joins) => {
-            let original = PreviewParser.parse(snapshot)?;
-            let accepted = if joins_keep_blocks(&original, joins) {
-                let result = PreviewParser.parse(&DocumentSnapshot {
-                    text: joins.text().into(),
-                    generation: snapshot.generation,
-                    line_ending: snapshot.line_ending,
-                })?;
-                (joins_lie_in_text(&result, joins)
-                    && joins_keep_surroundings(&original, &result, joins))
-                .then_some(result)
-            } else {
-                None
-            };
-            accepted.unwrap_or_else(|| {
-                joined = None;
-                original
-            })
+    let joined = join_math_equals_lines(&snapshot.text, scope.clone());
+    let original = PreviewParser.parse(snapshot)?;
+    if let Some(joins) = joined
+        && let Some(result) = adopt_joins(&original, &joins, snapshot)?
+    {
+        let mapped = scope
+            .clone()
+            .map(|range| joins.map_position(range.start)..joins.map_position(range.end));
+        let pass = match convert_parsed_latex_math_delimiters(&result, mapped)? {
+            // The result check already compared this very text with the original.
+            None => return Ok(Some(MathActionPass::Joined(joins))),
+            Some(converted) => MathActionPass::Converted(Some(joins), converted),
+        };
+        if reads_back(&original, &pass, snapshot) {
+            return Ok(Some(pass));
         }
+    }
+    let Some(converted) = convert_parsed_latex_math_delimiters(&original, scope)? else {
+        return Ok(None);
     };
-    let scope = scope.map(|range| match &joined {
-        Some(joined) => joined.map_position(range.start)..joined.map_position(range.end),
-        None => range,
-    });
-    Ok(match convert_parsed_latex_math_delimiters(&tree, scope)? {
-        Some(converted) => Some(MathActionPass::Converted(joined, converted)),
-        None => joined.map(MathActionPass::Joined),
-    })
+    let pass = MathActionPass::Converted(None, converted);
+    Ok(reads_back(&original, &pass, snapshot).then_some(pass))
+}
+
+/// The Preview's parse of step 1's result when the three checks on the joins pass, else None.
+fn adopt_joins(
+    original: &OwnedDocumentTree,
+    joins: &EqualsLineConversion,
+    snapshot: &DocumentSnapshot,
+) -> Result<Option<OwnedDocumentTree>, SemanticConversionError> {
+    if !joins_keep_blocks(original, joins) {
+        return Ok(None);
+    }
+    let result = PreviewParser.parse(&DocumentSnapshot {
+        text: joins.text().into(),
+        generation: snapshot.generation,
+        line_ending: snapshot.line_ending,
+    })?;
+    Ok(
+        (joins_lie_in_text(&result, joins) && joins_keep_surroundings(original, &result, joins))
+            .then_some(result),
+    )
+}
+
+/// Whether the Preview's parse of `pass`'s final text reads as `original` does (plan 07's
+/// read-back). A final text the Preview cannot parse does not read back.
+fn reads_back(
+    original: &OwnedDocumentTree,
+    pass: &MathActionPass,
+    snapshot: &DocumentSnapshot,
+) -> bool {
+    PreviewParser
+        .parse(&DocumentSnapshot {
+            text: pass.text().into(),
+            generation: snapshot.generation,
+            line_ending: snapshot.line_ending,
+        })
+        .is_ok_and(|final_tree| pass_reads_back(original, &final_tree, pass))
 }
 
 /// Whether every joined `=` lies as text in `tree`, the Preview's parse of
@@ -466,6 +521,91 @@ mod tests {
             line_ending: stickymd_core::LineEnding::Lf,
         };
         assert!(super::run_math_action(&snapshot, None).unwrap().is_none());
+    }
+
+    /// Plan 07's read-back (USER 2026-11-25, "A"): step 2 writes `\(…\)` as `$…$`, Comrak does
+    /// not take a `$` that a digit follows as a closer, and `$ a $` is no formula. With step 1's
+    /// joins, the join is dropped and step 2 converts the original text; when that does not
+    /// read back either, nothing changes. Without the read-back the first three would be
+    /// `$a=b$2xyz$` (with `$2xyz$` as the formula) twice and `$ a $` (plain text).
+    #[test]
+    fn phase11b_math_action_reads_the_final_text_back() {
+        let pass = |text: &str| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            super::run_math_action(&snapshot, None)
+                .unwrap()
+                .map(|pass| pass.into_text())
+        };
+        // The join and step 2 together.
+        assert_eq!(pass("\\(a\n=\nb\\)2xyz$"), None);
+        // Step 2 alone, as on `main`.
+        assert_eq!(pass("\\(a=b\\)2xyz$"), None);
+        assert_eq!(pass("\\( a \\)"), None);
+        // Controls: with a space before the digit, or a letter after the closer, they read
+        // back.
+        assert_eq!(pass("\\(a\n=\nb\\) 2xyz$").as_deref(), Some("$a=b$ 2xyz$"));
+        assert_eq!(pass("\\(a=b\\)x").as_deref(), Some("$a=b$x"));
+        assert_eq!(pass("\\(a\\)").as_deref(), Some("$a$"));
+    }
+
+    /// The read-back also covers Comrak's reference budget (the document's length, at least
+    /// 100,000 bytes, 100 bytes a use of `[r]` here). At 120,003 bytes, joining and converting
+    /// `\(z\)` together would leave 119,999 and make the 1,200th `[r]` text, while step 2 alone
+    /// leaves 120,001: the join is dropped and `\(z\)` still converts. At 120,001 bytes step 2
+    /// alone would leave 119,999, so nothing changes.
+    #[test]
+    fn phase11b_math_action_reads_links_back_after_both_steps() {
+        let document = |formula: &str, len: usize| {
+            let mut text = format!("{formula}\\(z\\)\n\n[r]: /");
+            text.push_str(&"u".repeat(99));
+            text.push_str("\n\n");
+            text.push_str(&"[r]\n\n".repeat(1_200));
+            text.push_str(&"p".repeat(len - text.len()));
+            text
+        };
+        let links = |text: &str| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            let tree = super::PreviewParser.parse(&snapshot).unwrap();
+            tree.blocks
+                .iter()
+                .filter(|block| {
+                    matches!(block, super::BlockNode::Paragraph { content, .. }
+                        if matches!(content.as_slice(), [super::InlineNode::Link { .. }]))
+                })
+                .count()
+        };
+        let pass = |text: &str| {
+            let snapshot = stickymd_core::DocumentSnapshot {
+                text: std::sync::Arc::from(text),
+                generation: stickymd_core::Generation::initial(),
+                line_ending: stickymd_core::LineEnding::Lf,
+            };
+            super::run_math_action(&snapshot, None)
+                .unwrap()
+                .map(|pass| pass.into_text())
+        };
+        let both = document("$$a\n=\nb$$\n\n", 120_003);
+        assert_eq!(links(&both), 1_200);
+        // The controls: both steps by hand lose the link, step 2 alone keeps it.
+        let joined_and_converted = both
+            .replacen("$$a\n=\nb$$", "$$a=b$$", 1)
+            .replacen("\\(z\\)", "$z$", 1);
+        assert_eq!(links(&joined_and_converted), 1_199);
+        let converted = both.replacen("\\(z\\)", "$z$", 1);
+        assert_eq!(links(&converted), 1_200);
+        assert_eq!(pass(&both), Some(converted));
+        let alone = document("", 120_001);
+        assert_eq!(links(&alone), 1_200);
+        assert_eq!(links(&alone.replacen("\\(z\\)", "$z$", 1)), 1_199);
+        assert_eq!(pass(&alone), None);
     }
 
     /// Known limit (plan 07): plan 05 keeps an isolated `\r` as an ordinary character and the

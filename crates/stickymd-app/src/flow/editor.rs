@@ -1040,31 +1040,39 @@ mod tests {
 
     #[test]
     fn phase11b_math_button_refuses_a_result_it_would_change_again() {
-        // `\( a…\(b\) c\)`: step 2 ends the outer formula at the inner closer
-        // and leaves `\(b$ c\)` for the next click.
-        refuses("\\( a\n=\n\\(b\\) c\\)");
-        // `$$a…\[b\]`: the `$$` step 2 writes would pair with the unclosed one
-        // on the next click, but that join would make the formula `$$b$$`
-        // text, so step 1 drops it (sixth review, 2026-11-25). The result is
-        // final: it commits, and a second click changes nothing.
-        let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
-        edit(&mut coordinator, "$$a\n=\nc \\[b\\]");
-        let mut effects = Vec::new();
-        for timestamp_ms in [10, 11] {
-            effects.push(
-                coordinator
-                    .dispatch(AppIntent::ConvertLatexMathDelimiters {
-                        expected_generation: coordinator.view().generation,
-                        selection: Selection::caret(0),
-                        scope_to_selection: false,
-                        timestamp_ms,
-                    })
-                    .unwrap(),
-            );
-            assert_eq!(coordinator.view().text, "$$a\n=\nc $$b$$");
+        // The checks on joins and the read-back of the final text (plan 07)
+        // now settle most such inputs: a fixed-seed search of 400,000 random
+        // token strings found two whose result still changes on the next
+        // pass. In this one step 2 converts `\(\(b\)` to `$\(b$`, and the next
+        // pass joins the `$$` pair that the trailing `$` then completes.
+        refuses("$$\\)`\n=\n\\)\\(\\(b\\)$");
+        // Refused before the sixth review and the read-back, final now: the
+        // join the next pass would make is dropped, since it would turn the
+        // formula `$$b$$` (or `$b$`) into text. The click commits, and a
+        // second click changes nothing.
+        for (source, converted) in [
+            ("$$a\n=\nc \\[b\\]", "$$a\n=\nc $$b$$"),
+            ("\\( a\n=\n\\(b\\) c\\)", "\\( a\n=\n$b$ c\\)"),
+        ] {
+            let mut coordinator = EditorCoordinator::empty(MockClipboard::default());
+            edit(&mut coordinator, source);
+            let mut effects = Vec::new();
+            for timestamp_ms in [10, 11] {
+                effects.push(
+                    coordinator
+                        .dispatch(AppIntent::ConvertLatexMathDelimiters {
+                            expected_generation: coordinator.view().generation,
+                            selection: Selection::caret(0),
+                            scope_to_selection: false,
+                            timestamp_ms,
+                        })
+                        .unwrap(),
+                );
+                assert_eq!(coordinator.view().text, converted, "{source:?}");
+            }
+            assert_ne!(effects[0], AppEffect::NoOp, "{source:?}");
+            assert_eq!(effects[1], AppEffect::NoOp, "{source:?}");
         }
-        assert_ne!(effects[0], AppEffect::NoOp);
-        assert_eq!(effects[1], AppEffect::NoOp);
     }
 
     #[test]
