@@ -65,10 +65,7 @@ pub(super) fn install(
     let receipt_path = root.join(RECEIPT);
     let record_path = root.join(REUSE_RECORD);
     let promotion_path = root.join(PROMOTION_CHECK);
-    let aside = root.join(format!(
-        "dist/.exact-candidate-macos-old-{}",
-        std::process::id()
-    ));
+    let aside = free_aside(root)?;
     let old_receipt = existing(&receipt_path)?;
     // The one ZIP the old staging may hold, as its receipt names it (fix-round review R1-3).
     let old_zip = old_zip(old_receipt.as_deref());
@@ -140,7 +137,8 @@ pub(super) fn install(
         });
     }
     let recorded = atomic_evidence::write(&promotion_path, outputs.promotion.as_bytes());
-    if aside.exists() {
+    // Only the directory this run set aside is cleaned up (fix-round review R1-11).
+    if done.iter().any(|step| matches!(step, Step::OldSetAside)) {
         // Only what a promotion writes is removed: a note written beside the staged `.app` is
         // the user's (M5 gate review B9; AGENTS.md: never delete user files).
         let kept = match old_zip.and_then(|zip| foreign(&aside, "", &zip)) {
@@ -162,6 +160,29 @@ pub(super) fn install(
             "the new candidate stands (its receipt is written), but the promotion-check record {PROMOTION_CHECK} is not: {error}; promote again on R before macos-ready"
         )
     })
+}
+
+/// A name in `dist/` for setting the old candidate aside that nothing holds yet: a staging kept
+/// by an earlier run may hold the plain one, and a rename onto a directory could fail or merge
+/// (fix-round review R1-11).
+fn free_aside(root: &Path) -> Result<std::path::PathBuf, String> {
+    let base = format!("dist/.exact-candidate-macos-old-{}", std::process::id());
+    for attempt in 0..1000_u32 {
+        let name = if attempt == 0 {
+            base.clone()
+        } else {
+            format!("{base}-{attempt}")
+        };
+        let path = root.join(name);
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(path),
+            Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
+            Ok(_) => {}
+        }
+    }
+    Err(format!(
+        "every name {base}-N in dist/ is taken by kept stagings; move them away"
+    ))
 }
 
 /// The ZIP name the old receipt records, or why the old staging's ZIP cannot be told apart.
@@ -233,6 +254,9 @@ mod tests {
     use super::*;
     use crate::release::temporary::TemporaryDirectory;
 
+    /// The promotion-check record the new promotion writes in these samples.
+    const NEW_CHECK: &str = "{\"schema_version\":1,\"kind\":\"macos-promotion-check\",\"release_source\":\"cccccccccccccccccccccccccccccccccccccccc\",\"candidate_receipt_sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"}\n";
+
     /// A file every promotion writes, which tells the old candidate from the new one.
     const MARKER: &str = super::super::content::README;
 
@@ -262,7 +286,7 @@ mod tests {
         Outputs {
             reuse,
             receipt: "new receipt",
-            promotion: "new check",
+            promotion: NEW_CHECK,
         }
     }
 
@@ -299,7 +323,7 @@ mod tests {
                 "new".into(),
                 "new receipt".into(),
                 None,
-                Some("new check".into())
+                Some(NEW_CHECK.into())
             )
         );
         assert!(!staged.exists());
@@ -425,6 +449,43 @@ mod tests {
         );
     }
 
+    /// Fix-round review R1-11: a staging kept by an earlier run under this process's id does not
+    /// stop a promotion, and only the directory this run set aside is cleaned up: the earlier
+    /// one stays as it was, even when it holds only what a promotion writes.
+    #[test]
+    fn a_staging_kept_under_the_same_name_neither_blocks_nor_is_cleaned() {
+        let scratch = TemporaryDirectory::new("macos-install-pid").unwrap();
+        let root = scratch.path();
+        let earlier = root.join(format!(
+            "dist/.exact-candidate-macos-old-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(earlier.join("StickyMD/note")).unwrap();
+        fs::write(earlier.join("StickyMD/note/note.md"), "kept before").unwrap();
+        tree(root, "old", "old receipt", None);
+        promoted(root, "0.2.0");
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(staged.join("StickyMD")).unwrap();
+        fs::write(staged.join(MARKER), "new").unwrap();
+        install(root, &staged, outputs(None), || Ok(())).unwrap();
+        assert_eq!(read(root).0, "new");
+        // This run's old staging held only promoted files and is gone; the earlier one is not.
+        assert_eq!(set_aside(root), vec![earlier.clone()]);
+        assert_eq!(
+            fs::read_to_string(earlier.join("StickyMD/note/note.md")).unwrap(),
+            "kept before"
+        );
+        // With no old candidate to set aside, an earlier directory of promoted files is not this
+        // run's either.
+        fs::remove_dir_all(earlier.join("StickyMD/note")).unwrap();
+        fs::remove_dir_all(root.join(STAGING)).unwrap();
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(staged.join("StickyMD")).unwrap();
+        fs::write(staged.join(MARKER), "newer").unwrap();
+        install(root, &staged, outputs(None), || Ok(())).unwrap();
+        assert_eq!(set_aside(root), vec![earlier]);
+    }
+
     #[test]
     fn a_failed_install_puts_the_old_candidate_receipt_and_record_back() {
         let scratch = TemporaryDirectory::new("macos-install-failure").unwrap();
@@ -525,7 +586,7 @@ mod tests {
         assert_eq!(read(root).3.as_deref(), Some(ledger));
         fs::write(root.join(PROMOTION_CHECK), old_check().trim_end()).unwrap();
         install(root, &staged, outputs(None), || Ok(())).unwrap();
-        assert_eq!(read(root).3.as_deref(), Some("new check"));
+        assert_eq!(read(root).3.as_deref(), Some(NEW_CHECK));
     }
 
     /// Fix-round review R3-5: a link at the receipt, reuse-record or promotion-check path, even
