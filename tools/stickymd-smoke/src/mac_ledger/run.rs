@@ -55,6 +55,8 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
         all.push(record.clone());
     }
     decide::check_system(&all)?;
+    // The ledger as it will be read: a resource evidence is both its rows (M5 gate review C2).
+    record::resource_pairs(&all)?;
     let mut out = text;
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');

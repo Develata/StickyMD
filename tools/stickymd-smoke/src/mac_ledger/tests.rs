@@ -131,6 +131,20 @@ fn the_same_inputs_reuse_a_pass_for_other_bytes_and_no_inputs_reuse_nothing() {
     assert_eq!(result.unconfirmed, ["W06"]);
 }
 
+/// One row of a `mac-resources` run whose evidence digest is `digest` repeated, as the importer
+/// writes it: with the run's start, at the evidence path both rows share.
+fn resource(row: &str, verdict: &str, identity: Identity, digest: char) -> Record {
+    let mut record = run(row, verdict, identity, digest);
+    if let Record::Automated {
+        run_unix, evidence, ..
+    } = &mut record
+    {
+        *run_unix = Some(1_795_018_746);
+        *evidence = format!("/runs/resources-{digest}.json");
+    }
+    record
+}
+
 fn started(row: &str, digest: char, run_unix: Option<u64>, verdict: &str) -> Record {
     let mut record = run(row, verdict, identity(), digest);
     if let Record::Automated {
@@ -443,10 +457,10 @@ fn each_record_kind_takes_exactly_the_field_sets_its_writers_wrote() {
             "rc1",
         ),
         // resources, 1c45e17: R01 and R02 of one run, with the run's start, with or without inputs.
-        timed(run("R01", "PASS", identity(), '9')),
-        timed(run("R02", "PASS", identity(), '9')),
-        timed(run("R01", "PASS", legacy(), 'a')),
-        timed(run("R02", "FAIL", legacy(), 'a')),
+        resource("R01", "PASS", identity(), '9'),
+        resource("R02", "PASS", identity(), '9'),
+        resource("R01", "PASS", legacy(), 'a'),
+        resource("R02", "FAIL", legacy(), 'a'),
         // manual, 5e57b5a: its fields alone; 2853071: with inputs; be07b02: and a batch.
         manual("W06", None),
         manual("W01", Some(hex('1'))),
@@ -506,6 +520,82 @@ fn each_record_kind_takes_exactly_the_field_sets_its_writers_wrote() {
         in_batch(manual("I02", None), "rc1").line(),
         "batch only beside app_inputs",
     );
+}
+
+/// M5 gate review C2: the records of one `mac-resources` evidence are exactly one R01 and one
+/// R02, sharing everything but row and verdict, wherever they stand in the ledger; a `mac-gui`
+/// run of one row (`--only`) stays one line.
+#[test]
+fn one_resource_evidence_is_one_r01_and_one_r02_under_one_identity() {
+    let resource =
+        |row: &str, verdict: &str, digest: char| resource(row, verdict, identity(), digest);
+    let lines =
+        |records: &[Record]| -> String { records.iter().map(|r| r.line() + "\n").collect() };
+    let pair = [resource("R01", "PASS", '9'), resource("R02", "FAIL", '9')];
+    let gui = automated("W02", "PASS", identity());
+    // Apart, in either order, beside another row's single line.
+    let held = [
+        pair[1].clone(),
+        gui.clone(),
+        resource("R01", "PASS", '8'),
+        pair[0].clone(),
+        resource("R02", "PASS", '8'),
+    ];
+    assert_eq!(read_all(&lines(&held)).unwrap(), held);
+    let refused = |records: &[Record], why: &str| match read_all(&lines(records)) {
+        Ok(_) => panic!("read, not refused ({why})"),
+        Err(error) => assert!(error.contains(why), "{error}"),
+    };
+    // The review's sample: R01's line alone, R02's FAIL lost.
+    refused(&[gui.clone(), pair[0].clone()], "both P16-R01 and P16-R02");
+    refused(&[pair[1].clone()], "both P16-R01 and P16-R02");
+    // The two lines of one evidence under different identities or runs.
+    type Change = (&'static str, fn(&mut Record));
+    let changes: [Change; 7] = [
+        ("driver", |r| {
+            if let Record::Automated { identity, .. } = r {
+                identity.driver = hex('f');
+            }
+        }),
+        ("inputs", |r| {
+            if let Record::Automated { identity, .. } = r {
+                identity.inputs = None;
+            }
+        }),
+        ("system", |r| {
+            if let Record::Automated { identity, .. } = r {
+                identity.system = "macOS 27.3".into();
+            }
+        }),
+        ("bundle", |r| {
+            if let Record::Automated { built, .. } = r {
+                built.bundle = hex('f');
+            }
+        }),
+        ("evidence path", |r| {
+            if let Record::Automated { evidence, .. } = r {
+                *evidence = "/runs/elsewhere.json".into();
+            }
+        }),
+        ("run start", |r| {
+            if let Record::Automated { run_unix, .. } = r {
+                *run_unix = Some(1);
+            }
+        }),
+        ("recording", |r| {
+            if let Record::Automated { recorded_unix, .. } = r {
+                *recorded_unix = 9;
+            }
+        }),
+    ];
+    for (what, change) in changes {
+        let mut other = pair[1].clone();
+        change(&mut other);
+        match read_all(&lines(&[pair[0].clone(), other])) {
+            Ok(_) => panic!("{what}: read, not refused"),
+            Err(error) => assert!(error.contains("one identity"), "{what}: {error}"),
+        }
+    }
 }
 
 /// The ledger takes runs in any order: only the same evidence for a row twice is refused.

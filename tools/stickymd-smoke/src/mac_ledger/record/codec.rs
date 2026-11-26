@@ -2,7 +2,9 @@
 //! read that rejects every ledger holding one bad line.
 //! plan_ref: docs/plan/11_testing_and_release.md#phase-16-macos-host
 
-use super::{Built, Identity, OpenedZip, Record, Revoked, consistent_with, label, quote};
+use super::{
+    Built, Identity, OpenedZip, Record, Revoked, consistent_with, label, quote, resource_pairs,
+};
 use crate::mac_ledger::release::ReleaseRecord;
 use crate::release::json::{self, Value};
 
@@ -334,5 +336,6 @@ pub(crate) fn read_all(text: &str) -> Result<Vec<Record>, String> {
         consistent_with(&records, &record).map_err(at)?;
         records.push(record);
     }
+    resource_pairs(&records).map_err(|e| format!("ledger: {e}"))?;
     Ok(records)
 }
