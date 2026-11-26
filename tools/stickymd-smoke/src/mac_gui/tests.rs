@@ -1573,8 +1573,10 @@ fn translocation_checks_refuse_bad_samples() {
     }
     // Every part of the advice is the product's own words (`paths.rs`), after the prefix, so an
     // advice the product no longer gives fails here (gate review D8); the generic one never
-    // reads as the move advice.
-    let product = include_str!("../../../../apps/stickymd-mac/src/paths.rs");
+    // reads as the move advice. Only the code counts, not the product's own tests below it.
+    let (product, _) = include_str!("../../../../apps/stickymd-mac/src/paths.rs")
+        .split_once("\n#[cfg(test)]\nmod tests")
+        .expect("paths.rs keeps its tests in a trailing `mod tests`");
     assert!(
         product.contains(&format!(
             "{}，{}",
