@@ -47,9 +47,16 @@ impl ViewReport {
             return;
         };
         if let Err(error) = publish_new(&path, encode(view, width, height).as_bytes()) {
-            eprintln!("view diagnostic not written: {error}");
+            report_failure(&mut std::io::stderr(), &error);
         }
     }
+}
+
+/// Reports a write that failed on `log` (stderr). A log that cannot be written either is
+/// ignored: the diagnostic never affects the product (plan 10 #macos-gates), and `eprintln!`
+/// would panic there (gate review D13).
+fn report_failure(log: &mut impl std::io::Write, error: &std::io::Error) {
+    let _ = writeln!(log, "view diagnostic not written: {error}");
 }
 
 fn name(view: ViewMode) -> &'static str {
@@ -164,6 +171,25 @@ mod tests {
         // No temporary file is left beside it.
         assert_eq!(entries(&directory), [OsString::from("view")]);
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    /// Gate review D13: a failed write is reported on a log that may fail too (a full volume
+    /// holding both); that failure is ignored, never a panic.
+    #[test]
+    fn a_log_that_cannot_be_written_is_ignored() {
+        struct Full;
+        impl std::io::Write for Full {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("no space left on device"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::Error::other("no space left on device"))
+            }
+        }
+        report_failure(&mut Full, &std::io::Error::other("output exists"));
+        let mut written = Vec::new();
+        report_failure(&mut written, &std::io::Error::other("output exists"));
+        assert_eq!(written, b"view diagnostic not written: output exists\n");
     }
 
     #[test]

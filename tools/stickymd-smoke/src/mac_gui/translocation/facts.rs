@@ -175,9 +175,8 @@ pub(crate) fn sample(zip: Option<&str>, events: &[(&str, u32)]) -> String {
         exited_early: false,
         window: Some("Window { id: 64 }".into()),
         stderr: format!(
-            "{}，{}。\n\ncannot create a file: {} (os error 30)\n",
-            super::PROMPT,
-            super::TRANSLOCATED_ADVICE[0],
+            "{}\n\ncannot create a file: {} (os error 30)\n",
+            super::TRANSLOCATED_PROMPT,
             super::CAUSE
         ),
         stderr_unreadable: None,

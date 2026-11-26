@@ -23,6 +23,9 @@ pub(crate) const MAC_GUI_LEDGER: &str = "dist/evidence/mac-gui-ledger";
 pub(crate) const MACOS_SOURCE_TEST_RECEIPT: &str = "dist/evidence/release-source-tests-macos.json";
 pub(crate) const MACOS_SOURCE_TEST_LOCK: &str = "dist/evidence/.release-source-tests-macos.lock";
 pub(crate) const MACOS_SOURCE_TEST_RUN: &str = "dist/evidence/.release-source-tests-macos.run";
+/// The macOS promotion-check record (`release macos-promote`, after the candidate receipt); only
+/// that command writes it, and the gate reads it (fix-round review R1-9).
+pub(crate) const MACOS_PROMOTION_CHECK: &str = "dist/evidence/release-promotion-macos.json";
 
 /// Exclusive for any change to the store or to the candidate it is bound to (Promote,
 /// Source Freeze); shared for reading a consistent target and log. Taken before the
@@ -44,7 +47,8 @@ pub(super) fn is_manual_store_path(root: &Path, path: &Path) -> bool {
         .any(|reserved| path_identity::reaches(root, path, reserved))
 }
 
-/// Whether `path` names the macOS source-test receipt, its lock or its run record. Public
+/// Whether `path` names the macOS source-test receipt, its lock or its run record, or the
+/// promotion-check record (fix-round review R1-9): the release gate's own files. Public
 /// writers, and the ledger's configurable destination, refuse them. On macOS the spelling is also
 /// compared without case: a case-insensitive volume (the default) names one file by either case,
 /// even one not created yet (review round 4, BLOCKER 4); on a case-sensitive volume this refuses
@@ -54,6 +58,7 @@ pub(crate) fn is_macos_source_test_path(root: &Path, path: &Path) -> bool {
         MACOS_SOURCE_TEST_RECEIPT,
         MACOS_SOURCE_TEST_LOCK,
         MACOS_SOURCE_TEST_RUN,
+        MACOS_PROMOTION_CHECK,
     ]
     .iter()
     .any(|reserved| {
@@ -73,4 +78,34 @@ pub(crate) fn is_macos_source_test_path(root: &Path, path: &Path) -> bool {
 /// refuse it: a suite report written there would replace the ledger's history.
 pub(super) fn is_mac_ledger_path(root: &Path, path: &Path) -> bool {
     path_identity::reaches(root, path, MAC_GUI_LEDGER)
+}
+
+#[cfg(test)]
+mod tests {
+    /// Fix-round review R1-9: the macOS promotion-check record is the release gate's own file;
+    /// neither a public evidence writer nor the ledger's destination may take its path.
+    #[test]
+    fn the_promotion_check_record_is_reserved() {
+        let scratch =
+            stickymd_package::temporary::TemporaryDirectory::new("reserved-promotion").unwrap();
+        let root = scratch.path();
+        let record = std::path::Path::new("dist/evidence/release-promotion-macos.json");
+        assert!(super::is_macos_source_test_path(root, record));
+        let error = crate::qualification::validate_public_evidence_path(root, record).unwrap_err();
+        assert!(
+            error.contains("promotion-check record are owned"),
+            "{error}"
+        );
+        // The ledger's entry points exist on macOS only.
+        #[cfg(target_os = "macos")]
+        {
+            let error = crate::mac_ledger::read_whole(root, &root.join(record)).unwrap_err();
+            assert!(
+                error.contains("release-promotion-macos.json") && error.contains("would occupy"),
+                "{error}"
+            );
+        }
+        let other = std::path::Path::new("dist/evidence/release-promotion-macos.json.bak");
+        assert!(!super::is_macos_source_test_path(root, other));
+    }
 }

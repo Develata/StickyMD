@@ -11,7 +11,7 @@ use super::{
     },
     options::IDS,
     scenarios::{self, Driver},
-    staging::{self, Bytes, Candidate},
+    staging,
 };
 use crate::mac_common::{
     fixture::{bundle_hash, contained_executable, copy_fixture},
@@ -23,28 +23,14 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+mod evidence;
+mod outcome;
+#[cfg(test)]
+pub(crate) use evidence::failed_f01_evidence;
+pub(crate) use evidence::written_here;
+use evidence::{AppHash, save};
+use outcome::{Failure, joined, settle, untested_after_error};
 const CONFIG: &str = "version = 1\nview_mode = \"source\"\nopacity = 100\nalways_on_top = false\ncontent_zoom_percent = 100\n[window]\nwidth_dip = 520\nheight_dip = 480\ndock_edge = \"none\"\n";
-struct AppHash {
-    executable: String,
-    bundle: String,
-    /// The product inputs the bundle was built from, when `build-app.sh` recorded them.
-    inputs: Option<String>,
-    /// This driver's own executable, so the ledger can tell which driver produced the evidence.
-    driver: String,
-    /// The candidate ZIP R03 opens (`--zip`), checked to hold this bundle before any row runs.
-    zip: Option<Candidate>,
-    /// R03's write watch calibration (`--r03-write-restore`): its evidence cannot be recorded.
-    write_restore: bool,
-}
-
-impl AppHash {
-    fn bytes(&self) -> Bytes {
-        Bytes {
-            executable: self.executable.clone(),
-            bundle: self.bundle.clone(),
-        }
-    }
-}
 pub(super) fn execute(options: &Options) -> Result<(), String> {
     // This must precede app canonicalization, TCC checks, output creation and native GUI APIs.
     let vm = Command::new("/usr/sbin/sysctl")
@@ -159,25 +145,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 one(&app, &out, &hash, id, permissions, &mut input, &mut row)
             }));
-            match result {
-                Ok(Ok(())) => {}
-                // Review round 3, B4: an error around R03 (its session directory, attachments,
-                // cleanup) is the machine's, not the product's: untested, and the run unfinished.
-                Ok(Err(error)) if id == "R03" => {
-                    untested_after_error(&mut row, &error);
-                    input.stopped = Some(format!("R03 could not complete: {error}"));
-                }
-                Ok(Err(error)) => row.check("execution", false, error),
-                Err(payload) => {
-                    std::mem::forget(payload);
-                    input.stopped = Some("scenario unwound; owned child cleanup attempted".into());
-                    row.check(
-                        "execution",
-                        false,
-                        "scenario panicked; all later injection stopped",
-                    );
-                }
-            }
+            settle(id, result, &mut row, &mut input.stopped);
         }
         row.trace.append(&mut input.backend.trace);
         row.trace.sort_by_key(|t| t.ms);
@@ -240,6 +208,17 @@ pub(super) fn launch(
     relaunch: bool,
     diagnostic: bool,
 ) -> Result<(u32, Window), String> {
+    let pid = start(session, executable, relaunch, diagnostic)?;
+    Ok((pid, ready(session, pid)?))
+}
+
+/// [`launch`] up to the spawn: an error here means no product process was started.
+fn start(
+    session: &mut Session,
+    executable: &Path,
+    relaunch: bool,
+    diagnostic: bool,
+) -> Result<u32, String> {
     let stderr = fs::OpenOptions::new()
         .append(relaunch)
         .write(true)
@@ -260,7 +239,11 @@ pub(super) fn launch(
             .stdout(Stdio::null())
             .stderr(stderr),
     )?;
-    let pid = session.child.as_ref().ok_or("missing child")?.id();
+    Ok(session.child.as_ref().ok_or("missing child")?.id())
+}
+
+/// [`launch`] after the spawn: the product's one on-screen window within 20 s.
+fn ready(session: &mut Session, pid: u32) -> Result<Window, String> {
     let start = Instant::now();
     let window = loop {
         if let Some(status) = session.poll()? {
@@ -277,59 +260,8 @@ pub(super) fn launch(
         events::wait(100)?;
     };
     events::wait(500)?;
-    Ok((pid, window))
+    Ok(window)
 }
-/// `path` made absolute with its existing part canonical; `..` is refused. W12's logout cases use
-/// it too.
-/// Writes the evidence; `finished` is true only on the write after the last row, so a checkpoint
-/// of an interrupted run is never taken for a finished one (mac-ledger records only finished runs).
-/// Schema 2 is the first whose `finished` only this driver's rules set, and the first that names
-/// the batch the run was started for; mac-ledger records no older schema.
-/// Whether `name` (lowercased) is one `mac-gui` may write into --out: the evidence, each row's
-/// `<id>-stderr.log`, R03's attachments and F01's screenshot.
-pub(crate) fn written_here(name: &str) -> bool {
-    name == "mac-gui.json"
-        || name == "f01.ppm"
-        || name.ends_with("-stderr.log")
-        || name.starts_with("r03-")
-}
-
-/// `first`: the run's first checkpoint, created exclusively; later ones replace only it.
-fn save(
-    out: &Path,
-    environment: &str,
-    hash: &AppHash,
-    rows: &[Row],
-    finished: bool,
-    batch: Option<&str>,
-    first: bool,
-) -> Result<(), String> {
-    let json = evidence_json(environment, hash, rows, finished, batch);
-    let path = out.join("mac-gui.json");
-    if first {
-        crate::atomic_evidence::write_new(&path, json.as_bytes())
-    } else {
-        crate::atomic_evidence::write(&path, json.as_bytes())
-    }
-}
-
-/// R03's row after an error of the machine (review round 3 B4, fix round 4): untested, whatever
-/// its checks said before, which stay in its trace for diagnosis.
-fn untested_after_error(row: &mut Row, error: &str) {
-    for check in std::mem::take(&mut row.checks) {
-        row.trace.push(Trace {
-            ms: 0,
-            event: format!(
-                "before the error: {}: {}: {}",
-                check.name,
-                check.verdict.name(),
-                check.observation
-            ),
-        });
-    }
-    row.skip("execution", error);
-}
-
 /// Whether an attachment must exist: R03's prompt image, once its prompt check passed.
 fn required(id: &str, name: &str, row: &Row) -> bool {
     id == "R03"
@@ -339,42 +271,6 @@ fn required(id: &str, name: &str, row: &Row) -> bool {
         })
 }
 
-/// The evidence as written. A calibration run (`--r03-write-restore`) is never marked finished,
-/// so a `mac-ledger` that does not know the `calibration` member refuses it too (review fix
-/// round, B1): its R03 FAIL is the driver's bad sample, not the product's.
-fn evidence_json(
-    environment: &str,
-    hash: &AppHash,
-    rows: &[Row],
-    finished: bool,
-    batch: Option<&str>,
-) -> String {
-    let finished = finished && !hash.write_restore;
-    let batch = batch.map_or_else(String::new, |b| format!(",\"batch\":{}", quote(b)));
-    // The candidate ZIP R03 opened; mac-ledger records it with R03 alone.
-    let zip = hash.zip.as_ref().map_or_else(String::new, |zip| {
-        format!(",\"zip_sha256\":{}", quote(&zip.sha256))
-    });
-    // A calibration run's evidence says so, and mac-ledger refuses it.
-    let zip = if hash.write_restore {
-        format!("{zip},\"calibration\":\"r03-write-restore\"")
-    } else {
-        zip
-    };
-    format!(
-        "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished}{batch},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{}{zip},\"scenarios\":[{}]}}\n",
-        hash.inputs
-            .as_ref()
-            .map_or_else(String::new, |inputs| format!(
-                ",\"app_inputs\":{}",
-                quote(inputs)
-            )),
-        quote(&hash.executable),
-        quote(&hash.bundle),
-        quote(&hash.driver),
-        rows.iter().map(Row::json).collect::<Vec<_>>().join(",")
-    )
-}
 fn one(
     app: &Path,
     out: &Path,
@@ -383,8 +279,8 @@ fn one(
     permissions: Permissions,
     input: &mut Injection<Events>,
     row: &mut Row,
-) -> Result<(), String> {
-    let mut session = Session::new()?;
+) -> Result<(), Failure> {
+    let mut session = Session::new().map_err(Failure::PreLaunch)?;
     // A save fault left in place would make cleanup fail and stop every later scenario. Declared
     // after the session, the guard drops first, on unwind too.
     let mut fault =
@@ -399,7 +295,8 @@ fn one(
                 hash.write_restore,
                 input.backend.started,
                 row,
-            )?;
+            )
+            .map_err(Failure::Run)?;
             // Not a product result: the row stays untested and the run is not finished.
             if let Some(reason) = stopped {
                 untested_after_error(row, &reason);
@@ -413,17 +310,16 @@ fn one(
             "W11" | "W12" => super::lifecycle::DURABLE,
             _ => "",
         };
-        let executable = copy_fixture(&mut session, app, note, CONFIG, &hash.executable)?;
-        if bundle_hash(&session.path().join("StickyMD.app"))? != hash.bundle {
-            return Err("copied bundle manifest changed; refused before launch".into());
-        }
-        let (pid, window) = launch(&mut session, &executable, false, id == "W10")?;
+        let executable = copy_fixture(&mut session, app, note, CONFIG, &hash.expected())?;
+        let pid =
+            start(&mut session, &executable, false, id == "W10").map_err(Failure::PreLaunch)?;
+        let window = ready(&mut session, pid).map_err(Failure::Run)?;
         row.trace.push(Trace {
             ms: input.backend.started.elapsed().as_millis() as u64,
             event: format!(
                 "spawn PID={pid}; program_dir={}; fixture_sha256={}",
                 session.path().display(),
-                crate::integrity::sha256_bytes(note.as_bytes())?
+                crate::integrity::sha256_bytes(note.as_bytes()).map_err(Failure::Run)?
             ),
         });
         let mut live = Live {
@@ -443,6 +339,7 @@ fn one(
             },
             id,
         )
+        .map_err(Failure::Run)
     })();
     let release = input.release();
     let writable = fault.restore();
@@ -496,20 +393,12 @@ fn one(
     if cleanup.is_err() {
         input.stopped = Some("child/directory cleanup failed; no more scenarios may launch".into());
     }
-    let errors = [result, release, writable, log, cleanup]
-        .into_iter()
-        .filter_map(Result::err)
-        .collect::<Vec<_>>();
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
-    }
+    joined(result, [release, writable, log, cleanup])
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AppHash, Row, evidence_json, required, untested_after_error};
+    use super::{Row, required, untested_after_error};
     use crate::mac_gui::{
         model::{Verdict, aggregate},
         translocation::{CHECKS, PROMPTED, UNWRITTEN},
@@ -543,26 +432,5 @@ mod tests {
         untested_after_error(&mut row, "prompt.ppm is missing");
         assert_eq!(aggregate(&row.checks), Verdict::NotTested);
         assert!(row.trace.iter().any(|t| t.event.contains(PROMPTED)));
-    }
-
-    /// Review fix round, B1: a calibration run's evidence is never marked finished, so a reader
-    /// that ignores `calibration` (the mac-ledger of 916a0f1) refuses it as unfinished too.
-    #[test]
-    fn calibration_evidence_is_never_finished() {
-        let hash = |write_restore| AppHash {
-            executable: "a".repeat(64),
-            bundle: "b".repeat(64),
-            inputs: None,
-            driver: "d".repeat(64),
-            zip: None,
-            write_restore,
-        };
-        let rows = [Row::new("R03")];
-        let ordinary = evidence_json("{}", &hash(false), &rows, true, Some("rc1"));
-        assert!(ordinary.contains("\"finished\":true"), "{ordinary}");
-        assert!(!ordinary.contains("calibration"));
-        let calibration = evidence_json("{}", &hash(true), &rows, true, Some("rc1"));
-        assert!(calibration.contains("\"finished\":false"), "{calibration}");
-        assert!(calibration.contains("\"calibration\":\"r03-write-restore\""));
     }
 }

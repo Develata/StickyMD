@@ -12,6 +12,8 @@ pub(super) mod output;
 mod read;
 #[cfg(target_os = "macos")]
 pub(super) mod run;
+#[cfg(target_os = "macos")]
+mod steps;
 #[cfg(test)]
 mod tests;
 mod verdict;
@@ -115,6 +117,36 @@ pub(super) fn lock_for_reading(root: &std::path::Path) -> Result<Reading, String
     }
 }
 
+/// `phase 18`'s check of the ignored-test table on a Mac (plan 11 #macos-readiness-check, the
+/// Phase 16 row classification; whole-gate review A1): the eight packages' test targets and their
+/// `--list --ignored`, found and listed with the runner's own commands, must name exactly the
+/// table's tests, as many times as the table does, and every target found must be listed once
+/// (fix-round review R1-5), so a renamed or new ignored test is caught before it is merged rather
+/// than on R. A target that cannot be listed fails the check, since its ignored tests are unknown.
+/// It builds in Cargo's default build directory, which it never empties: that the cache there
+/// agrees with the sources' modification times is a precondition (plan 11, USER 2026-11-26).
+#[cfg(target_os = "macos")]
+pub(super) fn ignored_table(root: &std::path::Path) -> Result<(), String> {
+    let steps = steps::Steps::in_default_directory(root);
+    let (executables, doc) = steps::discover(&steps)?;
+    let (listed, mut problems) = steps::listings(&steps, &executables, &doc);
+    let expected: Vec<Target> = executables
+        .into_iter()
+        .map(|executable| executable.target)
+        .chain(doc)
+        .collect();
+    problems.extend(ignored::differences(&listed, &expected));
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the ignored-test table ({}) does not match the targets' own listings: {}",
+            "tools/stickymd-smoke/src/release/macos/ready/source_tests/ignored.rs",
+            problems.join("; ")
+        ))
+    }
+}
+
 /// Whether `path` exists, refusing a link (it would be locked or replaced as the link) and any
 /// error but absence (review round 4).
 #[cfg(target_os = "macos")]
@@ -182,10 +214,13 @@ pub(super) fn command() -> Vec<String> {
 pub(super) const DRIVER_TARGET: &str = "target/macos-driver";
 
 /// How the runner builds the `mac-gui` driver on R: the README's build, into `DRIVER_TARGET`; it
-/// records the SHA-256 of what Cargo built (review round 4, BLOCKER 1). The first entry is the
-/// environment the build is given.
+/// records the SHA-256 of what Cargo built (review round 4, BLOCKER 1). The leading `KEY=VALUE`
+/// entries are the environment the build is given: its intermediate artifacts go under
+/// `DRIVER_TARGET` too, whatever `CARGO_BUILD_BUILD_DIR` the shell sets (fix-round review R1-1),
+/// so the recorded command is the build as it ran and the gate compares it with this one.
 pub(super) fn driver_command() -> Vec<String> {
     [
+        "CARGO_BUILD_BUILD_DIR=target/macos-driver/build",
         "CARGO_PROFILE_RELEASE_PANIC=unwind",
         "cargo",
         "build",

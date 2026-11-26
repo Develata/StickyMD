@@ -1,7 +1,7 @@
 //! All macOS FFI for resource measurements; SDK layouts from sys/resource.h and CoreGraphics.
 //! plan_ref: docs/plan/10_performance_reliability.md#macos-gates
 
-use super::model::Sample;
+use super::model::{Sample, sampled_pid};
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::time::Instant;
 
@@ -100,7 +100,7 @@ pub(super) fn timebase() -> Result<(u32, u32), String> {
 }
 
 pub(super) fn sample(pid: u32, started: Instant) -> Result<Sample, String> {
-    let pid = c_int::try_from(pid).map_err(|_| "PID is out of range")?;
+    let pid = sampled_pid(pid).ok_or("PID is out of range")?;
     let mut info = RusageInfoV4::default();
     // SAFETY: flavor 4 writes exactly rusage_info_v4 (296 bytes); the API's opaque
     // rusage_info_t* points to that storage, not to an additional indirection.

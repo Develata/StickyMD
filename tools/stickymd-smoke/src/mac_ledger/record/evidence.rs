@@ -4,6 +4,28 @@
 use super::{Built, Identity, OpenedZip, Record, VERDICTS, is_sha256, optional_text, system};
 use crate::release::json::{self, Value};
 
+/// The fixed texts a driver built before gate review D2 (59f38e1) wrote as an `execution` FAIL,
+/// in a run it marked finished, for an error before the product was spawned (plan 11
+/// #phase-16-macos-host "记录", gate review round 2 R2-1): `ditto` failing or running out of
+/// time, the copy's executable or bundle manifest differing from the evidence. Each opens the
+/// row's errors (`one` joins later ones after it). Its other errors before the spawn (the session
+/// directory, the fixture writes) share their wording with errors after it, so none is named.
+const OLD_PRE_LAUNCH: [&str; 4] = [
+    "ditto failed: ",
+    "ditto exceeded 120 seconds",
+    "Copied executable SHA-256 changed",
+    "copied bundle manifest changed; refused before launch",
+];
+
+/// The fixed text of [`OLD_PRE_LAUNCH`] a check's observation opens with, if any (no driver
+/// writes one in a check of a finished run but as that FAIL).
+fn old_pre_launch(check: &Value) -> Option<&'static str> {
+    let observation = check.field("observation").and_then(Value::string).ok()?;
+    OLD_PRE_LAUNCH
+        .into_iter()
+        .find(|text| observation.starts_with(text))
+}
+
 /// The records of a finished `mac-gui` run, one per row, from one read of its bytes (the hash
 /// and the parsed verdicts describe the same file). Evidence written before the driver hash was
 /// recorded cannot say which driver produced it, so it is refused.
@@ -131,6 +153,13 @@ pub(in crate::mac_ledger) fn from_evidence(
             if name == "shared stop" || unstarted {
                 return Err(format!(
                     "P16-{row} was not run (check {name:?}); the run was cut short and cannot be recorded"
+                ));
+            }
+            if name == "execution"
+                && let Some(text) = old_pre_launch(check)
+            {
+                return Err(format!(
+                    "P16-{row} failed before the product was spawned ({text:?}), which a driver older than gate review D2 wrote as a FAIL; it is not a product result and cannot be recorded"
                 ));
             }
         }

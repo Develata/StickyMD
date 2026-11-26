@@ -1,6 +1,6 @@
 //! Evidence is judged from a strict parse of the object that owns each value.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::fixtures::{checks, exact, valid_document};
 use super::{Companion, G5_SCREENSHOTS, Origin, g5_companions, validate};
@@ -28,9 +28,13 @@ impl Drop for Scratch {
     }
 }
 
+/// A candidate built on this checkout's HEAD: the run commit equal to it must still be a commit
+/// of the repository (fix-round review R3-4).
 fn candidate() -> Candidate {
     Candidate {
-        source_commit: "a".repeat(40),
+        source_commit: crate::qualification::reuse::tests::checkout_head()
+            .1
+            .clone(),
         version: "0.1.0".to_owned(),
         cargo_lock_sha256: "b".repeat(64),
         exe_sha256: "c".repeat(64),
@@ -49,8 +53,9 @@ const INPUT: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789a
 
 fn origin(candidate: &Candidate) -> Origin<'_> {
     Origin {
-        // No repository: a run commit other than the candidate's source cannot be judged reusable.
-        repository: Path::new("stickymd-module-evidence-no-repository"),
+        // This checkout, which holds the candidate's commit; a run commit other than it is not
+        // a commit here, so it cannot be judged reusable.
+        repository: &crate::qualification::reuse::tests::checkout_head().0,
         source_commit: &candidate.source_commit,
         version: &candidate.version,
         exe_sha256: &candidate.exe_sha256,
@@ -206,6 +211,9 @@ fn exact_groups_need_every_case_in_order_and_the_origin_identity() {
     other.version = "9.9.9".to_owned();
     let error = validate(ModuleId::G4, &complete, &origin(&other)).unwrap_err();
     assert!(error.contains("STALE RECEIPT: version"), "{error}");
+    let harness = format!("\"harness_commit\":\"{}\"", candidate.source_commit);
+    let other_harness = format!("\"harness_commit\":\"{}\"", "b".repeat(40));
+    assert!(complete.contains(&harness));
     for (from, to) in [
         ("\"worktree_dirty\":false", "\"worktree_dirty\":true"),
         (
@@ -216,7 +224,7 @@ fn exact_groups_need_every_case_in_order_and_the_origin_identity() {
             "\"windows\":\"Microsoft Windows 10.0.26200.9457\"",
             "\"windows\":\"Windows_NT\"",
         ),
-        ("\"harness_commit\":\"aaaa", "\"harness_commit\":\"baaa"),
+        (harness.as_str(), other_harness.as_str()),
     ] {
         assert!(
             validate(

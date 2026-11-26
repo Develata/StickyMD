@@ -15,7 +15,8 @@ writes its timestamps, quits through SIGTERM and checks injected = recorded = ch
 Each key is paired with the first frame whose drawing started after the app saw it; stages are
 event to main thread, main thread to the start of drawing, and drawing through `present`. What
 follows `present` (commit, compositor, display) is not measured. Raw recordings are kept under
-`<out>/raw`; a cancel or a failed cleanup stops the campaign. Several `--app` values run
+`<out>/raw`; a cancel or a failed cleanup stops the campaign. Each round's copy must have the
+executable, bundle manifest and input fingerprint taken of its `--app` at the start. Several `--app` values run
 interleaved for A/B; run the same app twice for an A/A bound first, on an otherwise idle host.
 It needs Accessibility, PostEvent and an unwind build:
 
@@ -34,7 +35,8 @@ cargo run --quiet --locked -p stickymd-smoke -- mac-resources --help
 
 Supply a Release bundle. Each Source/Preview/Split run uses `ditto` to copy it into
 a fresh private program directory with a deterministic 20 KiB, 20-formula note.
-The copied executable hash must match the input. `CGWindowListCopyWindowInfo`
+The copy's executable, bundle manifest and product input fingerprint must match those the
+evidence records for the input, checked before the product starts. `CGWindowListCopyWindowInfo`
 checks the child's PID and a content-sized on-screen window, without titles or
 screen capture. This is window readiness, not proof of rendered formula correctness.
 The tool then warms up for 30 seconds, samples `proc_pid_rusage` V4 footprint,
@@ -602,8 +604,18 @@ cargo run --quiet -p stickymd-smoke --locked -- release macos-ready --release-so
 `macos-source-tests` starts only on a clean checkout of R. It records its own run identity,
 removes any earlier receipt, runs the row's exact `cargo test --locked` over the eight packages,
 then the explicit runs (P18-L08's two volumes and P16-S06's exFAT test, by exact name), and
-builds the `mac-gui` driver on R into `target/macos-driver`, which it empties first so no cache
-of another commit can stand in for R's build. It writes
+builds the `mac-gui` driver on R into `target/macos-driver` (its intermediate artifacts too,
+`CARGO_BUILD_BUILD_DIR=target/macos-driver/build`, recorded in the receipt's driver command),
+which it empties first so no cache of another commit can stand in for R's build. The same holds
+for the tests: target discovery, each target's listings, the main run and the explicit runs all
+build with `CARGO_TARGET_DIR=target/macos-source-tests` and
+`CARGO_BUILD_BUILD_DIR=target/macos-source-tests/build`, whatever build directory your shell
+sets, and the runner empties that directory before discovery (Cargo
+judges freshness by modification times, so a newer test program another source left in the
+default `target/` could pass for R's). Every test is therefore rebuilt from R on each run, and
+the runner refuses that directory if it, or `target` above it, is a link (a `target` linked to a
+shared cache is refused rather than emptied) or if it holds the running `stickymd-smoke` (run the
+runner with the default `cargo run` above, not from that directory). It writes
 `dist/evidence/release-source-tests-macos.json` (schema 3) with every test of every target, how
 each process ended, the source identity at both ends and the driver's SHA-256. `macos-ready` is
 read-only and also runs only on a clean checkout of R, so the gate is judged with R's own tools:
@@ -613,6 +625,39 @@ be the driver that run built, `target/macos-driver/release/stickymd-smoke`; othe
 `mac-gui` row can PASS. The bytes depend on that build directory's path, so a rerun on the same
 checkout builds the same driver: copy that file into the VM for the release's `mac-gui` runs. `--macos-major` is the macOS major version the five download paths must
 have run on. P16-S06 holds only by its explicit run.
+
+The gate classifies every test a receipt lists as ignored by a table in
+`src/release/macos/ready/source_tests/ignored.rs`. On a Mac, `phase 18` checks that table
+before R exists: it finds the eight packages' test targets and their `--list --ignored` the
+way the runner does and fails unless the sorted listings and the table are the same sequence
+(an ignored test the table lacks, an entry no listing names, or a test listed more often than
+the table names it) and every target found is listed exactly once, so a renamed, added or moved
+ignored test is classified before it merges. It builds in the default build directory, so it
+assumes that cache agrees with the sources' modification times (plan 11, USER 2026-11-26).
+Off macOS the task is NOT_TESTED.
+
+The candidate is promoted on a clean checkout of R too:
+
+```sh
+cargo run --quiet -p stickymd-smoke --locked -- release macos-promote --run-id <run> --attempt <n> --release-source <R> --zip <downloaded ZIP>
+```
+
+`macos-promote` checks the source identity (HEAD is R, the checkout clean) before it takes its
+lock or downloads anything, and again just before it writes the receipt. After the receipt it
+writes `dist/evidence/release-promotion-macos.json`, naming R and the receipt's SHA-256.
+`macos-ready` reads that record: when it is missing, malformed, or names another commit or
+another receipt, the package and P16-P01 are `NOT_TESTED`. Promote again on R before
+`macos-ready`, even a candidate promoted earlier on another commit: the receipt names neither R
+nor a time, so the same attempt writes the same receipt and the USER records bound to its digest
+still stand. The last reading of `macos-ready` (the candidate, then the source identity) holds
+the promotion lock shared, so it fails while a promotion runs, and without printing verdicts
+when there is no lock file at all (no promotion has run in this checkout yet). A replaced staging directory is deleted only when it holds nothing but what
+a promotion writes (the one ZIP its old receipt names, the checksum file, the SBOM, the files
+beside the app and the `.app` directory); anything else (a note written beside the staged `.app`,
+say), or no readable old receipt, keeps it under a name not taken yet, and its path is printed.
+`macos-promote` stops before changing anything when a link or a non-file lies at the receipt,
+reuse-record or promotion-check path, or when the file at the promotion-check path is not such a
+record.
 
 The USER's records for a release go into the same ledger, bound to the candidate the resolver
 returns for R:
@@ -633,7 +678,17 @@ running and never stands for a FAIL. R03 cannot PASS until its probe runs on the
 a FAIL of R03 in the batch is a FAIL, otherwise it is `NOT_TESTED`
 ([M5 report](../../docs/report/2026-11-24-m5-macos-readiness-check.md)). A plain `mac-gui` row
 holds when one identity has a clean run even if another failed (the approved grouping rule);
-Manual and resource rows keep a recorded FAIL.
+Resource rows (R01, R02) follow the same grouping rule; Manual rows and R03 (in its batch) keep a recorded FAIL whatever another identity shows, and a resource row with a recorded FAIL cannot be waived.
+
+`--ledger` may not be a symbolic link, nor occupy the source-test receipt, its lock or its run
+record or the promotion-check record (which public evidence writers refuse too), nor be a lock
+file itself or lie under one's name (any path component ending in `.lock`, in any case): such a
+command reads and writes nothing. The ledger is read as strictly as it is written: each record kind
+has exactly its fields, and program results and older USER receipts only in a field set some writer
+of them wrote, so an unknown or misspelled member rejects the whole ledger rather than being dropped.
+The P16-R01 and P16-R02 lines of one `mac-resources` evidence are read only together, alike but
+for row and verdict; a ledger holding one without the other, or another program result naming
+that evidence, is refused (a `mac-gui --only` run still records one row).
 
 
 The release workflow uses `workspace-version` too. `verify-workflow` reads one
@@ -1045,15 +1100,23 @@ at or after the latest-onset deadline; otherwise it is NOT_TESTED (elsewhere a s
 seen after its deadline stays late).
 
 `mac-gui.json` (schema 2) is atomically checkpointed after every scenario with `"finished":false`; only the
-write after the last scenario of a run that was not cut short (cancelled, or stopped after a panic
-or a failed cleanup) says `"finished":true`, and `mac-ledger record` refuses any other file, and
+write after the last scenario of a run that was not cut short (cancelled, or stopped after a panic,
+a failed cleanup, or an error before a row's product process was spawned: its session directory,
+the copy and its check, the fixture writes, the spawn itself; that row is NOT_TESTED, while a
+failure after the spawn, a window that never appears included, is the product's FAIL) says
+`"finished":true`, and `mac-ledger record` refuses any other file, and
 any file with a row stopped by the shared stop or never started, and any older schema (whose
-drivers could mark such a run finished). `mac-gui --batch <name>` writes the acceptance batch the
+drivers could mark such a run finished). A driver built before that rule wrote an error before
+the spawn as an `execution` FAIL in a finished run; `record` refuses a row whose check opens with
+one of its fixed texts (`ditto failed: …`, `ditto exceeded 120 seconds`, `Copied executable
+SHA-256 changed`, `copied bundle manifest changed; refused before launch`). `mac-gui --batch <name>` writes the acceptance batch the
 run is for into the file; `mac-ledger record` takes it from there. It records OS,
 VM/override/permission/display facts, fixed config, executable SHA-256, a sorted
 bundle-content manifest SHA-256 (including Info.plist; excluding xattrs), PID,
 fixture hash, timestamped requests, individual injected events, observations,
-checks and row verdicts. Copies are rehashed before launch. Stderr is retained as
+checks and row verdicts. Every copy (`mac-gui`, `mac-logout`, `mac-resources`, each
+`mac-latency` round) is checked before launch against the executable, bundle manifest and input
+fingerprint the evidence records. Stderr is retained as
 `<ID>-stderr.log`; F01 optionally writes `F01.ppm`. Use a new output directory per
 run to avoid confusing old screenshots/logs with the current JSON. Any FAIL exits
 1, and so does a run cut short; NOT_TESTED alone exits 0. A row aggregates FAIL first, then NOT_TESTED, then
@@ -1074,7 +1137,7 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | E01 | AX native panel cancel/dismiss, folder/name/save; exact exported Markdown bytes | No managed-image export fixture in this batch |
 | F01 | `font selection` stderr names PingFang SC and Times New Roman (plan 02 defaults); optional CGWindowListCreateImage screenshot | The log does not name the code face, so Menlo and per-glyph review are NOT_TESTED; row incomplete |
 | I03 | A scratch document in a TextEdit instance of its own (`open -n`) first: `a` held (one key-down, 15 key-downs flagged as automatic repeats 80ms apart, focus rechecked before each, the key-up) must open the accent menu, seen while the key is down as a new window of TextEdit's own process, and a real `2` must then pick an accented letter; only then the same hold in StickyMD must show no new window of StickyMD's process while the key is down, and after a real `2` the note must have gained 15 or 16 `a` then `2` | The repeats are injected (USER 2026-11-19), so the repeat rate is the driver's and "repeats at the system's rate" is not shown; if the control opens no menu or picks no accent, StickyMD is not held and nothing is judged (NOT_TESTED); another window appearing is NOT_TESTED; only the control's own TextEdit instance is killed, without saving; never reused across batches |
-| R03 | The app under test zipped, its archive and every extracted file marked with quarantine flags `00c3` (the user-approved bit preset, USER 2026-11-19), opened through `open` (LaunchServices); the one StickyMD process runs from `/AppTranslocation/` with a read-only nullfs mount of the copy; a fully shown window of the process (alpha ≥ 0.9, at least 200×150 pt) on screen at the modal-panel level (8) or above, and on its stderr `当前目录不可写` with a move advice (today's `请先用访达把 StickyMD.app 移到别处` or the phrase Phase 18 keeps, `把整个 StickyMD 文件夹移到别处`) and `Read-only file system` (the generic `请将程序移动到有写权限的文件夹` fails; the prefix with neither advice is NOT_TESTED; a modal window whose stderr lacks the prefix fails; a unit test holds the phrases to `apps/stickymd-mac/src/main.rs` and `paths.rs`); the process is the one whose executable lies in this copy's translocation mount (any other StickyMD is left alone); after `open` reactivates the instance, and only if that PID still shows that window, Return is posted to that PID alone and the process ends within 5s (still running is NOT_TESTED: no receipt says which window took the key); runningboard's termination record for the PID is an exit with status 1 (an unreadable log is NOT_TESTED); the download directory lists the same top-level names before and after. Cleanup, on every path, ends only processes started from this copy or its translocated mount | Skips the system's first-open confirmation; Gatekeeper assessment is off in the test VM, so neither path exercises it. The prompt is shown before launch finishes and answers no AX request (macOS 27.2: `kAXErrorCannotComplete`), so its text is read from stderr (the product's `fatal_startup` writes the same message just before the alert), not from the window; the window's image is kept as `R03-prompt.ppm` but not inspected. No translocation, no modal window seen while the process runs, or a prompt that could not be answered is NOT_TESTED; never reused across batches |
+| R03 | The app under test zipped, its archive and every extracted file marked with quarantine flags `00c3` (the user-approved bit preset, USER 2026-11-19), opened through `open` (LaunchServices); the one StickyMD process runs from `/AppTranslocation/` with a read-only nullfs mount of the copy; a fully shown window of the process (alpha ≥ 0.9, at least 200×150 pt) on screen at the modal-panel level (8) or above, and on its stderr a line starting with `当前目录不可写` that is, character for character, the portable bundle's whole sentence `当前目录不可写，请先把 StickyMD.app 拖进“应用程序”，或把整个 StickyMD 文件夹移到别处。` (other stderr lines may come before it), and `Read-only file system` (the generic `请将程序移动到有写权限的文件夹` fails; any other line after the prefix, such as the older `请先用访达把 StickyMD.app 移到别处`, a sentence that negates the advice, or the sentence with more after it, is NOT_TESTED; a modal window whose stderr has no line starting with the prefix fails, another prefix before it included; a unit test holds the sentence to the string literal in `apps/stickymd-mac/src/paths.rs`); the process is the one whose executable lies in this copy's translocation mount (any other StickyMD is left alone); after `open` reactivates the instance, and only if that PID still shows that window, Return is posted to that PID alone and the process ends within 5s (still running is NOT_TESTED: no receipt says which window took the key); runningboard's termination record for the PID is an exit with status 1 (an unreadable log is NOT_TESTED); the download directory lists the same top-level names before and after. Cleanup, on every path, ends only processes started from this copy or its translocated mount | Skips the system's first-open confirmation; Gatekeeper assessment is off in the test VM, so neither path exercises it. The prompt is shown before launch finishes and answers no AX request (macOS 27.2: `kAXErrorCannotComplete`), so its text is read from stderr (the product's `fatal_startup` writes the same message just before the alert), not from the window; the window's image is kept as `R03-prompt.ppm` but not inspected. No translocation, no modal window seen while the process runs, or a prompt that could not be answered is NOT_TESTED; never reused across batches |
 
 K02 covers typing, Cmd+S/Z/Shift+Z/A/C/X/V, Cmd+arrows, find and replace,
 Cmd+1/2/3 and Cmd+=/-/0. Cmd+S polls `note/note.md` directly until 550ms after the
@@ -1115,7 +1178,9 @@ NOT_TESTED; a seen wrong decision, answer or order fails even when a later fact 
 termination record counts only when the product had ended before the driver's cleanup began
 (else the exit may be the cleanup's own, NOT_TESTED).
 
-It writes `mac-gui.json` (schema 2) with the row `P16-W12-logout-<case>`, the boot session
+The private copy must have the executable, bundle manifest and input fingerprint the record
+names before the product starts; a copy that does not stops the case before its first record is
+written. It writes `mac-gui.json` (schema 2) with the row `P16-W12-logout-<case>`, the boot session
 (`kern.bootsessionuuid`), the coordinator, child and product PIDs and the last key's time, for
 `mac-ledger record`. The record is written with `finished:false` before anything starts and turns
 `finished:true` only after the case ran (the GUI part finished), every process of the fixture is

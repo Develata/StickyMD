@@ -67,9 +67,19 @@ impl Reading {
         };
         let numer = u128::from(timebase.0);
         let lower_window = lower.elapsed_seconds - before.elapsed_seconds;
-        // The middle sample must sit between the two others, its counters too.
-        ticks(lower, after)?;
-        if !(lower_window > 0.0 && lower.elapsed_seconds < after.elapsed_seconds) {
+        // The middle sample must sit between the two others, every counter too: CPU ticks and
+        // both wake-up counts, first to middle as well as middle to last, whether or not it
+        // bounds the window from below (gate review D5).
+        let ordered = |from: &Sample, to: &Sample| {
+            ticks(from, to).is_some()
+                && from.pkg_idle_wakeups <= to.pkg_idle_wakeups
+                && from.interrupt_wakeups <= to.interrupt_wakeups
+        };
+        if !(ordered(before, lower)
+            && ordered(lower, after)
+            && lower_window > 0.0
+            && lower.elapsed_seconds < after.elapsed_seconds)
+        {
             return None;
         }
         Some(Self {
@@ -397,12 +407,20 @@ fn optional_number(value: &Value, key: &str) -> Result<Option<f64>, String> {
     }
 }
 
-/// A VALID run's life as the tool drives it (review B1): a process started, its window ready
-/// within 30 s, for Hidden hidden through the menu after that, then 30 s of warm-up before the
-/// first sample; the process did not exit.
+/// A VALID run's life as the tool drives it (review B1): a process started (a PID above 0),
+/// its window ready within 30 s, for Hidden hidden through the menu after that (the wait for the
+/// status item a finite, non-negative time between readiness and the hide), then 30 s of warm-up
+/// before the first sample; the process did not exit.
 fn lifecycle(run: &Value, hidden: bool, first_sample: f64) -> Result<(), String> {
     let refused = |what: &str| Err(format!("a VALID run {what}, which the tool never writes"));
-    if matches!(run.field("pid")?, Value::Null) {
+    // A PID the sampler could have measured: a `u32`, then a `c_int`, above 0 (round 2, R2-7).
+    let pid = match run.field("pid")? {
+        Value::Null => None,
+        pid => u32::try_from(pid.unsigned()?)
+            .ok()
+            .and_then(model::sampled_pid),
+    };
+    if !pid.is_some_and(|pid| pid > 0) {
         return refused("names no process");
     }
     if optional_number(run, "exit_observed_seconds")?.is_some()
@@ -419,6 +437,14 @@ fn lifecycle(run: &Value, hidden: bool, first_sample: f64) -> Result<(), String>
     let hidden_at = optional_number(run, "hidden_seconds")?;
     let waited = optional_number(run, "status_item_wait_seconds")?;
     let start = match (hidden, hidden_at, waited) {
+        // The menu is asked after readiness and the window is seen off screen after its answer,
+        // so the wait fits between the two (gate review D5).
+        (true, Some(_), Some(wait)) if !(wait.is_finite() && wait >= 0.0) => {
+            return refused("records a status item wait that is no time");
+        }
+        (true, Some(at), Some(wait)) if wait > at - ready => {
+            return refused("records a status item wait longer than from readiness to the hide");
+        }
         (true, Some(at), Some(_)) if at >= ready => at,
         (false, None, None) => ready,
         _ => {

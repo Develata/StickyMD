@@ -1296,7 +1296,7 @@ fn a_success_first_seen_after_the_deadline_is_late() {
 fn translocation_checks_refuse_bad_samples() {
     use super::translocation::{
         EXIT_ONE, GENERIC_ADVICE, NOTE_ATTRIB, NOTE_EXTEND, NOTE_REVOKE, NOTE_WRITE, Observed,
-        TRANSLOCATED_ADVICE, Watched, judge,
+        TRANSLOCATED_PROMPT, Watched, judge,
     };
     let plist = "StickyMD.app/Contents/Info.plist";
     let tree = vec![
@@ -1312,7 +1312,8 @@ fn translocation_checks_refuse_bad_samples() {
             events,
         })
     };
-    let good = || Observed {
+    let good = || {
+        Observed {
         zip: None,
         quarantine: Some("00c3;6afec4a5;Safari;".into()),
         path: Some(
@@ -1326,8 +1327,10 @@ fn translocation_checks_refuse_bad_samples() {
         ),
         exited_early: false,
         window: Some("Window { id: 64, layer: 8, onscreen: true }".into()),
-        stderr: "当前目录不可写，请先用访达把 StickyMD.app 移到别处。\n\ncannot create a file: \
-                 Read-only file system (os error 30)\n"
+        // The product's portable advice (plan 05), after a warning the product may print first.
+        stderr: "the accent popup could not be turned off; holding a key may add characters\n\
+                 当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，或把整个 StickyMD \
+                 文件夹移到别处。\n\ncannot create a file: Read-only file system (os error 30)\n"
             .into(),
         stderr_unreadable: None,
         unanswered: None,
@@ -1337,6 +1340,7 @@ fn translocation_checks_refuse_bad_samples() {
         after: tree.clone(),
         // Gatekeeper's own quarantine attribute change is not a write.
         watch: watched(vec![("StickyMD.app".into(), NOTE_ATTRIB)]),
+    }
     };
     let verdict = |o: Observed| {
         let mut row = Row::new("R03");
@@ -1567,26 +1571,27 @@ fn translocation_checks_refuse_bad_samples() {
         let check = row.checks.iter().find(|c| c.name == target).unwrap();
         assert_eq!(check.verdict, Verdict::NotTested, "{target}: {}", row.json());
     }
-    // The advices are the product's own words (main.rs now, paths.rs after Phase 18), and the
-    // generic one never reads as the move advice.
-    let product = [
-        include_str!("../../../../apps/stickymd-mac/src/main.rs"),
-        include_str!("../../../../apps/stickymd-mac/src/paths.rs"),
-    ]
-    .concat();
+    // The whole prompt is one string literal of the product's code (`paths.rs`, not its tests
+    // below), read with its line continuations joined as Rust joins them, so a change of the
+    // product's wording fails here (gate review D8, round 2 R2-2); the generic advice never reads
+    // as the move advice.
+    let (product, _) = include_str!("../../../../apps/stickymd-mac/src/paths.rs")
+        .split_once("\n#[cfg(test)]\nmod tests")
+        .expect("paths.rs keeps its tests in a trailing `mod tests`");
+    let mut joined = String::new();
+    let mut rest = product;
+    while let Some((before, after)) = rest.split_once("\\\n") {
+        joined.push_str(before);
+        rest = after.trim_start();
+    }
+    joined.push_str(rest);
     assert!(
-        TRANSLOCATED_ADVICE
-            .iter()
-            .any(|a| product.contains("当前目录不可写，") && product.contains(a)),
-        "the product no longer gives a known move advice; update TRANSLOCATED_ADVICE"
+        joined.contains(&format!("\"{TRANSLOCATED_PROMPT}\"")),
+        "the product no longer gives this prompt; update TRANSLOCATED_PROMPT"
     );
     assert!(product.contains(&format!("当前目录不可写，{GENERIC_ADVICE}。")));
-    assert!(
-        TRANSLOCATED_ADVICE
-            .iter()
-            .all(|a| !GENERIC_ADVICE.contains(a))
-    );
-    // Phase 18's wording passes too.
+    assert!(!TRANSLOCATED_PROMPT.contains(GENERIC_ADVICE));
+    // The prompt on the first line passes too.
     let (v, row) = verdict(Observed {
         stderr:
             "当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，或把整个 StickyMD \
@@ -1600,6 +1605,65 @@ fn translocation_checks_refuse_bad_samples() {
             .iter()
             .any(|c| c.name == super::translocation::PROMPTED && c.verdict == Verdict::Pass)
     );
+    // Gate review D8: the prompt's line starts with 当前目录不可写 (plan 05 keeps the prefix), so
+    // another prefix before it is a prompt about something else and fails; the advice the
+    // product gave before Phase 18 (move only the `.app`), or half of today's, is not the
+    // advice, and the prompt check does not pass.
+    let prompt = |stderr: &str| {
+        let (_, row) = verdict(Observed {
+            stderr: stderr.into(),
+            ..good()
+        });
+        row.checks
+            .iter()
+            .find(|c| c.name == super::translocation::PROMPTED)
+            .unwrap()
+            .verdict
+    };
+    let cause = "\n\ncannot create a file: Read-only file system (os error 30)\n";
+    for (stderr, expected) in [
+        (
+            format!(
+                "启动失败：当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，\
+                 或把整个 StickyMD 文件夹移到别处。{cause}"
+            ),
+            Verdict::Fail,
+        ),
+        (
+            format!("当前目录不可写，请先用访达把 StickyMD.app 移到别处。{cause}"),
+            Verdict::NotTested,
+        ),
+        (
+            format!("当前目录不可写，或把整个 StickyMD 文件夹移到别处。{cause}"),
+            Verdict::NotTested,
+        ),
+        // Gate review round 2, R2-2: the line is the product's whole sentence, character for
+        // character, so a sentence that holds both parts but says something else, or one with
+        // more after it, is not the prompt; the exact sentence passes, after a CRLF line too.
+        (
+            format!(
+                "当前目录不可写。以下两种办法均无效：请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，\
+                 或把整个 StickyMD 文件夹移到别处。{cause}"
+            ),
+            Verdict::NotTested,
+        ),
+        (
+            format!(
+                "当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，\
+                 或把整个 StickyMD 文件夹移到别处。（已忽略）{cause}"
+            ),
+            Verdict::NotTested,
+        ),
+        (
+            format!(
+                "a warning\r\n当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，\
+                 或把整个 StickyMD 文件夹移到别处。\r\n{cause}"
+            ),
+            Verdict::Pass,
+        ),
+    ] {
+        assert_eq!(prompt(&stderr), expected, "{stderr}");
+    }
 }
 
 /// R03's facts are what its rule reads, written and read back unchanged; read strictly; and

@@ -5,7 +5,7 @@
 - `Layer`: Verification
 - `Status`: Approved Contract
 - `Version`: 0.5.0
-- `Last Review`: 2026-11-24
+- `Last Review`: 2026-11-26
 - `Scope`: v1 测试类别、逐阶段 smoke、验收证据与发布形态合同
 
 ---
@@ -289,7 +289,7 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
 - **写入 bundle**：`build-app.sh` 先算指纹，以固定的 `--target-dir` 构建并从同一目录复制可执行文件，生成 Info.plist（指纹写进 `StickyMDInputs`）后再算一次，
   两次不同即拒绝，相同才签名。两次检查之间被改动又改回的输入无法发现。
 
-- **记录**：账本只追加。每次追加都在排他锁下读取、校验，再原子发布，公共证据写入口不得写入账本目录。`record` 从同一次读取的证据字节中，记下一次运行的每一行，连同以下身份：app 的产品输入指纹（`mac-gui` 从 bundle 读出写进证据）、驱动的 SHA-256（由 `mac-gui` 写进证据；运行期间不得替换驱动）、虚拟机的 `sw_vers`，以及运行者传入的镜像 digest；app 可执行文件与 bundle 清单的 SHA-256 一并记下，只供审计。一个 digest 只能对应一个系统版本。`record` 只登记在虚拟机中跑完的运行（证据为 schema 2，且 `finished` 为真：驱动在最后一行结束后才写 `true`，检查点与被取消、因异常或清理失败而中止的运行都写 `false`；更早的证据不能登记，要重跑，不得手工补写；`hv_vmm_present` 为 1，且未用 `--allow-host`），每行的结论须与它的各项检查一致（有 FAIL 即 FAIL，否则有未测或没有检查即 NOT_TESTED，全部通过才 PASS）；同一份证据的同一行不登记两次。墙钟的开始时间不能证明两次运行的先后（会被校时改变），所以账本不按时间排序，复用规则也不依赖先后（见下条）。账本里的摘要按不区分大小写读取。
+- **记录**：账本只追加。每次追加都在排他锁下读取、校验，再原子发布，公共证据写入口不得写入账本目录。`record` 从同一次读取的证据字节中，记下一次运行的每一行，连同以下身份：app 的产品输入指纹（`mac-gui` 从 bundle 读出写进证据）、驱动的 SHA-256（由 `mac-gui` 写进证据；运行期间不得替换驱动）、虚拟机的 `sw_vers`，以及运行者传入的镜像 digest；app 可执行文件与 bundle 清单的 SHA-256 一并记下，只供审计。一个 digest 只能对应一个系统版本。`record` 只登记在虚拟机中跑完的运行（证据为 schema 2，且 `finished` 为真：驱动在最后一行结束后才写 `true`，检查点与被取消、因异常或清理失败而中止的运行都写 `false`；更早的证据不能登记，要重跑，不得手工补写；`hv_vmm_present` 为 1，且未用 `--allow-host`），每行的结论须与它的各项检查一致（有 FAIL 即 FAIL，否则有未测或没有检查即 NOT_TESTED，全部通过才 PASS）；同一份证据的同一行不登记两次。启动产品进程之前的错误（会话目录、复制 bundle、副本的可执行文件或 bundle 清单与证据不符、写入夹具）不是产品结果：该行为 `NOT TESTED`，运行不标 `finished`，所以 `record` 不登记它；产品进程启动之后的失败，包括窗口始终没有出现，仍是产品的 FAIL（整门复审 D2：否则一次复制失败就能在候选字节上留下人工行的 FAIL，而它不能撤销）。在这条规则之前构建的驱动把这类错误记成 `execution` FAIL 并标 `finished`；`record` 按那些驱动固定的报错文字（`ditto` 失败、副本的可执行文件 SHA-256 变了、副本的 bundle 清单变了）认出它们，同样不登记（整门复审第二轮 R2-1）。墙钟的开始时间不能证明两次运行的先后（会被校时改变），所以账本不按时间排序，复用规则也不依赖先后（见下条）。账本里的摘要按不区分大小写读取。
 - **复用**：`plan` 只读账本，不启动被测程序，需要传入目标虚拟机运行前的 `sw_vers`。某行在账本里已有 PASS，且产品输入指纹、驱动、镜像、系统四项与当前完全一致时，复用这次 PASS；只看最近的一次 PASS：同一身份下这一行记过任何 FAIL 或 NOT_TESTED，或有任何一次 PASS 被 USER 撤销（都不论先后）时，不复用，该行列入要运行的清单，也不回退去复用更早的 PASS。被撤销的 PASS 与 FAIL 同样处理：导入顺序和墙钟都不能证明哪次运行在撤销之后，所以重新导入同一次运行改写过字节的证据、或撤销之后才登记的较早运行，都不能恢复复用。因此同一身份下失败过或被撤销过的行，直到身份改变之前每次都重跑（I01–I03 与 R03 只看本批，在新批次重跑）；历史记录保留；这次 PASS 记录的 app 字节与当前不同时，作为审计信息列出。没有产品输入指纹的 app 或记录（指纹引入之前的）不参与复用。其余行列入要运行的 `--only` 清单。FAIL 与 NOT_TESTED 从不复用。
 - **人工收据**：`receipt` 按行记录 USER 的确认，绑定 app 的产品输入指纹（app 可执行文件的 SHA-256 只供审计）；没有指纹的 app 不能记收据。指纹变了，收据不再成立，`plan` 会列出待重新确认的人工行。Mode 为 `Review` 的行同样以收据记录 USER 的判定，收据与 Agent 的判定记录绑定相同的字段（同一次运行的证据摘要、行与子项、所看画面的角色与哈希、判定标准的版本、对照）；账本记录这种收据之前，`receipt` 拒绝 Review 行，Review 行不能为 `MANUAL PASS`。I01–I03 与 R03 从不沿用：收据、运行结果与判定都只代表这一批验收。批次由 `--batch` 命名：运行的批次由 `mac-gui --batch` 在运行开始时写进证据，`record` 从证据读取，不能在登记时指定（旧运行因此不能被算作新一批）；收据的批次在 `receipt` 时指定。只有本批的结果计数：同批次内的补跑可以沿用，下一批即使四项身份相同也要重做；不给批次时这四行一律待做。V05 是 Windows 回归，收据在 Windows 回归报告里，不用 `mac-ledger receipt`。发布用的收据、waiver 与下载路径记录绑定候选 receipt 的摘要，
   见 #macos-readiness-check；本节的复用不读它们。
@@ -334,7 +334,8 @@ C 与 D 在同一候选 SHA 收口：`ApplicationHandler` 依赖 `AppSession`，
   `"tool":"mac-resources"` 的证据只能登记 R01、R02，且不得带 `zip_sha256`；其他 `tool` 拒绝。账本里 R01、R02 的自动化记录以独立的种类
   `resources` 写出，读账本时种类与行不符的记录（例如旧版导入器写成 `automated` 的资源行）使账本被拒。R03 的 PASS 必须带它的观察事实
   `facts`：`record` 以与驱动相同的判定从这些事实重算 R03 的检查表，与证据写下的检查名、结论与观察逐项相同才登记（带 `facts` 的 R03 行不论结论都这样
-  核对；#24 第二轮审查 S4）。重算出的 PASS 恰好带六项检查（隔离标记预设、随机化启动、提示、回答后退出、退出码 1、不写文件），给了 ZIP 时最前面是
+  核对；#24 第二轮审查 S4）。“提示”一项要求 stderr 中以“当前目录不可写”开头的那一行与 `05` #startup-sequence 中便携版的 `.app` 在 bundle 里时的整句（“当前目录不可写，” 后接那一句建议）逐字相同
+  （它前面可以有别的 stderr 行；整门复审第二轮 R2-2）。重算出的 PASS 恰好带六项检查（隔离标记预设、随机化启动、提示、回答后退出、退出码 1、不写文件），给了 ZIP 时最前面是
   打开该 ZIP 的检查，其中的摘要等于证据顶层的 `zip_sha256`，事实中的 ZIP 摘要也须等于它。事实中有写入观测时，这条记录另记 `"write_watch":true`
   （只写为 true，只随 ZIP 摘要）；发布门只认带它的 R03 PASS（第三次复审 B1，#macos-readiness-check）。没有 `facts` 的 R03 行（比写入观测更早的
   驱动）不登记 PASS；它的 FAIL 或 NOT_TESTED 只在恰好带 R03 的检查（今天的名字，或只比快照的驱动的“nothing written beside the package”）时登记，
@@ -506,7 +507,13 @@ R03 与资源行的生产者改动按同一 Resolution 另开分支落地（#pha
      二进制的 SHA-256（第四次复审 BLOCKER 1）。字节取决于构建目录的路径（链接器的 UUID），目录固定，所以同一检出上重跑得到同一个驱动；虚拟机中的
      `mac-gui` 运行用的就是这个文件。构建失败时记下原因，不影响源码测试的结论；
   7. 再次读取源码身份，原子写 `dist/evidence/release-source-tests-macos.json` 后释放运行锁。
-  运行器只为输出设 `CARGO_TERM_COLOR=never`。每个进程记下它怎样结束：退出码、被信号结束、没有启动、或启动后不能跟到结束（读管道出错时先结束子进程再
+  运行器只设这些环境变量：为输出设 `CARGO_TERM_COLOR=never`；为第 3–5 步的每个 Cargo 进程设 `CARGO_TARGET_DIR=target/macos-source-tests`
+  与 `CARGO_BUILD_BUILD_DIR=target/macos-source-tests/build`，并在第 3 步之前清空这个目录；第 6 步的驱动构建同样设
+  `CARGO_BUILD_BUILD_DIR=target/macos-driver/build`（整门复审第二轮 R1-1：环境中继承的中间产物目录会留在清空的目录之外）。清空之前，从仓库的根到
+  这个目录的每一级都须是真实的目录而不是符号链接（R1-7）。Cargo 按修改时间判断产物是否过期，所以别的源码在默认构建目录中留下的、较新的测试程序
+  可能被当作 R 的；在清空的目录中，目标发现、清单、主运行、文档测试与显式运行用的都是在 R 上从头编出的程序（整门复审 A2）。规定命令的文字不变；
+  驱动仍在第 6 步自己的目录中构建。
+  每个进程记下它怎样结束：退出码、被信号结束、没有启动、或启动后不能跟到结束（读管道出错时先结束子进程再
   等待它）。主运行已得出结果之后，P18-L08 卷报告的临时目录建不起来只记入 `problems`，已取得的结果照常写入收据（第四次复审）。
 - **收据（schema 3；schema 1 与 2 不迁移）：** `release_source`；`run`（本次运行的身份，与运行记录相同）；`host`（`sw_vers` 的产品名、版本与构建号，`uname -m`，`kern.hv_vmm_present`，`cargo -V`，
   `rustc -V`）；`start` 与 `end` 各为 `{head, clean}`；`command` 与 `exit`（退出码为数，否则为 `signal`、`not-started` 或 `unknown`）；`expected`（发现的测试二进制与文档测试，以包、种类与名字标识，不记路径）；
@@ -547,15 +554,23 @@ R03 与资源行的生产者改动按同一 Resolution 另开分支落地（#pha
      否则没有一组能使 `mac-gui` 行 PASS（第四次复审 BLOCKER 1）；
   3. 经 resolver 取得候选：除每个暂存文件与 receipt 相符外，暂存的 checksum 文件须恰好列出 receipt 中 ZIP 与 SBOM 的摘要，暂存的 ZIP 本身须通过包检查，
      其中的 bundle、可执行文件、产品输入指纹、签名方式与构建来源须等于 receipt，包检查算出的 ZIP 摘要须等于 receipt 中的，SBOM 须描述 ZIP 中的成员；
-     另外重算构建来源上 `Cargo.lock` 的摘要；
+     另外重算构建来源上 `Cargo.lock` 的摘要；再读 R 上的晋升复核记录（#macos-release-artifact“与发布提交的关系”）：它须存在、能严格解析，
+     `release_source` 等于 R，`candidate_receipt_sha256` 等于 resolver 读到的 receipt 的摘要，否则包完整性与 P16-P01 为 `NOT TESTED`（在 R 上
+     重新晋升；整门复审 B2）；
   4. 在 R 上以 `cargo metadata` 列出测试目标；判定；
-  5. 再次读取源码身份与候选的整个状态（不存在、不能解析、解析到哪个 receipt），与开始时不同即不打印任何结论并失败退出；否则逐行打印，全部成立才成功退出。没有强制通过的选项。
+  5. 再次读取候选的整个状态（不存在、不能解析、解析到哪个 receipt，以及晋升复核记录），然后再次读取源码身份；任一与开始时不同即不打印任何结论并失败
+     退出；否则逐行打印，全部成立才成功退出。这次读取与比较在晋升锁的共享锁下进行（锁文件只读打开、不创建；晋升进行中即失败退出；锁文件不存在，即从未晋升过时，同样失败退出、不打印结论，第二轮 R1-6；首尾按读到的原始字节比较，读不出即停止，第二轮 R1-8），所以晋升不能在
+     最后一次读取与打印之间换入另一个候选（整门复审 B1）。没有强制通过的选项。
   判定是纯函数，坏样本测试在所有平台运行。
 - **核对取自何处**（USER 2026-11-24 批准原文）： 核对时在 R 上重算的：源码身份；R 的测试目标；分类表与矩阵中的 Mode；候选的暂存字节、ZIP 内容、checksum 文件、
   SBOM 与 `Cargo.lock` 摘要。取自本地记录、核对时不能重现的：源码测试收据中每个测试的结果与主机事实（收据由 R 的运行器在 R 上写成，手工改写的收据
   不能被发现）、账本中的程序结果（由 `mac-ledger record` 从虚拟机运行的证据导入）与 USER 原话。不证明的前提：Cargo home 与上级目录中的 Cargo 配置
   （含 target runner，决定 (d)）、主机上工具链与 SDK 的内容（版本输出相同的替换不能发现）、断电后的持久性（删除旧收据时同步了目录；原子写入后的
   目录同步属于打包 crate 的写入器，未证明）。
+  USER 2026-11-26 增补的前提（整门复审第二轮 R1-1、R1-2、R1-5）：构建缓存与源码的修改时间一致。Cargo 按修改时间判断产物是否过期，所以从备份
+  恢复、保留了修改时间的检出旁，若留着别的源码编出的、修改时间更新的产物，Cargo 可能沿用它们，包括启动运行器、晋升与核对程序本身的 `cargo run`
+  与 `phase 18` 的归类表核对；工具不能自证它自己是从 R 编出的。运行器第 3–5 步与驱动各在先清空的目录中构建（并设 `CARGO_BUILD_BUILD_DIR`），
+  只使它们自己的结论不受此影响。
   威胁模型（USER 2026-11-24 决定，原话“只防诚实操作者的失误”）：核对防的是诚实操作者的失误、过期／不完整／不一致的证据与产品回归；不防恶意的本地
   篡改、并发的替换后恢复、伪造的工具输出与有意重定向的环境。上面的锁、首尾复查与对 Git、Cargo 环境变量的拒绝只挡住这些情形中显而易见的入口，
   不是对它们的证明。
@@ -565,7 +580,8 @@ R03 与资源行的生产者改动按同一 Resolution 另开分支落地（#pha
   - S06 的测试标为 `#[ignore]`（要挂载 exFAT 映像），凭收据中它的显式运行判定（决定 (a)）；八个包在 macOS 上被忽略的每个测试都在核对程序的一张归类
     表中（按包、目标的种类与名字、libtest 全名，及其作用；移到另一种类的同名目标也须重新归类：没有门的行依赖它，或由某个显式运行承担），判定时与收据中各目标 `--list --ignored` 列出的名字逐个比对，
     所以不论 `ignore` 写成什么形式（单独的属性、一行或多行的 `cfg_attr`、文档测试的 `ignore`）都被发现；新增或移动的忽略测试须先归类（第四次复审
-    BLOCKER 3）；
+    BLOCKER 3）。macOS 主机上的 `phase 18` 有一项任务列出八个包每个测试目标的 `--list --ignored`，与归类表按包、种类、名字与全名逐项比对，
+    多出、缺少或改名即失败，所以忽略测试改名或新增而未归类，在合并之前就被发现，不必等到 R 上的运行（整门复审 A1：#27 改名的测试在表中留着旧名）；
   - `mac-gui` 行，账本中候选字节上的 PASS：W02–W04、W07–W12、K02、E01；W12 另要求三条注销行在同一组身份下 PASS；
   - 人工行，发布用 USER 收据或 waiver：W01、W05、W06、I01–I03、F01、V04；
   - 资源行：R01、R02 由账本中候选字节上的 `mac-resources` PASS 判定（账本判定同 `mac-gui` 行）；V03 见“尚无来源的行”；
@@ -595,13 +611,15 @@ R03 与资源行的生产者改动按同一 Resolution 另开分支落地（#pha
     的行（`mac-gui` 行、人工行、资源行与 V03），拒绝 R03、源码行、P01、Windows 行与下载路径。
   - `mac-ledger revoke --rows <id> --release-source <R> --quote <原话>`：按候选摘要撤销这一行在该候选下此前的全部发布记录；之后重新确认的记录有效
     （账本中的先后就是确认的先后）。
-  - 读入与登记同样严格：每种记录（含撤销）恰有其字段，收据只给人工行、waiver 只给可 waiver 的行、下载记录只给 P18-D01–D05 且结果合于其行；`--ledger`
-    与其锁文件不得是符号链接，也不得占用源码测试收据、其锁或其运行记录（按命令所在仓库的根判断；除不存在外，任何检查错误都使命令不读不写，第三次复审
+  - 读入与登记同样严格：每种记录（含撤销）恰有其字段（程序结果与旧式人工收据只接受账本中实际出现过的历史字段组合，整门复审 C6），收据只给人工行、
+    waiver 只给可 waiver 的行、下载记录只给 P18-D01–D05 且结果合于其行；同一份 `mac-resources` 证据的记录恰为 R01、R02 各一条且身份相同，与它同摘要的程序结果也只能是这两条（整门复审
+    C2，第二轮 R2-5）；`--ledger` 与其锁文件不得是符号链接，也不得占用源码测试收据、其锁或其运行记录，也不得占用晋升复核记录（公共证据写入口同样拒绝它，第二轮 R1-9），
+    `--ledger` 本身也不得是某个账本的锁文件或位于这样的名字之下（路径中任何一级以 `.lock` 结尾即拒绝，整门复审 C4，第二轮 R2-3）（按命令所在仓库的根判断；除不存在外，任何检查错误都使命令不读不写，第三次复审
     B6）。`--ledger` 在命令开始时按当前目录一次解析成绝对路径，检查、加锁与写入都用它；在 macOS 上与保留路径的比较不分大小写，尚不存在的文件也一样
     （默认的卷不分大小写；在区分大小写的卷上这多拒几个名字，第四次复审 BLOCKER 4），路径本身与它的每一级上级都这样比较（建立上级目录会把保留名
     变成目录，修复轮 SHOULD_FIX 7）。
   - 判定：人工行有本候选的发布收据为 PASS；可 waiver 的行在其余判定为 `NOT TESTED`、没有任何 `FAIL` 且有本候选的 waiver 时为 `WAIVED`；下载路径五行
-    各有本候选的记录、每条的签名方式等于候选的、`sw_vers` 整份材料中恰有一个 `ProductVersion` 标签（末尾缺了值的、值紧贴冒号的标签都算一个，修复轮
+    各有本候选的记录、每条的签名方式等于候选的、`sw_vers` 整份材料中恰有一个 `ProductVersion` 标签（标签不论前面紧贴什么都计数，但只在字段名的边界上才算标签：前面不是字母、数字或下划线，所以 `TargetProductVersion:` 不算，整门复审 B3、第二轮 R1-4；末尾缺了值的、值紧贴冒号的标签都算一个，修复轮
     BLOCKER 6）、其后的值由一到三段数字
     组成且大版本等于 `--macos-major`（这是对所记材料的格式核对，不是对机器的证明，第三次复审 S7；第四次复审 BLOCKER 5）、D04 与 D05 各有合于其行的结果时成立。只认本候选的记录：
     以前候选的下载路径在签名方式与大版本不变时沿用的规则尚未实现，因此 fail closed。I01–I03 的记录只认 `--batch` 所指的批次。`WAIVED` 与 PASS 一样
@@ -971,6 +989,18 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
   SHA-256、target 与观察到的签名方式，不记录机器绝对路径与发布提交。macOS 的 artifact-bound runner 只经这个 resolver 取得 bundle。
 - **与发布提交的关系：** Windows 的 Source Freeze 在 Windows 主机上，macOS 晋升不读它。晋升与 macOS 就绪核对都显式接收发布提交 R（与
   发布授权中的是同一个值），要求 R 包含在 `origin/main` 中、构建来源等于 R 或按 #platform-artifact-reuse 可以沿用；不以“当前 HEAD”暂代 R。
+  晋升的重新校验只认 R 上的运行（#platform-artifact-reuse“自检与校验的证据地位”），所以晋升在开始与写 receipt 之前都核对源码身份为干净的 R
+  （同 #macos-readiness-check 的“源码身份”），不符即不下载、不 staging；在任何改动之前，receipt、沿用记录与复核记录的路径上若是符号链接或非普通文件即失败（第二轮 R3-5）；复核记录的路径上若是别的文件
+  （`kind` 不是 `macos-promotion-check`）则保留它并失败（第二轮 R1-9）；写成 receipt 之后再原子写 R 上的晋升复核记录
+  `dist/evidence/release-promotion-macos.json`：`schema_version`、`kind`（`macos-promotion-check`）、`release_source`（R）与
+  `candidate_receipt_sha256`（刚写的 receipt 的 SHA-256），整份严格解析。receipt 本身不含 R 与时间，同一 attempt 在 R 上重新晋升得到逐字节相同的
+  receipt，所以绑定 receipt 摘要的 USER 记录仍然成立；在别的提交上晋升过的候选，在 R 上再晋升一次即可。旧的复核记录与旧 receipt 一同先被撤下，
+  写 receipt 之前的失败按“失败路径”把两者恢复原样；receipt 写成之后复核记录才写，写不成时新候选照样成立，核对因缺记录判包完整性 `NOT TESTED`，
+  在 R 上重新晋升即可（整门复审 B2）。
+- **旧 staging 的清理：** 替换成功后，旧 staging 目录只在其中恰为晋升会写的文件（旧 receipt 所记的那一个 ZIP、checksum 文件、SBOM，以及解出的包中的成员：`StickyMD/` 下白名单中的
+  文件与 `StickyMD/StickyMD.app` 之下的一切，`StickyMD.app` 须是目录；旧 receipt 缺失或读不出即保留，第二轮 R1-3）时才删除；旧 staging 移开时
+  用尚不存在的名字，清理只针对本次移开的目录（第二轮 R1-11）；
+  有别的内容（例如在暂存的 `.app` 旁打开后写下的 `StickyMD/note/`）即保留它并打印其位置，不删除（`AGENTS.md`：不自动删除用户文件；整门复审 B9）。
 - **失败路径：** 与 Windows 相同，fail closed：下载不完整、attempt 不是 `success`、artifact 不属于该 attempt、哈希、checksum、SBOM、签名、架构或包结构
   不符时，既有 macOS candidate 不得被半更新，也不写 receipt；receipt 缺失时 resolver 拒绝使用 staging 目录，不从本地构建补位。
 
@@ -1121,7 +1151,11 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
   - 绑定 S：构建 run 的 head、包内 README 的 `Source commit`、两个平台 candidate receipt 中的构建来源。
   - 绑定 R：Windows Source Freeze、tag、TAG/DRAFT/PUBLISH 的授权、晋升 workflow 检出与签发证明的提交。
   - 远端记录、Promote、resolver、readiness、macOS 就绪核对与晋升 workflow 的三个 operation 共用同一个沿用判定：S 等于 R，或在 R 上重算两侧
-    指纹并确认 S 是 R 的祖先且指纹相同。Windows 的 candidate receipt 只含 S、run/attempt/artifact 与字节身份，所以同一 artifact 在 R 的
+    指纹并确认 S 是 R 的祖先且指纹相同。“在 R 上”指在干净的 R 的检出中运行：独立的 `verify-reuse` 给出结论之前同样核对源码身份为干净的 R
+    （同 #macos-readiness-check 的“源码身份”，在 Windows 与 macOS 上都适用；`platform-inputs --commit` 只查询，不给结论；整门复审第二轮 R3-2）。
+    两侧的分类器 `tools/stickymd-smoke/src/release/platform_inputs.rs` 都须在各自的树中以这个路径存在，各级上级都是目录、它本身是普通文件，
+    否则不作判定（R3-3）；两个 SHA 即使相同，也须是本仓库中的提交（R3-4）；“包含在 `origin/main` 中”按完整引用 `refs/remotes/origin/main`
+    读取，同名的本地分支或标签不参与（R3-1）。Windows 的 candidate receipt 只含 S、run/attempt/artifact 与字节身份，所以同一 artifact 在 R 的
     Source Freeze 上原样重新 Promote 得到同一 receipt，按其摘要绑定的人工观察日志仍可用。
   - 沿用时另写 `dist/evidence/release-reuse-<platform>.json`：平台、S、R、两侧指纹与算法版本，以及（Windows）candidate receipt 的摘要。
 - **沿用后：** 沿用只保留发布字节与候选身份。模块证据按当前 Qualification Module Fingerprint 判定，人工观察按当前人工上下文判定，

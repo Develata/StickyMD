@@ -432,7 +432,11 @@ mod tests {
 
     #[test]
     fn candidate_version_tracks_source_freeze() {
+        // A repository holding the candidate's commit: the same id must still name a commit
+        // here (fix-round review R3-4).
+        let repository = crate::qualification::reuse::tests::repository();
         let mut candidate = candidate();
+        candidate.source_commit = repository.first.clone();
         candidate.version = "0.1.1".to_owned();
         let source = SourceFreeze {
             source_commit: candidate.source_commit.clone(),
@@ -442,11 +446,8 @@ mod tests {
             target: candidate.target.clone(),
             remote_synced: true,
         };
-        // Never created: no repository and no reuse record, which the same commit needs neither of.
-        let root = std::env::temp_dir().join(format!(
-            "stickymd-readiness-identity-{}",
-            std::process::id()
-        ));
+        // No reuse record, which the same commit does not need.
+        let root = repository.root.clone();
         let digest = "f".repeat(64);
         let mut blockers = Vec::new();
         check_source_identity(&root, &source, &candidate, &digest, &mut blockers);

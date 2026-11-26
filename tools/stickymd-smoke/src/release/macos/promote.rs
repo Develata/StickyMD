@@ -6,21 +6,29 @@
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse
 
 use super::content;
-use super::package::{self, run};
-use crate::evidence::escape_json;
-use crate::release::attachments::platform_files;
+use super::package::run;
+use crate::integrity;
 use crate::release::platform::Platform;
-use crate::release::platform_inputs::{ALGORITHM, Reuse, fingerprint, verify_reuse};
+use crate::release::platform_inputs::{ALGORITHM, Reuse};
 use crate::release::temporary::TemporaryDirectory;
 use crate::release::{json, workflow};
-use crate::{atomic_evidence, integrity, repository};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod install;
+mod set;
+use install::install;
+pub(crate) use set::verify_set;
+use set::{Receipt, check_set};
+
 pub(super) const STAGING: &str = "dist/exact-candidate-macos";
 pub(super) const RECEIPT: &str = "dist/evidence/release-candidate-macos.json";
 pub(super) const REUSE_RECORD: &str = "dist/evidence/release-reuse-macos-arm64.json";
+/// The promotion-check record, written after the receipt (M5 gate review B2).
+pub(super) const PROMOTION_CHECK: &str = super::promotion_check::PATH;
+/// The promotion lock: exclusive for a promotion, shared for the last reading of `macos-ready`.
+pub(super) const PROMOTION_LOCK: &str = "dist/evidence/.macos-promotion.lock";
 /// The artifact of attempt `n` is named for it, so each attempt's artifact is distinct.
 pub(super) const ARTIFACT_PREFIX: &str = "stickymd-macos-arm64-release-";
 
@@ -67,181 +75,34 @@ pub(crate) fn artifact_of_attempt(listing: &str, attempt: u64) -> Result<(u64, S
     }
 }
 
-/// Facts of the promoted candidate; written as the receipt, which names no release commit and
-/// no machine path, so promoting the same artifact again writes the same bytes.
-pub(crate) struct Receipt {
-    pub source: String,
-    pub version: String,
-    pub cargo_lock_sha256: String,
-    pub build_inputs: String,
-    pub run_id: u64,
-    pub attempt: u64,
-    pub artifact_id: u64,
-    pub artifact_name: String,
-    pub zip_name: String,
-    pub zip_sha256: String,
-    pub checksums_sha256: String,
-    pub sbom_sha256: String,
-    pub facts: package::Facts,
-}
-
-impl Receipt {
-    pub(crate) fn json(&self) -> String {
-        format!(
-            "{{\"schema_version\":1,\"origin\":\"GITHUB_WORKFLOW_ARTIFACT\",\"platform\":\"macos-arm64\",\"source_commit\":\"{}\",\"version\":\"{}\",\"cargo_lock_sha256\":\"{}\",\"build_inputs\":\"{}\",\"build_inputs_algorithm\":\"{}\",\"app_inputs\":\"{}\",\"workflow_run_id\":{},\"workflow_attempt\":{},\"artifact_id\":{},\"artifact_name\":\"{}\",\"zip_name\":\"{}\",\"zip_sha256\":\"{}\",\"checksums_sha256\":\"{}\",\"sbom_sha256\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"target\":\"aarch64-apple-darwin\",\"signing\":\"{}\"}}\n",
-            self.source,
-            escape_json(&self.version),
-            self.cargo_lock_sha256,
-            self.build_inputs,
-            ALGORITHM,
-            self.facts.app_inputs,
-            self.run_id,
-            self.attempt,
-            self.artifact_id,
-            escape_json(&self.artifact_name),
-            escape_json(&self.zip_name),
-            self.zip_sha256,
-            self.checksums_sha256,
-            self.sbom_sha256,
-            self.facts.executable_sha256,
-            self.facts.bundle_sha256,
-            self.facts.signing
-        )
-    }
-}
-
-/// `release` must be a full SHA contained in `origin/main`, as the release authorization names it.
+/// `release` must be a full SHA contained in `origin/main` (the remote-tracking ref itself,
+/// fix-round review R3-1), as the release authorization names it.
 pub(crate) fn check_release(root: &Path, release: &str) -> Result<(), String> {
     integrity::validate_hex(release, 40, "release commit")?;
-    let contained = crate::release::platform_inputs::git(root)
-        .args(["merge-base", "--is-ancestor", release, "origin/main"])
-        .status()
-        .map_err(|error| format!("cannot run git: {error}"))?;
-    if contained.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "release commit {release} is not contained in origin/main"
-        ))
-    }
+    crate::release::attachments::on_main(root, release)
 }
 
-/// Checks a downloaded set (the artifact's three files in `directory`) and the bundle inside,
-/// and returns the receipt; nothing is staged here.
-/// What [`verify_set`] establishes about a downloaded macOS set.
-pub(crate) struct CheckedSet {
-    pub version: String,
-    pub zip_name: String,
-    pub checksums_name: String,
-    pub zip_sha256: String,
-    pub sbom_sha256: String,
-    pub facts: package::Facts,
-}
-
-/// The three files of the macOS set in `directory` and nothing else: the ZIP passes the package
-/// check, the checksum file lists exactly the ZIP and the SBOM with their hashes, and the SBOM
-/// describes this very package. Writes nothing.
-pub(crate) fn verify_set(root: &Path, directory: &Path) -> Result<CheckedSet, String> {
-    let version = repository::workspace_version(root)?;
-    let [zip_name, checksums_name, sbom_name] = platform_files(Platform::MacOsArm64, &version);
-    let mut names = Vec::new();
-    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        // Only plain files: a link would let the set borrow bytes from outside the directory.
-        if !entry
-            .file_type()
-            .map_err(|error| error.to_string())?
-            .is_file()
-        {
-            return Err(format!("the artifact's {name} is not a plain file"));
-        }
-        names.push(name);
-    }
-    names.sort();
-    let mut expected = vec![zip_name.clone(), checksums_name.clone(), sbom_name.clone()];
-    expected.sort();
-    if names != expected {
-        return Err(format!(
-            "the artifact holds {names:?}, expected {expected:?}"
-        ));
-    }
-    let zip = directory.join(&zip_name);
-    let facts = package::verify(&zip, None, &version)?;
-    let zip_sha256 = facts.zip_sha256.clone();
-    let sbom_sha256 = integrity::sha256(&directory.join(&sbom_name))?;
-    let manifest =
-        fs::read_to_string(directory.join(&checksums_name)).map_err(|error| error.to_string())?;
-    integrity::verify_manifest_text(
-        &manifest,
-        &[(&zip_name, &zip_sha256), (&sbom_name, &sbom_sha256)],
-    )?;
-    super::super::attachments::check_manifest_names(&manifest, &[&zip_name, &sbom_name])?;
-    let sbom = fs::read_to_string(directory.join(&sbom_name)).map_err(|error| error.to_string())?;
-    // The SBOM must describe the bytes of this very package, not only its file names.
-    content::validate_sbom(&sbom, &facts.members)?;
-    Ok(CheckedSet {
-        version,
-        zip_name,
-        checksums_name,
-        zip_sha256,
-        sbom_sha256,
-        facts,
-    })
-}
-
-pub(crate) fn check_set(
-    root: &Path,
-    directory: &Path,
-    request_attempt: (u64, u64),
-    artifact: (u64, String),
-    release: &str,
-) -> Result<(Receipt, Reuse), String> {
-    let CheckedSet {
-        version,
-        zip_name,
-        checksums_name,
-        zip_sha256,
-        sbom_sha256,
-        facts,
-    } = verify_set(root, directory)?;
-    let source = facts.source_commit.clone();
-    let reuse = verify_reuse(root, Platform::MacOsArm64, &source, release)?;
-    let lock = crate::release::platform_inputs::git(root)
-        .args(["cat-file", "blob", &format!("{source}:Cargo.lock")])
-        .output()
-        .map_err(|error| format!("cannot read Cargo.lock at {source}: {error}"))?;
-    if !lock.status.success() {
-        return Err(format!("cannot read Cargo.lock at {source}"));
-    }
-    let receipt = Receipt {
-        build_inputs: fingerprint(root, Platform::MacOsArm64, &source)?,
-        cargo_lock_sha256: integrity::sha256_bytes(&lock.stdout)?,
-        source,
-        version,
-        run_id: request_attempt.0,
-        attempt: request_attempt.1,
-        artifact_id: artifact.0,
-        artifact_name: artifact.1,
-        zip_name,
-        zip_sha256,
-        checksums_sha256: integrity::sha256(&directory.join(&checksums_name))?,
-        sbom_sha256,
-        facts,
-    };
-    Ok((receipt, reuse))
+/// `release`, lowercase, once it is a commit `check_release` accepts and the checkout is a clean
+/// checkout of it, the source identity `macos-ready` requires (plan 11 #macos-release-artifact,
+/// "与发布提交的关系").
+fn on_release(root: &Path, release: &str) -> Result<String, String> {
+    check_release(root, release)?;
+    let release = release.to_ascii_lowercase();
+    super::ready::identity::require(root, &release, "macos-promote")?;
+    Ok(release)
 }
 
 /// One promotion at a time: an advisory lock on a file that stays in place. The operating
 /// system releases it when the holder exits, killed or not, so an interrupted promotion does
 /// not block the next one.
-struct PromotionLock {
+#[derive(Debug)]
+pub(super) struct PromotionLock {
     _file: fs::File,
 }
 
 impl PromotionLock {
-    fn take(root: &Path) -> Result<Self, String> {
-        let path = root.join("dist/evidence/.macos-promotion.lock");
+    pub(super) fn take(root: &Path) -> Result<Self, String> {
+        let path = root.join(PROMOTION_LOCK);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
@@ -253,9 +114,32 @@ impl PromotionLock {
             .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
         match file.try_lock() {
             Ok(()) => Ok(Self { _file: file }),
-            Err(fs::TryLockError::WouldBlock) => {
-                Err(format!("another macOS promotion holds {}", path.display()))
+            Err(fs::TryLockError::WouldBlock) => Err(format!(
+                "another macOS promotion or a readiness check holds {}",
+                path.display()
+            )),
+            Err(fs::TryLockError::Error(error)) => {
+                Err(format!("cannot lock {}: {error}", path.display()))
             }
+        }
+    }
+
+    /// The lock shared, for reading the candidate while no promotion can swap it (M5 gate review
+    /// B1): the file is opened read-only and never created, so `None` means no promotion has
+    /// ever run here; a promotion holding it is an error.
+    pub(super) fn share(root: &Path) -> Result<Option<Self>, String> {
+        let path = root.join(PROMOTION_LOCK);
+        let file = match fs::File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("cannot open {}: {error}", path.display())),
+        };
+        match file.try_lock_shared() {
+            Ok(()) => Ok(Some(Self { _file: file })),
+            Err(fs::TryLockError::WouldBlock) => Err(format!(
+                "a macOS promotion is in progress ({} is held); check again when it is done",
+                path.display()
+            )),
             Err(fs::TryLockError::Error(error)) => {
                 Err(format!("cannot lock {}: {error}", path.display()))
             }
@@ -298,10 +182,17 @@ fn checked_attempt(root: &Path, request: &Request<'_>) -> Result<String, String>
 
 /// The whole promotion, serialized by a lock. The new set is downloaded, checked and staged in a
 /// private directory first; only then is the old candidate retired and kept aside, the new one
-/// moved into place, the reuse record (if any) written, and the receipt written last. Any failure
-/// on the way puts the old candidate, receipt and record back.
+/// moved into place, the reuse record (if any) written, and the receipt written last, then the
+/// promotion-check record on R. Any failure before the receipt puts the old candidate, receipt
+/// and records back. The checkout must be a clean R at the start and again before the receipt.
 pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, String> {
-    check_release(root, request.release)?;
+    // The promotion's re-checks count only on a clean checkout of R (M5 gate review B2): before
+    // the lock is taken or anything downloaded, and again before the receipt is written.
+    let release = on_release(root, request.release)?;
+    let request = &Request {
+        release: &release,
+        ..*request
+    };
     let _lock = PromotionLock::take(root)?;
     let head = checked_attempt(root, request)?;
     let listing = gh(
@@ -394,11 +285,35 @@ pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, Stri
         )),
         Reuse::SameCommit => None,
     };
-    install(root, &staged, record.as_deref(), &json)?;
+    commit(root, &release, &staged, record.as_deref(), &json)?;
     if let Err(error) = download.close() {
         eprintln!("warning: promoted; the download directory was not removed: {error}");
     }
     Ok(json)
+}
+
+/// Installs the prepared candidate with `receipt` and, after it, the promotion-check record
+/// naming `release` and the receipt's SHA-256; the checkout must still be a clean `release` just
+/// before the receipt is written (M5 gate review B2).
+fn commit(
+    root: &Path,
+    release: &str,
+    staged: &Path,
+    reuse: Option<&str>,
+    receipt: &str,
+) -> Result<(), String> {
+    let check =
+        super::promotion_check::render(release, &integrity::sha256_bytes(receipt.as_bytes())?);
+    install(
+        root,
+        staged,
+        install::Outputs {
+            reuse,
+            receipt,
+            promotion: &check,
+        },
+        || on_release(root, release).map(drop),
+    )
 }
 
 /// The reuse record Promote writes beside the receipt and the resolver compares byte for byte.
@@ -454,209 +369,9 @@ fn prepare(root: &Path, set: &Path, receipt: &Receipt) -> Result<PathBuf, String
     Ok(staging)
 }
 
-/// One change `install` made, undone in reverse order if a later step fails.
-enum Step {
-    ReceiptRetired(Vec<u8>),
-    RecordRetired(Vec<u8>),
-    OldSetAside,
-    NewInPlace,
-    RecordWritten,
-}
-
-/// The bytes at `path`, `None` only when nothing is there; any other error stops the caller
-/// before it changes anything.
-fn existing(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
-    }
-}
-
-/// Swaps the prepared candidate in. The receipt is retired first, so from then on the resolver
-/// refuses the staging directory; the old candidate is kept aside; the new one moves in, then
-/// the reuse record, and the receipt last: writing it is the commit. A failure before that
-/// undoes every step in reverse order (the old receipt last) and reports any step it could not
-/// undo. After the commit, leftover cleanup is only reported: the new candidate stands.
-fn install(root: &Path, staged: &Path, record: Option<&str>, receipt: &str) -> Result<(), String> {
-    let target = root.join(STAGING);
-    let receipt_path = root.join(RECEIPT);
-    let record_path = root.join(REUSE_RECORD);
-    let aside = root.join(format!(
-        "dist/.exact-candidate-macos-old-{}",
-        std::process::id()
-    ));
-    let old_receipt = existing(&receipt_path)?;
-    let old_record = existing(&record_path)?;
-    let mut done = Vec::new();
-    let io = |what: &str, error: std::io::Error| format!("cannot {what}: {error}");
-    let outcome = (|| {
-        if let Some(bytes) = old_receipt {
-            fs::remove_file(&receipt_path).map_err(|error| io("retire the receipt", error))?;
-            done.push(Step::ReceiptRetired(bytes));
-        }
-        if let Some(bytes) = old_record {
-            fs::remove_file(&record_path).map_err(|error| io("retire the reuse record", error))?;
-            done.push(Step::RecordRetired(bytes));
-        }
-        if target.exists() {
-            fs::rename(&target, &aside)
-                .map_err(|error| io("set the old candidate aside", error))?;
-            done.push(Step::OldSetAside);
-        }
-        fs::rename(staged, &target).map_err(|error| io("move the candidate into place", error))?;
-        done.push(Step::NewInPlace);
-        if let Some(record) = record {
-            atomic_evidence::write(&record_path, record.as_bytes())?;
-            done.push(Step::RecordWritten);
-        }
-        atomic_evidence::write(&receipt_path, receipt.as_bytes())
-    })();
-    if let Err(error) = outcome {
-        let mut failures = Vec::new();
-        for step in done.into_iter().rev() {
-            let undone = match step {
-                Step::RecordWritten => fs::remove_file(&record_path).map_err(|e| e.to_string()),
-                Step::NewInPlace => fs::remove_dir_all(&target).map_err(|e| e.to_string()),
-                Step::OldSetAside => fs::rename(&aside, &target).map_err(|e| e.to_string()),
-                Step::RecordRetired(bytes) => atomic_evidence::write(&record_path, &bytes),
-                Step::ReceiptRetired(bytes) => atomic_evidence::write(&receipt_path, &bytes),
-            };
-            if let Err(failure) = undone {
-                failures.push(failure);
-            }
-        }
-        let _ = fs::remove_dir_all(staged);
-        return Err(if failures.is_empty() {
-            format!("{error}; the previous candidate is back in place")
-        } else {
-            format!(
-                "{error}; the previous candidate could not be fully restored: {}",
-                failures.join("; ")
-            )
-        });
-    }
-    if aside.exists()
-        && let Err(error) = fs::remove_dir_all(&aside)
-    {
-        eprintln!(
-            "warning: promoted; the previous candidate stays at {}: {error}",
-            aside.display()
-        );
-    }
-    Ok(())
-}
-
 #[cfg(test)]
-mod tests {
-    /// The downloaded set holds exactly the three plain files: a missing one, an extra one and a
-    /// link are refused before any of them is read.
-    #[test]
-    fn the_set_check_refuses_missing_extra_and_linked_files() {
-        let root =
-            crate::governance::find_repository_root(&std::env::current_dir().unwrap()).unwrap();
-        let version = crate::repository::workspace_version(&root).unwrap();
-        let [zip, checksums, sbom] = super::platform_files(super::Platform::MacOsArm64, &version);
-        let directory = super::TemporaryDirectory::new("macos-set").unwrap();
-        let path = directory.path();
-        for name in [&zip, &checksums] {
-            std::fs::write(path.join(name), b"x").unwrap();
-        }
-        let error = super::verify_set(&root, path).err().unwrap();
-        assert!(error.contains("the artifact holds"), "{error}");
-        std::fs::write(path.join("extra.txt"), b"x").unwrap();
-        std::fs::write(path.join(&sbom), b"x").unwrap();
-        let error = super::verify_set(&root, path).err().unwrap();
-        assert!(error.contains("the artifact holds"), "{error}");
-        std::fs::remove_file(path.join("extra.txt")).unwrap();
-        std::fs::remove_file(path.join(&sbom)).unwrap();
-        std::os::unix::fs::symlink(path.join(&zip), path.join(&sbom)).unwrap();
-        let error = super::verify_set(&root, path).err().unwrap();
-        assert!(error.contains("not a plain file"), "{error}");
-        directory.close().unwrap();
-    }
-
+pub(super) mod tests {
     use super::*;
-
-    fn tree(root: &Path, candidate: &str, receipt: &str, record: Option<&str>) {
-        fs::create_dir_all(root.join(STAGING)).unwrap();
-        fs::write(root.join(STAGING).join("marker"), candidate).unwrap();
-        fs::create_dir_all(root.join("dist/evidence")).unwrap();
-        fs::write(root.join(RECEIPT), receipt).unwrap();
-        if let Some(record) = record {
-            fs::write(root.join(REUSE_RECORD), record).unwrap();
-        }
-    }
-
-    fn read(root: &Path) -> (String, String, Option<String>) {
-        (
-            fs::read_to_string(root.join(STAGING).join("marker")).unwrap(),
-            fs::read_to_string(root.join(RECEIPT)).unwrap(),
-            fs::read_to_string(root.join(REUSE_RECORD)).ok(),
-        )
-    }
-
-    #[test]
-    fn install_swaps_the_candidate_and_writes_the_receipt_last() {
-        let scratch = TemporaryDirectory::new("macos-install").unwrap();
-        let root = scratch.path();
-        tree(root, "old", "old receipt", Some("old record"));
-        let staged = root.join("dist/.new");
-        fs::create_dir_all(&staged).unwrap();
-        fs::write(staged.join("marker"), "new").unwrap();
-        install(root, &staged, None, "new receipt").unwrap();
-        // Same-commit promotion: the old ancestor record must not survive beside the new receipt.
-        assert_eq!(read(root), ("new".into(), "new receipt".into(), None));
-        assert!(!staged.exists());
-        let leftovers = fs::read_dir(root.join("dist"))
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-            .filter(|name| name.starts_with(".exact-candidate-macos"))
-            .collect::<Vec<_>>();
-        assert!(leftovers.is_empty(), "{leftovers:?}");
-    }
-
-    #[test]
-    fn a_failed_install_puts_the_old_candidate_receipt_and_record_back() {
-        let scratch = TemporaryDirectory::new("macos-install-failure").unwrap();
-        let root = scratch.path();
-        tree(root, "old", "old receipt", Some("old record"));
-        // The prepared directory vanished: moving it into place fails after the old one moved.
-        let error = install(
-            root,
-            &root.join("dist/.gone"),
-            Some("new record"),
-            "new receipt",
-        )
-        .unwrap_err();
-        assert!(error.contains("into place"), "{error}");
-        assert_eq!(
-            read(root),
-            (
-                "old".into(),
-                "old receipt".into(),
-                Some("old record".into())
-            )
-        );
-    }
-
-    #[test]
-    fn an_unreadable_receipt_stops_install_before_any_change() {
-        let scratch = TemporaryDirectory::new("macos-install-unreadable").unwrap();
-        let root = scratch.path();
-        tree(root, "old", "old receipt", None);
-        fs::remove_file(root.join(RECEIPT)).unwrap();
-        // A directory where the receipt belongs cannot be read as one, nor taken as absent.
-        fs::create_dir(root.join(RECEIPT)).unwrap();
-        let staged = root.join("dist/.new");
-        fs::create_dir_all(&staged).unwrap();
-        assert!(install(root, &staged, None, "new receipt").is_err());
-        assert_eq!(
-            fs::read_to_string(root.join(STAGING).join("marker")).unwrap(),
-            "old"
-        );
-        assert!(staged.exists());
-    }
 
     #[test]
     fn a_second_promotion_waits_for_the_lock() {
@@ -700,5 +415,114 @@ mod tests {
                 .unwrap_err()
                 .contains("more than one")
         );
+    }
+
+    /// Runs `git` in a throwaway repository, with a fixed identity for its commits.
+    pub(in crate::release::macos) fn scratch_git(root: &Path, arguments: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(arguments)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {arguments:?}: {output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// A throwaway checkout that ignores `dist/`, with one commit R on `origin/main`; returns R.
+    fn release_checkout(root: &Path) -> String {
+        scratch_git(root, &["init", "-q", "-b", "main"]);
+        fs::write(root.join(".gitignore"), "/dist/\n").unwrap();
+        fs::write(root.join("a.txt"), "1").unwrap();
+        scratch_git(root, &["add", "-A"]);
+        scratch_git(root, &["commit", "-q", "-m", "r"]);
+        let r = scratch_git(root, &["rev-parse", "HEAD"]);
+        scratch_git(root, &["update-ref", "refs/remotes/origin/main", &r]);
+        r
+    }
+
+    /// M5 gate review B2: the source identity is checked again just before the receipt, and the
+    /// record written after it names R and the SHA-256 of the receipt as written, the digest the
+    /// resolver returns and the gate compares.
+    #[test]
+    fn the_commit_rechecks_r_and_records_the_receipt_it_wrote() {
+        let scratch = TemporaryDirectory::new("macos-promote-commit").unwrap();
+        let root = scratch.path();
+        let r = release_checkout(root);
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(root.join("a.txt"), "dirty").unwrap();
+        let error = commit(root, &r, &staged, None, "the receipt").unwrap_err();
+        assert!(error.contains("the work tree or index differs"), "{error}");
+        assert!(!root.join(RECEIPT).exists() && !root.join(PROMOTION_CHECK).exists());
+        assert!(!staged.exists() && !root.join(STAGING).exists());
+        scratch_git(root, &["checkout", "-q", "--", "a.txt"]);
+        fs::create_dir_all(&staged).unwrap();
+        commit(root, &r, &staged, None, "the receipt").unwrap();
+        let written = fs::read(root.join(RECEIPT)).unwrap();
+        assert_eq!(written, b"the receipt");
+        let check =
+            super::super::promotion_check::parse(&fs::read(root.join(PROMOTION_CHECK)).unwrap())
+                .unwrap();
+        assert_eq!(check.release_source, r);
+        assert_eq!(
+            check.candidate_receipt_sha256,
+            integrity::sha256_bytes(&written).unwrap()
+        );
+    }
+
+    /// M5 gate review B2, sample (c): a promotion is refused, before it takes the lock or
+    /// downloads anything, on a checkout whose HEAD is not R, or that is not clean.
+    #[test]
+    fn promote_refuses_a_checkout_other_than_a_clean_r() {
+        let scratch = TemporaryDirectory::new("macos-promote-identity").unwrap();
+        let root = scratch.path();
+        let r = release_checkout(root);
+        fs::write(root.join("a.txt"), "2").unwrap();
+        scratch_git(root, &["commit", "-q", "-am", "later"]);
+        let later = scratch_git(root, &["rev-parse", "HEAD"]);
+        scratch_git(root, &["update-ref", "refs/remotes/origin/main", &later]);
+        let zip = root.join("nowhere/StickyMD.zip");
+        let request = |release| Request {
+            run_id: 1,
+            attempt: 1,
+            release,
+            zip: &zip,
+        };
+        // HEAD is a later commit on origin/main, with the same version and files as R.
+        let error = promote(root, &request(&r)).unwrap_err();
+        assert!(
+            error.contains(&format!("clean checkout of {r}; HEAD is {later}")),
+            "{error}"
+        );
+        // HEAD is R, with a change in the work tree.
+        scratch_git(root, &["checkout", "-q", &r]);
+        fs::write(root.join("a.txt"), "dirty").unwrap();
+        let error = promote(root, &request(&r.to_ascii_uppercase())).unwrap_err();
+        assert!(error.contains("the work tree or index differs"), "{error}");
+        assert!(!root.join("dist").exists(), "nothing was locked or staged");
+        // A clean checkout of R passes, its commit named in any case.
+        scratch_git(root, &["checkout", "-q", "--", "a.txt"]);
+        assert_eq!(on_release(root, &r.to_ascii_uppercase()).unwrap(), r);
+    }
+
+    /// Fix-round review R3-1: the release commit must be on the remote-tracking
+    /// `refs/remotes/origin/main`; a local branch of that name, which Git resolves first for the
+    /// short name, does not put R on the main line for promotion, the resolver or `macos-ready`.
+    #[test]
+    fn check_release_ignores_a_local_branch_named_origin_main() {
+        let scratch = TemporaryDirectory::new("macos-release-shadow").unwrap();
+        let root = scratch.path();
+        let s = release_checkout(root);
+        fs::write(root.join("a.txt"), "r").unwrap();
+        scratch_git(root, &["commit", "-q", "-am", "r"]);
+        let r = scratch_git(root, &["rev-parse", "HEAD"]);
+        scratch_git(root, &["branch", "origin/main", &r]);
+        let error = check_release(root, &r).unwrap_err();
+        assert!(error.contains("is not on origin/main"), "{error}");
+        check_release(root, &s).unwrap();
     }
 }

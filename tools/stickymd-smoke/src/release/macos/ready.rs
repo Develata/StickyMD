@@ -4,9 +4,14 @@
 //! candidate and running the tests happen on a Mac.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
+#[cfg(target_os = "macos")]
+mod candidate;
 mod groups;
-mod identity;
+/// The source identity; promotion requires it too (M5 gate review B2).
+#[cfg(target_os = "macos")]
+pub(super) use crate::release::source_identity as identity;
 mod judge;
+mod promotion;
 mod receipts;
 mod rows;
 pub(crate) use rows::{receipt_row, waivable};
@@ -40,6 +45,13 @@ pub(in super::super) fn source_tests_command(root: &Path, release: &str) -> Resu
             "the receipt does not establish its rows: {verdicts:?}"
         )),
     }
+}
+
+/// `phase 18`'s check that the ignored-test table names exactly what the eight packages' targets
+/// list as ignored on this Mac (plan 11 #macos-readiness-check; whole-gate review A1).
+#[cfg(target_os = "macos")]
+pub(crate) fn ignored_table_check(root: &Path) -> Result<(), String> {
+    source_tests::ignored_table(root)
 }
 
 /// R's test binaries and doc-tested libraries from `cargo metadata` on the checkout, listed
@@ -139,22 +151,7 @@ pub(in super::super) fn ready_command(
             None,
         ),
     };
-    let candidate = match super::resolve::receipt_present(root) {
-        Ok(true) => match super::resolve::resolve(root, &release) {
-            Ok(resolved) => Read::Present(judge::Candidate {
-                receipt_sha256: resolved.receipt_sha256,
-                zip_sha256: resolved.zip_sha256,
-                built: crate::mac_ledger::record::Built {
-                    executable: resolved.executable_sha256,
-                    bundle: resolved.bundle_sha256,
-                },
-                signing: resolved.signing,
-            }),
-            Err(error) => Read::Invalid(format!("the candidate does not resolve: {error}")),
-        },
-        Ok(false) => Read::Missing("no macOS candidate has been promoted".to_owned()),
-        Err(error) => Read::Invalid(error),
-    };
+    let first = candidate::read(root, &release)?;
     // R's test targets, listed apart from the receipt (plan 11 #macos-readiness-check).
     let targets = match listed_targets(root) {
         Ok(targets) => Read::Present(targets),
@@ -165,7 +162,8 @@ pub(in super::super) fn ready_command(
         batch,
         macos_major,
         driver: driver_rule.as_deref().map_err(String::as_str),
-        candidate: borrow(&candidate),
+        candidate: borrow(&first.candidate),
+        promotion: borrow(&first.promotion),
         ledger: match &ledger {
             Read::Present(records) => Read::Present(records.as_slice()),
             Read::Missing(reason) => Read::Missing(reason.clone()),
@@ -181,27 +179,11 @@ pub(in super::super) fn ready_command(
     let lines = judge::judge(&inputs);
     // The verdicts stand only for what was read: the same checkout and the same candidate at
     // the end, or nothing is printed as a verdict (review round 2, finding 9, SHOULD_FIX 2).
-    if identity::capture(root)? != start {
-        return Err("the checkout changed while it was checked; check again".to_owned());
-    }
-    // The candidate's whole state (absent, not resolving, or resolving to this receipt) must be
-    // the one judged; a promotion or repair meanwhile voids this check (review round 3, S6).
-    let state = |read: &Read<judge::Candidate>| match read {
-        Read::Present(candidate) => format!("present {}", candidate.receipt_sha256),
-        Read::Missing(_) => "missing".to_owned(),
-        Read::Invalid(_) => "invalid".to_owned(),
-    };
-    let now = match super::resolve::receipt_present(root) {
-        Ok(true) => match super::resolve::resolve(root, &release) {
-            Ok(resolved) => format!("present {}", resolved.receipt_sha256),
-            Err(_) => "invalid".to_owned(),
-        },
-        Ok(false) => "missing".to_owned(),
-        Err(_) => "invalid".to_owned(),
-    };
-    if now != state(&candidate) {
-        return Err("the candidate changed while it was checked; check again".to_owned());
-    }
+    // The candidate's whole state (absent, not resolving, or resolving to this receipt, and the
+    // promotion-check record) must be the one judged; a promotion or repair meanwhile voids this
+    // check (review round 3, S6; M5 gate review B2). It is read under the promotion lock, held
+    // until the verdicts are printed, and the checkout after it (M5 gate review B1).
+    let _promotion_lock = candidate::confirm(root, &release, &first, &start)?;
     drop(run_lock);
     let ready = judge::ready(&lines);
     let rows: Vec<String> = lines
@@ -215,7 +197,7 @@ pub(in super::super) fn ready_command(
             )
         })
         .collect();
-    let digest = match &candidate {
+    let digest = match &first.candidate {
         Read::Present(candidate) => format!("\"{}\"", candidate.receipt_sha256),
         _ => "null".to_owned(),
     };
@@ -243,7 +225,6 @@ pub(in super::super) fn ready_command(
     }
 }
 
-#[cfg(target_os = "macos")]
 fn borrow<T>(read: &judge::Read<T>) -> judge::Read<&T> {
     match read {
         judge::Read::Present(value) => judge::Read::Present(value),

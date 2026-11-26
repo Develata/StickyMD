@@ -10,6 +10,7 @@ use super::rows::{Class, ROWS};
 use super::source_tests::{self, Receipt, Target};
 use crate::mac_ledger::record::{Built, Identity, OpenedZip, Record, Revoked};
 use crate::mac_ledger::release::{DOWNLOAD_ROWS, ReleaseKind, ReleaseRecord};
+use crate::release::macos::promotion_check::{self, Check};
 
 const R: &str = "1111111111111111111111111111111111111111";
 
@@ -19,6 +20,14 @@ fn hex(digit: char) -> String {
 
 /// R's driver in these samples: `hex('1')`, the driver the fixture receipt's run built.
 const R_DRIVER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+/// The promotion-check record of a promotion on R of `candidate()`.
+fn promotion() -> Check {
+    Check {
+        release_source: R.to_owned(),
+        candidate_receipt_sha256: candidate().receipt_sha256,
+    }
+}
 
 fn candidate() -> Candidate {
     Candidate {
@@ -66,7 +75,8 @@ fn record(row: &str, verdict: &str, driver: char, built: &Built, evidence: char)
         evidence: format!("dist/evidence/run-{evidence}/mac-gui.json"),
         evidence_sha256: hex(evidence),
         run_unix: Some(1),
-        batch: Some("rc1".into()),
+        // `mac-resources` evidence names no batch, so its records carry none (M5 gate review C6).
+        batch: (!matches!(row, "R01" | "R02")).then(|| "rc1".into()),
         recorded_unix: 2,
     }
 }
@@ -83,8 +93,17 @@ fn ledger() -> Vec<Record> {
         .map(|(row, _, _)| (*row).to_owned())
         .collect();
     rows.extend(crate::mac_gui::logout::rows());
+    // The resource rows come from their own evidence: no other result names it (gate review
+    // round 2, R2-5).
     rows.iter()
-        .map(|row| record(row, "PASS", '1', &built, '9'))
+        .map(|row| {
+            let evidence = if matches!(row.as_str(), "R01" | "R02") {
+                '6'
+            } else {
+                '9'
+            };
+            record(row, "PASS", '1', &built, evidence)
+        })
         .collect()
 }
 
@@ -115,6 +134,7 @@ fn run(candidate: Read<&Candidate>, records: &[Record], tests: &Receipt) -> Vec<
         macos_major: 27,
         driver: Ok(R_DRIVER),
         candidate,
+        promotion: Read::Present(&promotion()),
         ledger: Read::Present(records),
         source_tests: Read::Present(tests),
         targets: Read::Present(&receipt().expected),
@@ -365,6 +385,7 @@ fn r03_counts_only_this_batch_and_a_fail_on_these_bytes_blocks() {
         macos_major: 27,
         driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
+        promotion: Read::Present(&promotion()),
         ledger: Read::Present(&records),
         source_tests: Read::Present(&receipt()),
         targets: Read::Present(&receipt().expected),
@@ -417,6 +438,7 @@ fn the_source_rows_follow_the_receipt_on_r() {
         macos_major: 27,
         driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
+        promotion: Read::Present(&promotion()),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Missing("no source-test receipt".into()),
         targets: Read::Present(&receipt().expected),
@@ -439,6 +461,7 @@ fn an_unreadable_ledger_leaves_the_ledger_rows_open() {
         macos_major: 27,
         driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
+        promotion: Read::Present(&promotion()),
         ledger: Read::Invalid("the ledger is unreadable: line 3".into()),
         source_tests: Read::Present(&receipt),
         targets: Read::Present(&receipt.expected),
@@ -757,6 +780,7 @@ fn without_r_s_target_list_the_source_rows_stay_open() {
         macos_major: 27,
         driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
+        promotion: Read::Present(&promotion()),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Present(&receipt),
         targets: Read::Invalid("cannot list R's test targets: cargo metadata failed".into()),
@@ -911,6 +935,7 @@ fn the_download_path_needs_its_outcomes_and_the_checked_major_version() {
         macos_major: 28,
         driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
+        promotion: Read::Present(&promotion()),
         ledger: Read::Present(&records),
         source_tests: Read::Present(&receipt()),
         targets: Read::Present(&receipt().expected),
@@ -1009,6 +1034,7 @@ fn a_recorded_failure_beats_a_missing_target_list() {
         macos_major: 27,
         driver: Ok(R_DRIVER),
         candidate: Read::Present(&candidate),
+        promotion: Read::Present(&promotion()),
         ledger: Read::Present(&ledger()),
         source_tests: Read::Present(&failing),
         targets: Read::Invalid("cannot list R's test targets".into()),
@@ -1045,6 +1071,26 @@ fn the_major_version_needs_one_complete_product_version() {
     // Review round 4, BLOCKER 5: a second copy cut off after its label is still a second label.
     assert_eq!(
         major_version("ProductVersion: 27.2 BuildVersion: 27C55 ProductVersion:"),
+        None
+    );
+    // M5 gate review B3: a label counts wherever it starts, not only at the start of a word, so
+    // a quoted or bracketed second copy is still a second label.
+    assert_eq!(
+        major_version("ProductVersion: 27.2\n>ProductVersion:28.0"),
+        None
+    );
+    assert_eq!(
+        major_version("ProductVersion: 27.2 (ProductVersion: 28.0)"),
+        None
+    );
+    // Fix-round review R1-4: the one label must start a field name; the end of another field's
+    // name is not a label, and any other copy anywhere still voids the text.
+    assert_eq!(major_version("TargetProductVersion: 27.2"), None);
+    assert_eq!(major_version("ÄProductVersion: 27.2"), None);
+    assert_eq!(major_version(">ProductVersion: 27.2"), Some(27));
+    assert_eq!(major_version("ProductVersion:27.2"), Some(27));
+    assert_eq!(
+        major_version("ProductVersion: 27.2\nTargetProductVersion: 28.0"),
         None
     );
 }
@@ -1084,6 +1130,7 @@ fn only_the_driver_built_on_r_holds_a_gui_row() {
             macos_major: 27,
             driver: Err(reason),
             candidate: Read::Present(&candidate),
+            promotion: Read::Present(&promotion()),
             ledger: Read::Present(&records),
             source_tests: Read::Present(&receipt),
             targets: Read::Present(&receipt.expected),
@@ -1098,4 +1145,56 @@ fn only_the_driver_built_on_r_holds_a_gui_row() {
             assert_line(&lines, "P16-W03", Verdict::Fail, "a FAIL of P16-W03");
         }
     }
+}
+
+/// M5 gate review B2: the promotion's own re-checks count only when they ran on R, for the
+/// receipt the resolver read; a missing, malformed, other-R or other-receipt promotion-check
+/// record leaves the package and P16-P01 NOT TESTED, naming the record, while the rows bound to
+/// the candidate's bytes are still judged.
+#[test]
+fn the_package_needs_a_promotion_check_on_r_for_this_receipt() {
+    use super::promotion::read as read_promotion;
+    let candidate = candidate();
+    let other_r = "2".repeat(40);
+    for (found, words) in [
+        (None, "no promotion-check record".to_owned()),
+        (
+            Some(b"{\"schema_version\":1}\n".to_vec()),
+            "is unreadable".to_owned(),
+        ),
+        (
+            Some(promotion_check::render(&other_r, &candidate.receipt_sha256).into_bytes()),
+            format!("was checked on {other_r}"),
+        ),
+        (
+            Some(promotion_check::render(R, &hex('f')).into_bytes()),
+            "another candidate receipt".to_owned(),
+        ),
+    ] {
+        // A record that cannot be read at all stops the check before any verdict
+        // (`ready/candidate.rs`, fix-round review R1-8).
+        let promotion = read_promotion(found.as_deref());
+        let lines = judge(&Inputs {
+            release: R,
+            batch: Some("rc1"),
+            macos_major: 27,
+            driver: Ok(R_DRIVER),
+            candidate: Read::Present(&candidate),
+            promotion: super::borrow(&promotion),
+            ledger: Read::Present(&ledger()),
+            source_tests: Read::Present(&receipt()),
+            targets: Read::Present(&receipt().expected),
+        });
+        for item in ["package", "P16-P01"] {
+            assert_line(&lines, item, Verdict::NotTested, &words);
+            assert_line(&lines, item, Verdict::NotTested, promotion_check::PATH);
+        }
+        assert_line(&lines, "P16-W02", Verdict::Pass, "ledger PASS");
+    }
+    let good = read_promotion(Some(
+        promotion_check::render(R, &candidate.receipt_sha256).as_bytes(),
+    ));
+    assert!(matches!(&good, Read::Present(check) if *check == promotion()));
+    let lines = run(Read::Present(&candidate), &ledger(), &receipt());
+    assert_line(&lines, "P16-P01", Verdict::Pass, "");
 }

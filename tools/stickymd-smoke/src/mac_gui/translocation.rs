@@ -29,17 +29,15 @@ use super::model::{Row, Verdict};
 /// The flags field of the quarantine attribute the driver writes: 0x83 as a browser download
 /// leaves it, plus the user-approved bit 0x40.
 pub(super) const QUARANTINE_FLAGS: &str = "00c3";
-/// The start of the product's prompt in a directory it cannot write.
+/// The start of the line of the product's prompt in a directory it cannot write (plan 05 keeps
+/// this prefix on macOS).
 pub(super) const PROMPT: &str = "当前目录不可写";
-/// The advice to move the app out, which a translocated bundle must get: today's wording
-/// (`apps/stickymd-mac/src/main.rs`) and the phrase Phase 18 keeps for every unwritable portable
-/// bundle (`apps/stickymd-mac/src/paths.rs`, Phase 18 session 2026-11-19). The advice for a
-/// folder a development build cannot write, which a translocated bundle must not get. A unit test
-/// holds them to the product's sources.
-pub(super) const TRANSLOCATED_ADVICE: [&str; 2] = [
-    "请先用访达把 StickyMD.app 移到别处",
-    "把整个 StickyMD 文件夹移到别处",
-];
+/// The prompt a translocated bundle must get, its whole line character for character: the
+/// prefix, then the portable bundle's advice to drag the app into Applications or move the whole
+/// StickyMD folder (plan 05 #startup-sequence; `apps/stickymd-mac/src/paths.rs`; gate review
+/// round 2, R2-2). Then the advice for a folder a development build cannot write, which a
+/// translocated bundle must not get. A unit test holds both to the product's source.
+pub(super) const TRANSLOCATED_PROMPT: &str = "当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，或把整个 StickyMD 文件夹移到别处。";
 pub(super) const GENERIC_ADVICE: &str = "请将程序移动到有写权限的文件夹";
 /// runningboard's termination record for an exit with status 1 (the prompt's `exit(1)`): the
 /// third field is the raw wait status, `1 << 8`. A probe app in the macOS 27.2 VM exiting with 0
@@ -164,9 +162,15 @@ pub(super) fn mount_point(line: &str) -> Option<&str> {
         .map(|(point, _)| point)
 }
 
+/// The prompt's line on stderr: the first that starts with [`PROMPT`], as the product's message
+/// does (the product may print a warning line before it; gate review D8).
+pub(super) fn prompt_line(stderr: &str) -> Option<&str> {
+    stderr.lines().find(|line| line.starts_with(PROMPT))
+}
+
 /// Whether the prompt was shown: its window seen, and the message with its cause on stderr.
 pub(super) fn prompted(o: &Observed) -> bool {
-    o.window.is_some() && o.stderr.contains(PROMPT) && o.stderr.contains(CAUSE)
+    o.window.is_some() && prompt_line(&o.stderr).is_some() && o.stderr.contains(CAUSE)
 }
 
 /// The R03 checks from what was observed. Each depends on the one before it: without the
@@ -217,7 +221,7 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
         }
         return;
     }
-    let translocated_advice = TRANSLOCATED_ADVICE.iter().any(|a| o.stderr.contains(a));
+    let translocated_advice = prompt_line(&o.stderr) == Some(TRANSLOCATED_PROMPT);
     let generic_advice = o.stderr.contains(GENERIC_ADVICE);
     let seen = o.window.is_some() || o.exited_early;
     let prompt = if o.stderr_unreadable.is_some() {
@@ -231,7 +235,7 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
     } else if prompted(o) {
         // The prompt, worded in a way this driver does not know: the product's text changed.
         Verdict::NotTested
-    } else if o.exited_early || (o.window.is_some() && !o.stderr.contains(PROMPT)) {
+    } else if o.exited_early || (o.window.is_some() && prompt_line(&o.stderr).is_none()) {
         // Gone without a prompt, or a prompt about something else.
         Verdict::Fail
     } else {

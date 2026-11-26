@@ -12,9 +12,14 @@ pub(crate) use stickymd_package::macos::{content, listing};
 pub(crate) mod promote;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) mod promotion_check;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod ready;
 #[cfg(target_os = "macos")]
 pub(crate) mod resolve;
+#[cfg(target_os = "macos")]
+pub(crate) use ready::ignored_table_check;
 #[cfg(target_os = "macos")]
 pub(super) use ready::{ready_command, source_tests_command};
 #[cfg(any(target_os = "macos", test))]

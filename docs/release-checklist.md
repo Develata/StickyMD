@@ -129,8 +129,9 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 - [ ] checksum、SBOM、包结构、license/notices 与 source identity PASS。
 - [ ] exact EXE 的普通与 delay-load import gate PASS，无外置 developer runtime。
 - [ ] artifact 通过验证后原子 Promote 到 `dist/exact-candidate/`；失败不半更新既有 candidate。
-- [ ] Windows 发布物沿用祖先提交 S 上的构建时（`11` #platform-artifact-reuse），`release verify-reuse --platform windows-x64
-      --build-source <S> --release-source <R>` PASS，`dist/evidence/release-reuse-windows-x64.json` 已写出。
+- [ ] Windows 发布物沿用祖先提交 S 上的构建时（`11` #platform-artifact-reuse），在干净的 R 检出上（HEAD 为 R、工作树干净；否则命令在
+      判定之前即拒绝）：`release verify-reuse --platform windows-x64 --build-source <S> --release-source <R>` PASS，
+      `dist/evidence/release-reuse-windows-x64.json` 已写出。
 
 ## 2M. macOS Release Exact Artifact（Phase 18 起）
 
@@ -138,8 +139,12 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 
 - [ ] 获得一次 candidate-only `release-macos.yml` dispatch authority；它运行在 `xcode-27`，先选定 Xcode 27.2。
 - [ ] workflow 成功；记下 run、成功的 attempt 与 artifact id（名为 `stickymd-macos-arm64-release-<attempt>`），核对 Summary 中的构建记录。
-- [ ] 本机 macOS：`release macos-promote --run-id <run> --attempt <n> --release-source <R> --zip <下载的 ZIP>` PASS，
-      `dist/exact-candidate-macos/` 与 `dist/evidence/release-candidate-macos.json` 已写出，签名方式为观察到的 `AD_HOC`。
+- [ ] 本机 macOS，在干净的 R 检出上（HEAD 为 R、工作树干净；否则晋升在下载之前即拒绝）：`release macos-promote --run-id <run>
+      --attempt <n> --release-source <R> --zip <下载的 ZIP>` PASS，`dist/exact-candidate-macos/`、
+      `dist/evidence/release-candidate-macos.json` 与晋升复核记录 `dist/evidence/release-promotion-macos.json` 已写出，签名方式为观察到的
+      `AD_HOC`。在别的提交上晋升过的候选（包括本清单之前晋升的），运行 `macos-ready` 之前在 R 上再晋升一次：同一 attempt 得到逐字节相同的
+      receipt，绑定其摘要的 USER 记录仍然成立；缺复核记录或记录不属于 R 与这份 receipt 时，包完整性与 P16-P01 为 `NOT TESTED`。
+      被替换的旧 staging 中若有晋升不会写的内容（例如在暂存 `.app` 旁写下的 `StickyMD/note/`），它会被保留并打印其位置，不删除。
 - [ ] `release macos-candidate --release-source <R>` PASS（staged 字节、bundle 清单与可执行文件与 receipt 一致，构建来源可沿用）。
 - [ ] macOS 就绪按 `11` #macos-release-gate 逐行成立（M5 的核对工具完成前，这一项不能勾选）。
 

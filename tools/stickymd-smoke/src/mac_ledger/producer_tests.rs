@@ -258,6 +258,8 @@ fn resources_evidence_outside_the_vm_unfinished_old_or_inconsistent_is_refused()
             "\"schema_version\":8",
             "is not of schema 7, the one this reader knows",
         ),
+        // A VALID run with no real process (gate review D5).
+        ("\"pid\":4242", "\"pid\":0", "names no process"),
         // A run's status changed while the rows still say PASS.
         (
             "\"status\":\"VALID\"",
@@ -599,7 +601,12 @@ fn resource_rows_are_recorded_only_under_their_own_kind() {
     let records = record(&crate::mac_resources::evidence_json(false)).unwrap();
     let line = records[0].line();
     assert!(line.contains("\"kind\":\"resources\""), "{line}");
-    assert_eq!(read_all(&line).unwrap(), records[..1]);
+    let both = format!("{line}\n{}\n", records[1].line());
+    assert_eq!(read_all(&both).unwrap(), records);
+    // M5 gate review C2: one evidence is R01 and R02 together; a ledger holding only the first
+    // line (cut short or spliced) could let a lost R02 FAIL be waived.
+    let error = read_all(&line).unwrap_err();
+    assert!(error.contains("both P16-R01 and P16-R02"), "{error}");
     let error =
         read_all(&line.replace("\"kind\":\"resources\"", "\"kind\":\"automated\"")).unwrap_err();
     assert!(error.contains("not one any producer writes"), "{error}");
@@ -703,4 +710,71 @@ fn image_digests_are_validated_and_kept_in_one_spelling() {
         line.contains("SHA256:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
     );
     assert_eq!(read_all(&line).unwrap(), records);
+}
+
+/// Gate review D2: an F01 run whose copy failed before the product was spawned leaves the row
+/// untested and the run unfinished, so `record` refuses it and no FAIL lands on the candidate's
+/// bytes; an error after the spawn (the product exiting before it was ready) is the product's
+/// FAIL and is recorded.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_run_stopped_before_the_product_was_spawned_is_not_recorded() {
+    let before = crate::mac_gui::failed_f01_evidence(true);
+    assert!(before.contains("\"finished\":false"), "{before}");
+    assert!(before.contains("\"verdict\":\"NOT_TESTED\""), "{before}");
+    let error = record(&before).unwrap_err();
+    assert!(error.contains("not finished"), "{error}");
+    let after = record(&crate::mac_gui::failed_f01_evidence(false)).unwrap();
+    assert!(
+        matches!(after.as_slice(), [Record::Automated { row, verdict, .. }] if row == "F01" && verdict == "FAIL"),
+        "{after:?}"
+    );
+}
+
+/// A finished F01 run as a driver built before the D2 fix (82bf466) wrote it when `one` returned
+/// `error`: the format of that version's `evidence_json`, `Row::json` and environment, the row's
+/// only check `execution` FAIL with the error, and the cleanup trace every row ends with.
+fn old_driver_f01(error: &str) -> String {
+    let environment = format!(
+        "{{\"os\":{},\"architecture\":\"aarch64\",\"hv_vmm_present\":\"1\",\"allow_host\":false,\"permissions\":{{\"accessibility\":true,\"post_event\":true,\"screen_recording\":true}},\"unix_seconds\":42,\"fixture_config\":{},\"main_display\":{{\"x\":0,\"y\":0,\"width\":1440,\"height\":900}},\"coordinate_space\":\"main-display global CG points (DIP)\",\"keyboard_precondition\":\"ABC/US; not automatically verified\"}}",
+        q("ProductName:\tmacOS\nProductVersion:\t27.2\nBuildVersion:\t26B123\n"),
+        q("[window]\n"),
+    );
+    format!(
+        "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":true,\"batch\":\"b1\",\"environment\":{environment},\"app_inputs\":\"{}\",\"app_executable_sha256\":\"{}\",\"app_bundle_manifest_sha256\":\"{}\",\"driver_sha256\":\"{}\",\"scenarios\":[{{\"id\":\"P16-F01\",\"verdict\":\"FAIL\",\"checks\":[{{\"name\":\"execution\",\"verdict\":\"FAIL\",\"observation\":{}}}],\"timeline\":[{{\"ms\":812,\"event\":\"owned child/directory cleanup: Ok(()); input release: Ok(())\"}}]}}]}}\n",
+        hex('e'),
+        hex('a'),
+        hex('b'),
+        hex('d'),
+        q(error),
+    )
+}
+
+/// Gate review round 2, R2-1: a driver built before the D2 fix wrote an error before the product
+/// was spawned as an `execution` FAIL and marked the run finished. `record` knows its fixed texts
+/// (`ditto` failing or running out of time, the copy's executable or bundle manifest differing,
+/// each opening the row's joined errors) and refuses the run; a failure of the spawned product
+/// in the same format stays its FAIL.
+#[test]
+fn an_old_drivers_error_before_the_spawn_is_not_recorded() {
+    for error in [
+        "ditto failed: exit status: 1",
+        "ditto failed: exit status: 1; Permission denied (os error 13)",
+        "ditto exceeded 120 seconds",
+        "Copied executable SHA-256 changed",
+        "copied bundle manifest changed; refused before launch",
+    ] {
+        let error = record(&old_driver_f01(error)).unwrap_err();
+        assert!(error.contains("before the product was spawned"), "{error}");
+    }
+    for error in [
+        "product exited before ready: exit status: 1",
+        "no unique on-screen product window within 20s",
+    ] {
+        let records = record(&old_driver_f01(error)).unwrap();
+        assert!(
+            matches!(records.as_slice(), [Record::Automated { row, verdict, .. }] if row == "F01" && verdict == "FAIL"),
+            "{error}: {records:?}"
+        );
+    }
 }

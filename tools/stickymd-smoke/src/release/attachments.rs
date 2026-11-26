@@ -165,10 +165,28 @@ pub(crate) fn check_manifest_names(manifest: &str, names: &[&str]) -> Result<(),
 }
 
 /// R must be on the main line: every promotion operation starts from a commit `origin/main`
-/// reaches, whatever ref the workflow was dispatched from.
-fn on_main(root: &Path, release: &str) -> Result<(), String> {
+/// reaches, whatever ref the workflow was dispatched from. `origin/main` is the remote-tracking
+/// ref `refs/remotes/origin/main` itself: Git resolves the short name to a local branch or tag of
+/// that name first (fix-round review R3-1).
+pub(crate) fn on_main(root: &Path, release: &str) -> Result<(), String> {
+    const MAIN: &str = "refs/remotes/origin/main";
+    let main = super::platform_inputs::git(root)
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{MAIN}^{{commit}}"),
+        ])
+        .output()
+        .map_err(|error| format!("cannot run git: {error}"))?;
+    let main = String::from_utf8(main.stdout)
+        .ok()
+        .filter(|_| main.status.success())
+        .map(|sha| sha.trim().to_owned())
+        .filter(|sha| integrity::validate_hex(sha, 40, MAIN).is_ok())
+        .ok_or_else(|| format!("{MAIN} names no commit here; fetch origin"))?;
     let status = super::platform_inputs::git(root)
-        .args(["merge-base", "--is-ancestor", release, "origin/main"])
+        .args(["merge-base", "--is-ancestor", release, &main])
         .status()
         .map_err(|error| format!("cannot run git: {error}"))?;
     if status.success() {
@@ -365,5 +383,45 @@ mod tests {
                 .unwrap_err()
                 .contains("missing")
         );
+    }
+
+    fn git(root: &Path, arguments: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(arguments)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {arguments:?}: {output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// Fix-round review R3-1: "on origin/main" reads the remote-tracking ref itself; a local
+    /// branch named `origin/main`, which Git resolves first for the short name, does not count.
+    #[test]
+    fn only_the_remote_tracking_ref_counts_as_origin_main() {
+        let scratch = TemporaryDirectory::new("origin-main-shadow").unwrap();
+        let root = scratch.path();
+        git(root, &["init", "-q", "-b", "main"]);
+        let commit = |text: &str| {
+            fs::write(root.join("a.txt"), text).unwrap();
+            git(root, &["add", "-A"]);
+            git(root, &["commit", "-q", "-m", text]);
+            git(root, &["rev-parse", "HEAD"])
+        };
+        let s = commit("s");
+        let r = commit("r");
+        let error = on_main(root, &r).unwrap_err();
+        assert!(error.contains("refs/remotes/origin/main"), "{error}");
+        git(root, &["update-ref", "refs/remotes/origin/main", &s]);
+        git(root, &["branch", "origin/main", &r]);
+        let error = on_main(root, &r).unwrap_err();
+        assert!(error.contains("is not on origin/main"), "{error}");
+        on_main(root, &s).unwrap();
+        git(root, &["update-ref", "refs/remotes/origin/main", &r]);
+        on_main(root, &r).unwrap();
     }
 }
