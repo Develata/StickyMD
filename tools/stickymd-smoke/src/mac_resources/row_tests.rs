@@ -680,3 +680,21 @@ fn the_reader_refuses_counters_processes_and_waits_the_driver_cannot_produce() {
     waited.scenarios[3][0].status_item_wait_seconds = Some(0.5);
     read(&waited.json()).unwrap();
 }
+
+/// Gate review round 2, R2-7: a VALID run's PID is one the sampler could have measured: a `u32`
+/// as `Child::id` gives it, convertible to the `c_int` `proc_pid_rusage` takes, and above 0.
+#[test]
+fn the_reader_refuses_a_pid_the_sampler_cannot_take() {
+    let good = evidence().json();
+    let with = |pid: &str| {
+        let text = good.replacen("\"pid\":4242", &format!("\"pid\":{pid}"), 1);
+        assert_ne!(text, good);
+        text
+    };
+    // Past `u32`, past `c_int` but within `u32`, and the largest `u32`.
+    for pid in ["4294967296", "2147483648", "4294967295"] {
+        refused(&with(pid), "names no process");
+    }
+    // The largest PID a `c_int` holds is one.
+    read(&with("2147483647")).unwrap();
+}

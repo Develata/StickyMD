@@ -413,9 +413,12 @@ fn optional_number(value: &Value, key: &str) -> Result<Option<f64>, String> {
 /// before the first sample; the process did not exit.
 fn lifecycle(run: &Value, hidden: bool, first_sample: f64) -> Result<(), String> {
     let refused = |what: &str| Err(format!("a VALID run {what}, which the tool never writes"));
+    // A PID the sampler could have measured: a `u32`, then a `c_int`, above 0 (round 2, R2-7).
     let pid = match run.field("pid")? {
         Value::Null => None,
-        pid => Some(pid.unsigned()?),
+        pid => u32::try_from(pid.unsigned()?)
+            .ok()
+            .and_then(model::sampled_pid),
     };
     if !pid.is_some_and(|pid| pid > 0) {
         return refused("names no process");
