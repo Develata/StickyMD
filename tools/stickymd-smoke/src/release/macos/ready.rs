@@ -42,6 +42,13 @@ pub(in super::super) fn source_tests_command(root: &Path, release: &str) -> Resu
     }
 }
 
+/// `phase 18`'s check that the ignored-test table names exactly what the eight packages' targets
+/// list as ignored on this Mac (plan 11 #macos-readiness-check; whole-gate review A1).
+#[cfg(target_os = "macos")]
+pub(crate) fn ignored_table_check(root: &Path) -> Result<(), String> {
+    source_tests::ignored_table(root)
+}
+
 /// R's test binaries and doc-tested libraries from `cargo metadata` on the checkout, listed
 /// apart from any receipt (plan 11 #macos-readiness-check).
 #[cfg(target_os = "macos")]

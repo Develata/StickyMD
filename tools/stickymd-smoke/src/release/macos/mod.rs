@@ -16,6 +16,8 @@ mod ready;
 #[cfg(target_os = "macos")]
 pub(crate) mod resolve;
 #[cfg(target_os = "macos")]
+pub(crate) use ready::ignored_table_check;
+#[cfg(target_os = "macos")]
 pub(super) use ready::{ready_command, source_tests_command};
 #[cfg(any(target_os = "macos", test))]
 pub(crate) use ready::{receipt_row, waivable};

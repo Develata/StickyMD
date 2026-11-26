@@ -266,7 +266,7 @@ fn run_identity() -> Result<String, String> {
 }
 
 /// What Cargo will run: the test executables of the build and the doc-tested libraries.
-fn discover(root: &Path) -> Result<(Vec<Executable>, Vec<Target>), String> {
+pub(super) fn discover(root: &Path) -> Result<(Vec<Executable>, Vec<Target>), String> {
     let mut argv = command();
     argv.extend(["--no-run", "--message-format=json"].map(str::to_owned));
     let output = Command::new(&argv[0])
@@ -327,7 +327,11 @@ fn list(
 /// Every target's own listing of its tests: each test executable's `--list`, and each
 /// doc-tested library's `cargo test --doc -- --list`. A target whose listing fails is a problem
 /// of that target alone; the others keep theirs (pre-freeze item 4).
-fn listings(root: &Path, executables: &[Executable], doc: &[Target]) -> (Vec<Listed>, Vec<String>) {
+pub(super) fn listings(
+    root: &Path,
+    executables: &[Executable],
+    doc: &[Target],
+) -> (Vec<Listed>, Vec<String>) {
     gather(executables, doc, |program, argv, is_doc| {
         list(root, program, argv, is_doc)
     })

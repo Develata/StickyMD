@@ -122,7 +122,7 @@ pub(super) const IGNORED: [(&str, &str, &str, &str, Role); 33] = [
         "stickymd-render",
         "lib",
         "stickymd_render",
-        "math_action::tests::phase11b_performance_math_action_stays_linear_in_shifted_paragraphs",
+        "math_action::tests::phase11b_performance_math_action_stays_linear_after_reference_definitions",
         Role::NoGateRow,
     ),
     (
@@ -261,4 +261,41 @@ pub(super) fn role(target: &Target, test: &str) -> Option<Role> {
             *package == target.package && *kind == target.kind && *name == target.name && *n == test
         })
         .map(|(.., role)| *role)
+}
+
+/// How the targets' own `--list --ignored` listings differ from the table, by package, kind,
+/// target name and full test name: an ignored test the table lacks, then an entry no listing
+/// names, so a rename shows as both (plan 11 #macos-readiness-check, the Phase 18 check;
+/// whole-gate review A1). Empty when they agree.
+pub(super) fn differences(listed: &[super::output::Listed]) -> Vec<String> {
+    type Key<'a> = (&'a str, &'a str, &'a str, &'a str);
+    let mut found: Vec<Key> = listed
+        .iter()
+        .flat_map(|l| {
+            l.ignored.iter().map(|test| {
+                (
+                    l.target.package.as_str(),
+                    l.target.kind.as_str(),
+                    l.target.name.as_str(),
+                    test.as_str(),
+                )
+            })
+        })
+        .collect();
+    found.sort_unstable();
+    let mut table: Vec<Key> = IGNORED
+        .iter()
+        .map(|(package, kind, name, test, _)| (*package, *kind, *name, *test))
+        .collect();
+    table.sort_unstable();
+    let named = |(package, kind, name, test): &Key| format!("{package} {kind} {name}: {test}");
+    let extra = found
+        .iter()
+        .filter(|key| table.binary_search(key).is_err())
+        .map(|key| format!("ignored but not classified: {}", named(key)));
+    let missing = table
+        .iter()
+        .filter(|key| found.binary_search(key).is_err())
+        .map(|key| format!("classified but not ignored: {}", named(key)));
+    extra.chain(missing).collect()
 }

@@ -614,6 +614,13 @@ be the driver that run built, `target/macos-driver/release/stickymd-smoke`; othe
 checkout builds the same driver: copy that file into the VM for the release's `mac-gui` runs. `--macos-major` is the macOS major version the five download paths must
 have run on. P16-S06 holds only by its explicit run.
 
+The gate classifies every test a receipt lists as ignored by a table in
+`src/release/macos/ready/source_tests/ignored.rs`. On a Mac, `phase 18` checks that table
+before R exists: it finds the eight packages' test targets and their `--list --ignored` the
+way the runner does (in the default build directory) and fails on any ignored test the table
+lacks and any entry no listing names, so a renamed, added or moved ignored test is classified
+before it merges. Off macOS the task is NOT_TESTED.
+
 The USER's records for a release go into the same ledger, bound to the candidate the resolver
 returns for R:
 

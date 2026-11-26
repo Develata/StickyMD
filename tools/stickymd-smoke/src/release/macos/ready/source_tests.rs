@@ -115,6 +115,27 @@ pub(super) fn lock_for_reading(root: &std::path::Path) -> Result<Reading, String
     }
 }
 
+/// `phase 18`'s check of the ignored-test table on a Mac (plan 11 #macos-readiness-check, the
+/// Phase 16 row classification; whole-gate review A1): the eight packages' test targets and their
+/// `--list --ignored`, found and listed as the runner finds and lists them, must name exactly the
+/// table's tests, so a renamed or new ignored test is caught before it is merged rather than on R.
+/// A target that cannot be listed fails the check, since its ignored tests are unknown.
+#[cfg(target_os = "macos")]
+pub(super) fn ignored_table(root: &std::path::Path) -> Result<(), String> {
+    let (executables, doc) = run::discover(root)?;
+    let (listed, mut problems) = run::listings(root, &executables, &doc);
+    problems.extend(ignored::differences(&listed));
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the ignored-test table ({}) does not match the targets' own listings: {}",
+            "tools/stickymd-smoke/src/release/macos/ready/source_tests/ignored.rs",
+            problems.join("; ")
+        ))
+    }
+}
+
 /// Whether `path` exists, refusing a link (it would be locked or replaced as the link) and any
 /// error but absence (review round 4).
 #[cfg(target_os = "macos")]

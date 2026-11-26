@@ -875,6 +875,64 @@ fn an_ignored_test_moved_to_a_target_of_another_kind_is_unclassified() {
     assert!(role(&target(package, moved, name), test).is_none());
 }
 
+/// Whole-gate review A1 (the Phase 18 check): listings that name exactly the table's tests agree
+/// with it; a renamed test (here as #27 renamed one), a new one, a dropped one and one moved to
+/// another kind each differ, by the whole key.
+#[test]
+fn the_ignored_table_must_match_the_listings_exactly() {
+    use super::ignored::{IGNORED, differences};
+    let listings = |rows: &[(&str, &str, &str, &str)]| -> Vec<output::Listed> {
+        let mut out: Vec<output::Listed> = Vec::new();
+        for (package, kind, name, test) in rows {
+            let target = target(package, kind, name);
+            let index = match out.iter().position(|l| l.target == target) {
+                Some(index) => index,
+                None => {
+                    out.push(output::Listed {
+                        target,
+                        all: Vec::new(),
+                        ignored: Vec::new(),
+                    });
+                    out.len() - 1
+                }
+            };
+            out[index].all.push((*test).to_owned());
+            out[index].ignored.push((*test).to_owned());
+        }
+        out
+    };
+    let table: Vec<(&str, &str, &str, &str)> = IGNORED
+        .iter()
+        .map(|(p, k, n, t, _)| (*p, *k, *n, *t))
+        .collect();
+    assert_eq!(differences(&listings(&table)), Vec::<String>::new());
+
+    let renamed_from = table[0].3;
+    let mut renamed = table.clone();
+    renamed[0].3 = "a::renamed_test";
+    let found = differences(&listings(&renamed));
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(
+        found[0].starts_with("ignored but not classified") && found[0].contains("a::renamed_test")
+    );
+    assert!(found[1].starts_with("classified but not ignored") && found[1].contains(renamed_from));
+
+    let mut added = table.clone();
+    added.push((
+        "stickymd-core",
+        "lib",
+        "stickymd_core",
+        "a::new_ignored_test",
+    ));
+    assert_eq!(differences(&listings(&added)).len(), 1);
+
+    assert_eq!(differences(&listings(&table[1..])).len(), 1);
+
+    let mut moved = table.clone();
+    moved[0].1 = if moved[0].1 == "test" { "lib" } else { "test" };
+    assert_eq!(differences(&listings(&moved)).len(), 2);
+}
+
 /// Fix round, BLOCKER 5: a test registered twice is listed twice; the explicit run, which runs
 /// it once, does not hold.
 #[test]
