@@ -273,7 +273,7 @@ pub(crate) fn validate_public_evidence_path(root: &Path, path: &Path) -> Result<
     }
     if reserved_paths::is_macos_source_test_path(root, path) {
         return Err(
-            "the macOS source-test receipt and its lock are owned by release macos-source-tests; use a diagnostic evidence path".into(),
+            "the macOS source-test receipt, its lock and the promotion-check record are owned by release macos-source-tests and macos-promote; use a diagnostic evidence path".into(),
         );
     }
     if reserved_paths::is_mac_ledger_path(root, path) {

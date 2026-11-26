@@ -75,20 +75,11 @@ pub(crate) fn artifact_of_attempt(listing: &str, attempt: u64) -> Result<(u64, S
     }
 }
 
-/// `release` must be a full SHA contained in `origin/main`, as the release authorization names it.
+/// `release` must be a full SHA contained in `origin/main` (the remote-tracking ref itself,
+/// fix-round review R3-1), as the release authorization names it.
 pub(crate) fn check_release(root: &Path, release: &str) -> Result<(), String> {
     integrity::validate_hex(release, 40, "release commit")?;
-    let contained = crate::release::platform_inputs::git(root)
-        .args(["merge-base", "--is-ancestor", release, "origin/main"])
-        .status()
-        .map_err(|error| format!("cannot run git: {error}"))?;
-    if contained.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "release commit {release} is not contained in origin/main"
-        ))
-    }
+    crate::release::attachments::on_main(root, release)
 }
 
 /// `release`, lowercase, once it is a commit `check_release` accepts and the checkout is a clean
@@ -516,5 +507,22 @@ pub(super) mod tests {
         // A clean checkout of R passes, its commit named in any case.
         scratch_git(root, &["checkout", "-q", "--", "a.txt"]);
         assert_eq!(on_release(root, &r.to_ascii_uppercase()).unwrap(), r);
+    }
+
+    /// Fix-round review R3-1: the release commit must be on the remote-tracking
+    /// `refs/remotes/origin/main`; a local branch of that name, which Git resolves first for the
+    /// short name, does not put R on the main line for promotion, the resolver or `macos-ready`.
+    #[test]
+    fn check_release_ignores_a_local_branch_named_origin_main() {
+        let scratch = TemporaryDirectory::new("macos-release-shadow").unwrap();
+        let root = scratch.path();
+        let s = release_checkout(root);
+        fs::write(root.join("a.txt"), "r").unwrap();
+        scratch_git(root, &["commit", "-q", "-am", "r"]);
+        let r = scratch_git(root, &["rev-parse", "HEAD"]);
+        scratch_git(root, &["branch", "origin/main", &r]);
+        let error = check_release(root, &r).unwrap_err();
+        assert!(error.contains("is not on origin/main"), "{error}");
+        check_release(root, &s).unwrap();
     }
 }

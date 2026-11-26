@@ -1083,6 +1083,16 @@ fn the_major_version_needs_one_complete_product_version() {
         major_version("ProductVersion: 27.2 (ProductVersion: 28.0)"),
         None
     );
+    // Fix-round review R1-4: the one label must start a field name; the end of another field's
+    // name is not a label, and any other copy anywhere still voids the text.
+    assert_eq!(major_version("TargetProductVersion: 27.2"), None);
+    assert_eq!(major_version("ÄProductVersion: 27.2"), None);
+    assert_eq!(major_version(">ProductVersion: 27.2"), Some(27));
+    assert_eq!(major_version("ProductVersion:27.2"), Some(27));
+    assert_eq!(
+        major_version("ProductVersion: 27.2\nTargetProductVersion: 28.0"),
+        None
+    );
 }
 
 /// Review round 4, BLOCKER 1: `--driver` counts only as the driver the run on R built; a file
@@ -1147,27 +1157,23 @@ fn the_package_needs_a_promotion_check_on_r_for_this_receipt() {
     let candidate = candidate();
     let other_r = "2".repeat(40);
     for (found, words) in [
-        (Ok(None), "no promotion-check record".to_owned()),
+        (None, "no promotion-check record".to_owned()),
         (
-            Ok(Some(b"{\"schema_version\":1}\n".to_vec())),
+            Some(b"{\"schema_version\":1}\n".to_vec()),
             "is unreadable".to_owned(),
         ),
         (
-            Err("cannot read it: Permission denied".to_owned()),
-            "Permission denied".to_owned(),
-        ),
-        (
-            Ok(Some(
-                promotion_check::render(&other_r, &candidate.receipt_sha256).into_bytes(),
-            )),
+            Some(promotion_check::render(&other_r, &candidate.receipt_sha256).into_bytes()),
             format!("was checked on {other_r}"),
         ),
         (
-            Ok(Some(promotion_check::render(R, &hex('f')).into_bytes())),
+            Some(promotion_check::render(R, &hex('f')).into_bytes()),
             "another candidate receipt".to_owned(),
         ),
     ] {
-        let promotion = read_promotion(found);
+        // A record that cannot be read at all stops the check before any verdict
+        // (`ready/candidate.rs`, fix-round review R1-8).
+        let promotion = read_promotion(found.as_deref());
         let lines = judge(&Inputs {
             release: R,
             batch: Some("rc1"),
@@ -1185,9 +1191,9 @@ fn the_package_needs_a_promotion_check_on_r_for_this_receipt() {
         }
         assert_line(&lines, "P16-W02", Verdict::Pass, "ledger PASS");
     }
-    let good = read_promotion(Ok(Some(
-        promotion_check::render(R, &candidate.receipt_sha256).into_bytes(),
-    )));
+    let good = read_promotion(Some(
+        promotion_check::render(R, &candidate.receipt_sha256).as_bytes(),
+    ));
     assert!(matches!(&good, Read::Present(check) if *check == promotion()));
     let lines = run(Read::Present(&candidate), &ledger(), &receipt());
     assert_line(&lines, "P16-P01", Verdict::Pass, "");

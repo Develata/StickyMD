@@ -13,9 +13,17 @@ use std::path::Path;
 pub(super) struct Snapshot {
     pub candidate: Read<judge::Candidate>,
     pub promotion: Read<Check>,
-    /// The whole state read (absent, not resolving, or resolving to which receipt; and the
-    /// record's bytes), compared between the first and the last reading.
-    pub state: String,
+    /// The whole state read, compared between the first and the last reading.
+    pub state: State,
+}
+
+/// The candidate's whole state as read: the resolver's outcome (absent, not resolving, or the
+/// receipt it resolved to) and the promotion-check record's bytes as read, compared as they are,
+/// never through a digest that could fail (fix-round review R1-8).
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct State {
+    resolved: Option<Option<String>>,
+    record: Option<Vec<u8>>,
 }
 
 /// The last reading (step 5), under the promotion lock's shared lock: the candidate's whole
@@ -23,21 +31,21 @@ pub(super) struct Snapshot {
 /// no verdict is printed. The lock is returned to be held until the verdicts are printed, so no
 /// promotion can swap in another candidate between this reading and the output (M5 gate review
 /// B1). A promotion holding the lock fails the check; with no lock file no promotion ever ran
-/// here, which stands only when there is no candidate either.
+/// here, and the check fails too: a first promotion could create the lock and swap a candidate
+/// in meanwhile (fix-round review R1-6).
 pub(super) fn confirm(
     root: &Path,
     release: &str,
     first: &Snapshot,
     start: &Identity,
-) -> Result<Option<PromotionLock>, String> {
-    let lock = PromotionLock::share(root)?;
-    let last = read(root, release);
-    if lock.is_none() && !matches!(last.candidate, Read::Missing(_)) {
+) -> Result<PromotionLock, String> {
+    let Some(lock) = PromotionLock::share(root)? else {
         return Err(format!(
-            "no promotion lock ({}) beside a candidate receipt: promote the candidate again on R",
+            "no promotion lock ({}): no macOS promotion has run here; promote the candidate on R first",
             crate::release::macos::promote::PROMOTION_LOCK
         ));
-    }
+    };
+    let last = read(root, release)?;
     if last.state != first.state {
         return Err("the candidate changed while it was checked; check again".to_owned());
     }
@@ -47,9 +55,11 @@ pub(super) fn confirm(
     Ok(lock)
 }
 
-pub(super) fn read(root: &Path, release: &str) -> Snapshot {
-    let candidate = match crate::release::macos::resolve::receipt_present(root) {
-        Ok(true) => match crate::release::macos::resolve::resolve(root, release) {
+/// The candidate as read now; a receipt or record that cannot be read at all stops the check
+/// (fix-round review R1-8): its state is unknown, so no two readings can be shown the same.
+pub(super) fn read(root: &Path, release: &str) -> Result<Snapshot, String> {
+    let candidate = match crate::release::macos::resolve::receipt_present(root)? {
+        true => match crate::release::macos::resolve::resolve(root, release) {
             Ok(resolved) => Read::Present(judge::Candidate {
                 receipt_sha256: resolved.receipt_sha256,
                 zip_sha256: resolved.zip_sha256,
@@ -61,29 +71,25 @@ pub(super) fn read(root: &Path, release: &str) -> Snapshot {
             }),
             Err(error) => Read::Invalid(format!("the candidate does not resolve: {error}")),
         },
-        Ok(false) => Read::Missing("no macOS candidate has been promoted".to_owned()),
-        Err(error) => Read::Invalid(error),
+        false => Read::Missing("no macOS candidate has been promoted".to_owned()),
     };
     // Read after the receipt the resolver checked: a promotion writes the record after it.
-    let found = promotion_check::load(root);
-    let record = match &found {
-        Ok(None) => "no record".to_owned(),
-        Ok(Some(bytes)) => crate::integrity::sha256_bytes(bytes).map_or_else(
-            |_| "record unhashable".to_owned(),
-            |d| format!("record {d}"),
-        ),
-        Err(_) => "record unreadable".to_owned(),
+    let record = promotion_check::load(root).map_err(|error| {
+        format!(
+            "the promotion-check record {} cannot be read ({error}); check again",
+            promotion_check::PATH
+        )
+    })?;
+    let resolved = match &candidate {
+        Read::Present(candidate) => Some(Some(candidate.receipt_sha256.clone())),
+        Read::Invalid(_) => Some(None),
+        Read::Missing(_) => None,
     };
-    let state = match &candidate {
-        Read::Present(candidate) => format!("present {}", candidate.receipt_sha256),
-        Read::Missing(_) => "missing".to_owned(),
-        Read::Invalid(_) => "invalid".to_owned(),
-    };
-    Snapshot {
+    Ok(Snapshot {
         candidate,
-        promotion: super::promotion::read(found),
-        state: format!("{state}; {record}"),
-    }
+        promotion: super::promotion::read(record.as_deref()),
+        state: State { resolved, record },
+    })
 }
 
 #[cfg(test)]
@@ -113,7 +119,7 @@ mod tests {
         let scratch = checkout();
         let root = scratch.path();
         let start = identity::capture(root).unwrap();
-        let first = read(root, R);
+        let first = read(root, R).unwrap();
         let promotion = PromotionLock::take(root).unwrap();
         let error = confirm(root, R, &first, &start).unwrap_err();
         assert!(
@@ -135,27 +141,25 @@ mod tests {
         assert_eq!(fs::read(&lock).unwrap(), b"");
     }
 
-    /// Without a lock file no promotion ever ran, which holds only when there is no candidate
-    /// either; a receipt without the lock fails the reading. The lock is not created.
+    /// Fix-round review R1-6: without a lock file no promotion ever ran here, and the reading
+    /// fails without verdicts, with or without a candidate: a first promotion could create the
+    /// lock and swap a candidate in meanwhile. The lock is not created.
     #[test]
-    fn no_promotion_lock_stands_only_without_a_candidate() {
+    fn no_promotion_lock_fails_the_last_reading() {
         let scratch = checkout();
         let root = scratch.path();
         let start = identity::capture(root).unwrap();
-        let first = read(root, R);
-        confirm(root, R, &first, &start).unwrap();
         let lock = root.join(crate::release::macos::promote::PROMOTION_LOCK);
-        assert!(!lock.exists());
-        fs::create_dir_all(root.join("dist/evidence")).unwrap();
-        fs::write(
-            root.join(crate::release::macos::promote::RECEIPT),
-            "not a receipt",
-        )
-        .unwrap();
-        let first = read(root, R);
-        let error = confirm(root, R, &first, &start).unwrap_err();
-        assert!(error.contains("no promotion lock"), "{error}");
-        assert!(!lock.exists());
+        for receipt in [None, Some("not a receipt")] {
+            if let Some(receipt) = receipt {
+                fs::create_dir_all(root.join("dist/evidence")).unwrap();
+                fs::write(root.join(crate::release::macos::promote::RECEIPT), receipt).unwrap();
+            }
+            let first = read(root, R).unwrap();
+            let error = confirm(root, R, &first, &start).unwrap_err();
+            assert!(error.contains("no promotion lock"), "{receipt:?}: {error}");
+            assert!(!lock.exists());
+        }
     }
 
     /// The candidate is read again before the source identity, and a change in either fails the
@@ -172,7 +176,7 @@ mod tests {
         )
         .unwrap();
         let start = identity::capture(root).unwrap();
-        let first = read(root, R);
+        let first = read(root, R).unwrap();
         fs::write(
             root.join(promotion_check::PATH),
             promotion_check::render(R, &"c".repeat(64)),
@@ -180,9 +184,33 @@ mod tests {
         .unwrap();
         let error = confirm(root, R, &first, &start).unwrap_err();
         assert!(error.contains("the candidate changed"), "{error}");
-        let first = read(root, R);
+        let first = read(root, R).unwrap();
         fs::write(root.join("new.txt"), "x").unwrap();
         let error = confirm(root, R, &first, &start).unwrap_err();
         assert!(error.contains("the checkout changed"), "{error}");
+    }
+
+    /// Fix-round review R1-8: a promotion-check record that cannot be read at both readings is
+    /// not "the same" record; it stops the check.
+    #[test]
+    fn an_unreadable_record_stops_the_check() {
+        let scratch = checkout();
+        let root = scratch.path();
+        fs::create_dir_all(root.join(promotion_check::PATH)).unwrap();
+        fs::write(
+            root.join(crate::release::macos::promote::PROMOTION_LOCK),
+            b"",
+        )
+        .unwrap();
+        let error = read(root, R).err().unwrap();
+        assert!(error.contains(promotion_check::PATH), "{error}");
+        // Two records read are compared byte for byte, not through a digest.
+        fs::remove_dir(root.join(promotion_check::PATH)).unwrap();
+        fs::write(root.join(promotion_check::PATH), "one record").unwrap();
+        let start = identity::capture(root).unwrap();
+        let first = read(root, R).unwrap();
+        fs::write(root.join(promotion_check::PATH), "another one").unwrap();
+        let error = confirm(root, R, &first, &start).unwrap_err();
+        assert!(error.contains("the candidate changed"), "{error}");
     }
 }

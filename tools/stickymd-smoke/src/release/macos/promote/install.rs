@@ -19,14 +19,24 @@ enum Step {
     RecordWritten,
 }
 
-/// The bytes at `path`, `None` only when nothing is there; any other error stops the caller
-/// before it changes anything.
+/// The bytes of the regular file at `path`, `None` only when nothing is there; a link (even a
+/// dangling one) or anything but a regular file, and any other error, stops the caller before
+/// it changes anything (fix-round review R3-5: the resolver refuses what this would skip).
 fn existing(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(format!(
+                "{} is not a regular file (a link or a directory); move it away",
+                path.display()
+            ));
+        }
+        Ok(_) => {}
     }
+    fs::read(path)
+        .map(Some)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
 /// What `install` writes: the reuse record (when the candidate was built on an ancestor), the
@@ -55,13 +65,22 @@ pub(super) fn install(
     let receipt_path = root.join(RECEIPT);
     let record_path = root.join(REUSE_RECORD);
     let promotion_path = root.join(PROMOTION_CHECK);
-    let aside = root.join(format!(
-        "dist/.exact-candidate-macos-old-{}",
-        std::process::id()
-    ));
+    let aside = free_aside(root)?;
     let old_receipt = existing(&receipt_path)?;
+    // The one ZIP the old staging may hold, as its receipt names it (fix-round review R1-3).
+    let old_zip = old_zip(old_receipt.as_deref());
     let old_record = existing(&record_path)?;
     let old_promotion = existing(&promotion_path)?;
+    // Only a promotion-check record is ours to retire (fix-round review R1-9).
+    if old_promotion
+        .as_deref()
+        .is_some_and(|bytes| !super::super::promotion_check::is_record(bytes))
+    {
+        return Err(format!(
+            "{} is not a promotion-check record; it is kept: move it away and promote again",
+            promotion_path.display()
+        ));
+    }
     let mut done = Vec::new();
     let io = |what: &str, error: std::io::Error| format!("cannot {what}: {error}");
     let outcome = (|| {
@@ -118,10 +137,11 @@ pub(super) fn install(
         });
     }
     let recorded = atomic_evidence::write(&promotion_path, outputs.promotion.as_bytes());
-    if aside.exists() {
+    // Only the directory this run set aside is cleaned up (fix-round review R1-11).
+    if done.iter().any(|step| matches!(step, Step::OldSetAside)) {
         // Only what a promotion writes is removed: a note written beside the staged `.app` is
         // the user's (M5 gate review B9; AGENTS.md: never delete user files).
-        let kept = match foreign(&aside, "") {
+        let kept = match old_zip.and_then(|zip| foreign(&aside, "", &zip)) {
             Ok(None) => fs::remove_dir_all(&aside)
                 .err()
                 .map(|error| error.to_string()),
@@ -142,16 +162,51 @@ pub(super) fn install(
     })
 }
 
+/// A name in `dist/` for setting the old candidate aside that nothing holds yet: a staging kept
+/// by an earlier run may hold the plain one, and a rename onto a directory could fail or merge
+/// (fix-round review R1-11).
+fn free_aside(root: &Path) -> Result<std::path::PathBuf, String> {
+    let base = format!("dist/.exact-candidate-macos-old-{}", std::process::id());
+    for attempt in 0..1000_u32 {
+        let name = if attempt == 0 {
+            base.clone()
+        } else {
+            format!("{base}-{attempt}")
+        };
+        let path = root.join(name);
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(path),
+            Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
+            Ok(_) => {}
+        }
+    }
+    Err(format!(
+        "every name {base}-N in dist/ is taken by kept stagings; move them away"
+    ))
+}
+
+/// The ZIP name the old receipt records, or why the old staging's ZIP cannot be told apart.
+fn old_zip(receipt: Option<&[u8]>) -> Result<String, String> {
+    let receipt = receipt.ok_or("no old receipt names its ZIP")?;
+    std::str::from_utf8(receipt)
+        .ok()
+        .and_then(|text| crate::release::json::parse(text).ok())
+        .and_then(|document| {
+            document
+                .field("zip_name")
+                .and_then(|name| name.string().map(str::to_owned))
+                .ok()
+        })
+        .ok_or_else(|| "the old receipt names no ZIP".to_owned())
+}
+
 /// The first entry under `directory` (an old staging directory; `relative` is its path inside
-/// it) that a promotion does not write, if any: a promotion writes the ZIP, the checksum file
-/// and the SBOM, and extracts the ZIP's inventory beside them (the files beside the app, and
-/// anything under the app). Links count as foreign, so nothing outside is looked at.
-fn foreign(directory: &Path, relative: &str) -> Result<Option<String>, String> {
+/// it) that a promotion does not write, if any: a promotion writes the ZIP its receipt names,
+/// the checksum file and the SBOM, and extracts the ZIP's inventory beside them (the files beside
+/// the app, and the app directory with anything under it). Links count as foreign, so nothing
+/// outside is looked at.
+fn foreign(directory: &Path, relative: &str, zip: &str) -> Result<Option<String>, String> {
     let platform = crate::release::platform::Platform::MacOsArm64;
-    let archive = platform.archive_name("*");
-    let (prefix, suffix) = archive
-        .split_once('*')
-        .ok_or("no version in the ZIP name")?;
     let entries = fs::read_dir(directory)
         .map_err(|error| format!("cannot list {}: {error}", directory.display()))?;
     for entry in entries {
@@ -166,7 +221,10 @@ fn foreign(directory: &Path, relative: &str) -> Result<Option<String>, String> {
             format!("{relative}/{name}")
         };
         let kind = entry.file_type().map_err(|error| error.to_string())?;
-        // The bundle is the app's own; everything under it is what the ZIP held.
+        // The bundle is the app's own, a directory; everything under it is what the ZIP held.
+        if path == content::APP && !kind.is_dir() {
+            return Ok(Some(path));
+        }
         if path == content::APP || path.starts_with(&format!("{}/", content::APP)) {
             continue;
         }
@@ -175,11 +233,7 @@ fn foreign(directory: &Path, relative: &str) -> Result<Option<String>, String> {
         } else if !kind.is_file() {
             false
         } else if relative.is_empty() {
-            [platform.checksum_file(), platform.sbom_file()].contains(&name)
-                || name
-                    .strip_prefix(prefix)
-                    .and_then(|rest| rest.strip_suffix(suffix))
-                    .is_some_and(|version| !version.is_empty())
+            [platform.checksum_file(), platform.sbom_file(), zip].contains(&name)
         } else {
             content::FILES.iter().any(|(file, _)| *file == path)
         };
@@ -187,7 +241,7 @@ fn foreign(directory: &Path, relative: &str) -> Result<Option<String>, String> {
             return Ok(Some(path));
         }
         if kind.is_dir()
-            && let Some(found) = foreign(&entry.path(), &path)?
+            && let Some(found) = foreign(&entry.path(), &path, zip)?
         {
             return Ok(Some(found));
         }
@@ -200,6 +254,9 @@ mod tests {
     use super::*;
     use crate::release::temporary::TemporaryDirectory;
 
+    /// The promotion-check record the new promotion writes in these samples.
+    const NEW_CHECK: &str = "{\"schema_version\":1,\"kind\":\"macos-promotion-check\",\"release_source\":\"cccccccccccccccccccccccccccccccccccccccc\",\"candidate_receipt_sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"}\n";
+
     /// A file every promotion writes, which tells the old candidate from the new one.
     const MARKER: &str = super::super::content::README;
 
@@ -209,7 +266,7 @@ mod tests {
         fs::write(root.join(STAGING).join(MARKER), candidate).unwrap();
         fs::create_dir_all(root.join("dist/evidence")).unwrap();
         fs::write(root.join(RECEIPT), receipt).unwrap();
-        fs::write(root.join(PROMOTION_CHECK), "old check").unwrap();
+        fs::write(root.join(PROMOTION_CHECK), old_check()).unwrap();
         if let Some(record) = record {
             fs::write(root.join(REUSE_RECORD), record).unwrap();
         }
@@ -229,8 +286,13 @@ mod tests {
         Outputs {
             reuse,
             receipt: "new receipt",
-            promotion: "new check",
+            promotion: NEW_CHECK,
         }
+    }
+
+    /// A promotion-check record an earlier promotion wrote.
+    fn old_check() -> String {
+        crate::release::macos::promotion_check::render(&"a".repeat(40), &"b".repeat(64))
     }
 
     fn old() -> (String, String, Option<String>, Option<String>) {
@@ -238,7 +300,7 @@ mod tests {
             "old".into(),
             "old receipt".into(),
             Some("old record".into()),
-            Some("old check".into()),
+            Some(old_check()),
         )
     }
 
@@ -248,20 +310,7 @@ mod tests {
         let root = scratch.path();
         tree(root, "old", "old receipt", Some("old record"));
         // The old staging holds just what a promotion writes (of another version), so it goes.
-        let platform = crate::release::platform::Platform::MacOsArm64;
-        let old = root.join(STAGING);
-        for file in [
-            platform.archive_name("0.2.0"),
-            platform.checksum_file().to_owned(),
-            platform.sbom_file().to_owned(),
-        ]
-        .into_iter()
-        .chain(content::FILES.iter().map(|(file, _)| (*file).to_owned()))
-        .chain(content::APP_FILES.iter().map(|file| (*file).to_owned()))
-        {
-            fs::create_dir_all(old.join(&file).parent().unwrap()).unwrap();
-            fs::write(old.join(&file), "old").unwrap();
-        }
+        promoted(root, "0.2.0");
         let staged = root.join("dist/.new");
         fs::create_dir_all(staged.join("StickyMD")).unwrap();
         fs::write(staged.join(MARKER), "new").unwrap();
@@ -274,7 +323,7 @@ mod tests {
                 "new".into(),
                 "new receipt".into(),
                 None,
-                Some("new check".into())
+                Some(NEW_CHECK.into())
             )
         );
         assert!(!staged.exists());
@@ -284,6 +333,83 @@ mod tests {
             .filter(|name| name.starts_with(".exact-candidate-macos"))
             .collect::<Vec<_>>();
         assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    /// Fills the old staging with exactly what a promotion of `version` writes, and gives it a
+    /// receipt naming that version's ZIP.
+    fn promoted(root: &Path, version: &str) {
+        let platform = crate::release::platform::Platform::MacOsArm64;
+        let old = root.join(STAGING);
+        for file in [
+            platform.archive_name(version),
+            platform.checksum_file().to_owned(),
+            platform.sbom_file().to_owned(),
+        ]
+        .into_iter()
+        .chain(content::FILES.iter().map(|(file, _)| (*file).to_owned()))
+        .chain(content::APP_FILES.iter().map(|file| (*file).to_owned()))
+        {
+            fs::create_dir_all(old.join(&file).parent().unwrap()).unwrap();
+            fs::write(old.join(&file), "old").unwrap();
+        }
+        fs::write(
+            root.join(RECEIPT),
+            format!(
+                "{{\"schema_version\":1,\"zip_name\":\"{}\"}}\n",
+                platform.archive_name(version)
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Fix-round review R1-3: only the one ZIP the old receipt names is the promotion's, and
+    /// `StickyMD/StickyMD.app` must be a directory; another ZIP-like name, an app that is a
+    /// plain file, or an old receipt that names no ZIP keeps the old staging.
+    #[test]
+    fn an_old_staging_is_kept_unless_the_old_receipt_names_its_zip() {
+        let platform = crate::release::platform::Platform::MacOsArm64;
+        for case in ["backup", "app-file", "no-receipt", "unreadable-receipt"] {
+            let scratch = TemporaryDirectory::new("macos-install-own").unwrap();
+            let root = scratch.path();
+            tree(root, "old", "old receipt", None);
+            promoted(root, "0.2.0");
+            let old = root.join(STAGING);
+            let kept = match case {
+                "backup" => {
+                    let backup = old.join("StickyMD-我的备份-macos-arm64-portable.zip");
+                    fs::write(&backup, "mine").unwrap();
+                    "StickyMD-我的备份-macos-arm64-portable.zip"
+                }
+                "app-file" => {
+                    fs::remove_dir_all(old.join(content::APP)).unwrap();
+                    fs::write(old.join(content::APP), "not a bundle").unwrap();
+                    content::APP
+                }
+                "no-receipt" => {
+                    fs::remove_file(root.join(RECEIPT)).unwrap();
+                    ""
+                }
+                _ => {
+                    fs::write(root.join(RECEIPT), "old receipt").unwrap();
+                    ""
+                }
+            };
+            let staged = root.join("dist/.new");
+            fs::create_dir_all(staged.join("StickyMD")).unwrap();
+            fs::write(staged.join(MARKER), "new").unwrap();
+            install(root, &staged, outputs(None), || Ok(())).unwrap();
+            assert_eq!(read(root).0, "new", "{case}");
+            let [aside] = set_aside(root).try_into().unwrap_or_else(|left: Vec<_>| {
+                panic!("{case}: the old staging is gone ({left:?})")
+            });
+            assert!(
+                fs::symlink_metadata(aside.join(platform.archive_name("0.2.0"))).is_ok(),
+                "{case}"
+            );
+            if !kept.is_empty() {
+                assert!(fs::symlink_metadata(aside.join(kept)).is_ok(), "{case}");
+            }
+        }
     }
 
     /// The directories set aside in `dist/` by `install`.
@@ -321,6 +447,43 @@ mod tests {
             fs::read_to_string(kept.join("StickyMD/note/note.md")).unwrap(),
             "the user's words"
         );
+    }
+
+    /// Fix-round review R1-11: a staging kept by an earlier run under this process's id does not
+    /// stop a promotion, and only the directory this run set aside is cleaned up: the earlier
+    /// one stays as it was, even when it holds only what a promotion writes.
+    #[test]
+    fn a_staging_kept_under_the_same_name_neither_blocks_nor_is_cleaned() {
+        let scratch = TemporaryDirectory::new("macos-install-pid").unwrap();
+        let root = scratch.path();
+        let earlier = root.join(format!(
+            "dist/.exact-candidate-macos-old-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(earlier.join("StickyMD/note")).unwrap();
+        fs::write(earlier.join("StickyMD/note/note.md"), "kept before").unwrap();
+        tree(root, "old", "old receipt", None);
+        promoted(root, "0.2.0");
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(staged.join("StickyMD")).unwrap();
+        fs::write(staged.join(MARKER), "new").unwrap();
+        install(root, &staged, outputs(None), || Ok(())).unwrap();
+        assert_eq!(read(root).0, "new");
+        // This run's old staging held only promoted files and is gone; the earlier one is not.
+        assert_eq!(set_aside(root), vec![earlier.clone()]);
+        assert_eq!(
+            fs::read_to_string(earlier.join("StickyMD/note/note.md")).unwrap(),
+            "kept before"
+        );
+        // With no old candidate to set aside, an earlier directory of promoted files is not this
+        // run's either.
+        fs::remove_dir_all(earlier.join("StickyMD/note")).unwrap();
+        fs::remove_dir_all(root.join(STAGING)).unwrap();
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(staged.join("StickyMD")).unwrap();
+        fs::write(staged.join(MARKER), "newer").unwrap();
+        install(root, &staged, outputs(None), || Ok(())).unwrap();
+        assert_eq!(set_aside(root), vec![earlier]);
     }
 
     #[test]
@@ -399,5 +562,70 @@ mod tests {
             "old"
         );
         assert!(staged.exists());
+    }
+
+    /// Fix-round review R1-9: a file at the promotion-check path that is not a promotion-check
+    /// record (here a ledger written there by mistake) is kept, and the promotion fails before
+    /// anything changes; a record that lost its final newline is still one and is retired.
+    #[test]
+    fn a_foreign_file_at_the_promotion_check_path_is_kept() {
+        let scratch = TemporaryDirectory::new("macos-install-foreign-check").unwrap();
+        let root = scratch.path();
+        tree(root, "old", "old receipt", None);
+        let ledger = "{\"kind\":\"automated\",\"row\":\"W02\"}\n";
+        fs::write(root.join(PROMOTION_CHECK), ledger).unwrap();
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(staged.join("StickyMD")).unwrap();
+        fs::write(staged.join(MARKER), "new").unwrap();
+        let error = install(root, &staged, outputs(None), || Ok(())).unwrap_err();
+        assert!(
+            error.contains(PROMOTION_CHECK) && error.contains("not a promotion-check record"),
+            "{error}"
+        );
+        assert_eq!(read(root).0, "old");
+        assert_eq!(read(root).3.as_deref(), Some(ledger));
+        fs::write(root.join(PROMOTION_CHECK), old_check().trim_end()).unwrap();
+        install(root, &staged, outputs(None), || Ok(())).unwrap();
+        assert_eq!(read(root).3.as_deref(), Some(NEW_CHECK));
+    }
+
+    /// Fix-round review R3-5: a link at the receipt, reuse-record or promotion-check path, even
+    /// a dangling one, or a directory there, is an error before anything changes; it is neither
+    /// read through nor taken as absent.
+    #[test]
+    fn a_link_or_directory_at_an_evidence_path_stops_install_before_any_change() {
+        for (path, kind) in [
+            (REUSE_RECORD, "dangling"),
+            (RECEIPT, "link"),
+            (PROMOTION_CHECK, "link"),
+            (REUSE_RECORD, "directory"),
+        ] {
+            let scratch = TemporaryDirectory::new("macos-install-link").unwrap();
+            let root = scratch.path();
+            tree(root, "old", "old receipt", None);
+            let _ = fs::remove_file(root.join(path));
+            match kind {
+                "dangling" => {
+                    std::os::unix::fs::symlink(root.join("gone.json"), root.join(path)).unwrap()
+                }
+                "link" => {
+                    fs::write(root.join("elsewhere.json"), "old").unwrap();
+                    std::os::unix::fs::symlink(root.join("elsewhere.json"), root.join(path))
+                        .unwrap();
+                }
+                _ => fs::create_dir(root.join(path)).unwrap(),
+            }
+            let staged = root.join("dist/.new");
+            fs::create_dir_all(staged.join("StickyMD")).unwrap();
+            fs::write(staged.join(MARKER), "new").unwrap();
+            let error = install(root, &staged, outputs(None), || Ok(())).unwrap_err();
+            assert!(error.contains(path), "{path} {kind}: {error}");
+            assert_eq!(read(root).0, "old", "{path} {kind}");
+            assert!(
+                fs::symlink_metadata(root.join(path)).is_ok(),
+                "{path} {kind}"
+            );
+            assert!(staged.exists(), "{path} {kind}");
+        }
     }
 }

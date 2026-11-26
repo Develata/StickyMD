@@ -643,10 +643,14 @@ another receipt, the package and P16-P01 are `NOT_TESTED`. Promote again on R be
 `macos-ready`, even a candidate promoted earlier on another commit: the receipt names neither R
 nor a time, so the same attempt writes the same receipt and the USER records bound to its digest
 still stand. The last reading of `macos-ready` (the candidate, then the source identity) holds
-the promotion lock shared, so it fails while a promotion runs; with no lock file there must be
-no candidate either. A replaced staging directory is deleted only when it holds nothing but what
-a promotion writes; anything else (a note written beside the staged `.app`, say) keeps it, and
-its path is printed.
+the promotion lock shared, so it fails while a promotion runs, and without printing verdicts
+when there is no lock file at all (no promotion has run in this checkout yet). A replaced staging directory is deleted only when it holds nothing but what
+a promotion writes (the one ZIP its old receipt names, the checksum file, the SBOM, the files
+beside the app and the `.app` directory); anything else (a note written beside the staged `.app`,
+say), or no readable old receipt, keeps it under a name not taken yet, and its path is printed.
+`macos-promote` stops before changing anything when a link or a non-file lies at the receipt,
+reuse-record or promotion-check path, or when the file at the promotion-check path is not such a
+record.
 
 The USER's records for a release go into the same ledger, bound to the candidate the resolver
 returns for R:
@@ -670,11 +674,11 @@ holds when one identity has a clean run even if another failed (the approved gro
 Manual and resource rows keep a recorded FAIL.
 
 `--ledger` may not be a symbolic link, nor occupy the source-test receipt, its lock or its run
-record, nor be a lock file itself or lie under one's name (any path component ending in `.lock`, in
-any case): such a command reads and writes nothing. The ledger is read as strictly as it is
-written: each record kind has exactly its fields, and program results and older USER receipts only
-in a field set some writer of them wrote, so an unknown or misspelled member rejects the whole
-ledger rather than being dropped.
+record or the promotion-check record (which public evidence writers refuse too), nor be a lock
+file itself or lie under one's name (any path component ending in `.lock`, in any case): such a
+command reads and writes nothing. The ledger is read as strictly as it is written: each record kind
+has exactly its fields, and program results and older USER receipts only in a field set some writer
+of them wrote, so an unknown or misspelled member rejects the whole ledger rather than being dropped.
 The P16-R01 and P16-R02 lines of one `mac-resources` evidence are read only together, alike but
 for row and verdict; a ledger holding one without the other, or another program result naming
 that evidence, is refused (a `mac-gui --only` run still records one row).
