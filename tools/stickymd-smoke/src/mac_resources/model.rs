@@ -1,6 +1,13 @@
 //! Deterministic inputs, raw observations, and resource calculations.
 //! plan_ref: docs/plan/10_performance_reliability.md#macos-gates
 
+/// The PID `proc_pid_rusage` is called with: the `u32` `Child::id` gives, converted to `c_int`
+/// as the sampler converts it; `None` when it does not fit. The reader takes a recorded PID the
+/// same way (gate review round 2, R2-7).
+pub(super) fn sampled_pid(pid: u32) -> Option<std::ffi::c_int> {
+    std::ffi::c_int::try_from(pid).ok()
+}
+
 /// One measured scenario: the view the note opens in, its memory gate, and whether the window is
 /// hidden through the menu-bar menu before the warm-up.
 #[derive(Clone, Copy, Debug)]
