@@ -30,22 +30,19 @@ pub(super) fn promoted_on_r(
     }
 }
 
-/// The promotion-check record as read: absent, its bytes, or why it could not be read. Every
-/// reason names the record, so the package line says what to redo.
-pub(super) fn read(found: Result<Option<Vec<u8>>, String>) -> Read<Check> {
+/// The promotion-check record as read: absent, or its bytes. Every reason names the record, so
+/// the package line says what to redo.
+pub(super) fn read(found: Option<&[u8]>) -> Read<Check> {
     let path = promotion_check::PATH;
     match found {
-        Ok(None) => Read::Missing(format!(
+        None => Read::Missing(format!(
             "no promotion-check record {path}: promote the candidate again on R"
         )),
-        Ok(Some(bytes)) => match promotion_check::parse(&bytes) {
+        Some(bytes) => match promotion_check::parse(bytes) {
             Ok(check) => Read::Present(check),
             Err(error) => Read::Invalid(format!(
                 "the promotion-check record {path} is unreadable ({error}): promote the candidate again on R"
             )),
         },
-        Err(error) => Read::Invalid(format!(
-            "the promotion-check record {path} cannot be read ({error})"
-        )),
     }
 }

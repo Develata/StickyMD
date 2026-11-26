@@ -150,7 +150,7 @@ pub(in super::super) fn ready_command(
             None,
         ),
     };
-    let first = candidate::read(root, &release);
+    let first = candidate::read(root, &release)?;
     // R's test targets, listed apart from the receipt (plan 11 #macos-readiness-check).
     let targets = match listed_targets(root) {
         Ok(targets) => Read::Present(targets),
