@@ -117,11 +117,11 @@ pub(super) fn evidence_json(
 /// was spawned, as this driver writes it, for mac-ledger's tests (gate review D2).
 #[cfg(test)]
 pub(crate) fn failed_f01_evidence(pre_launch: bool) -> String {
-    let error = "ditto failed: exit status: 1".to_owned();
+    // Each case with an error of its own side of the spawn (gate review round 2, R2-1).
     let failure = if pre_launch {
-        Failure::from(PreLaunch(error))
+        Failure::from(PreLaunch("ditto failed: exit status: 1".to_owned()))
     } else {
-        Failure::Run(error)
+        Failure::Run("product exited before ready: exit status: 1".to_owned())
     };
     let mut row = Row::new("F01");
     let mut stopped = None;

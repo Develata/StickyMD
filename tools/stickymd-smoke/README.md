@@ -1095,7 +1095,10 @@ the copy and its check, the fixture writes, the spawn itself; that row is NOT_TE
 failure after the spawn, a window that never appears included, is the product's FAIL) says
 `"finished":true`, and `mac-ledger record` refuses any other file, and
 any file with a row stopped by the shared stop or never started, and any older schema (whose
-drivers could mark such a run finished). `mac-gui --batch <name>` writes the acceptance batch the
+drivers could mark such a run finished). A driver built before that rule wrote an error before
+the spawn as an `execution` FAIL in a finished run; `record` refuses a row whose check opens with
+one of its fixed texts (`ditto failed: …`, `ditto exceeded 120 seconds`, `Copied executable
+SHA-256 changed`, `copied bundle manifest changed; refused before launch`). `mac-gui --batch <name>` writes the acceptance batch the
 run is for into the file; `mac-ledger record` takes it from there. It records OS,
 VM/override/permission/display facts, fixed config, executable SHA-256, a sorted
 bundle-content manifest SHA-256 (including Info.plist; excluding xattrs), PID,
