@@ -218,15 +218,7 @@ fn driver(root: &Path) -> Driver {
     let command = driver_command();
     let sha256 = (|| -> Result<String, String> {
         empty_driver_target(root)?;
-        let (environment, argv) = command.split_first().ok_or("an empty driver command")?;
-        let (key, value) = environment
-            .split_once('=')
-            .ok_or("the driver command names no environment")?;
-        let output = Command::new(&argv[0])
-            .args(&argv[1..])
-            .env(key, value)
-            .current_dir(root)
-            .stdin(Stdio::null())
+        let output = driver_process(root, &command)?
             .stderr(Stdio::inherit())
             .output()
             .map_err(|error| format!("cannot run the driver build: {error}"))?;
@@ -241,6 +233,31 @@ fn driver(root: &Path) -> Driver {
             .map_err(|error| format!("cannot hash {}: {error}", path.display()))
     })();
     Driver { command, sha256 }
+}
+
+/// The driver build as `command` records it: its leading `KEY=VALUE` entries are the
+/// environment the build is given, the rest the program and its arguments.
+fn driver_process(root: &Path, command: &[String]) -> Result<Command, String> {
+    let split = command
+        .iter()
+        .position(|entry| !entry.contains('='))
+        .ok_or("the driver command names no program")?;
+    let (environment, argv) = command.split_at(split);
+    if environment.is_empty() {
+        return Err("the driver command names no environment".to_owned());
+    }
+    let mut process = Command::new(&argv[0]);
+    process
+        .args(&argv[1..])
+        .current_dir(root)
+        .stdin(Stdio::null());
+    for entry in environment {
+        let (key, value) = entry
+            .split_once('=')
+            .ok_or("an unreadable environment entry")?;
+        process.env(key, value);
+    }
+    Ok(process)
 }
 
 /// An identity no other run of this checkout shares: the time it started and this process.
@@ -603,6 +620,44 @@ mod tests {
         super::empty_driver_target(root).unwrap();
         assert!(!root.join(super::DRIVER_TARGET).exists());
         super::empty_driver_target(root).unwrap();
+    }
+
+    /// Fix-round review R1-1: the driver builds its intermediate artifacts inside its own emptied
+    /// directory too, whatever `CARGO_BUILD_BUILD_DIR` the shell sets, and the receipt records the
+    /// build as it was given: the recorded command is the one the process runs.
+    #[test]
+    fn the_driver_build_keeps_its_intermediates_in_its_own_directory() {
+        let command = super::driver_command();
+        let process = super::driver_process(std::path::Path::new("/r"), &command).unwrap();
+        let environment: Vec<(String, String)> = process
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.unwrap().to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            environment,
+            [
+                (
+                    "CARGO_BUILD_BUILD_DIR".to_owned(),
+                    "target/macos-driver/build".to_owned()
+                ),
+                (
+                    "CARGO_PROFILE_RELEASE_PANIC".to_owned(),
+                    "unwind".to_owned()
+                ),
+            ]
+        );
+        let argv: Vec<String> = std::iter::once(process.get_program())
+            .chain(process.get_args())
+            .map(|part| part.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(argv[..], command[environment.len()..]);
+        assert_eq!(process.get_current_dir(), Some(std::path::Path::new("/r")));
+        assert!(super::driver_process(std::path::Path::new("/r"), &command[2..]).is_err());
     }
 
     /// Review round 3, B4: the volume report holds exactly one line for each volume.

@@ -691,6 +691,14 @@ fn the_receipt_names_r_s_driver_only_for_r_and_the_documented_build() {
     let mut other = good();
     other.driver.command.pop();
     assert!(driver_of(&other, R).unwrap_err().contains("documented"));
+    // Fix-round review R1-1: a driver built before its intermediates moved into its own
+    // directory (the command without `CARGO_BUILD_BUILD_DIR`) is not R's driver.
+    let mut earlier = good();
+    earlier
+        .driver
+        .command
+        .retain(|entry| !entry.starts_with("CARGO_BUILD_BUILD_DIR="));
+    assert!(driver_of(&earlier, R).unwrap_err().contains("documented"));
     let mut none = good();
     none.driver.sha256 = Err("the driver build failed".into());
     assert!(driver_of(&none, R).unwrap_err().contains("built no driver"));

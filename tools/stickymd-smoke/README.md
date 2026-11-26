@@ -604,10 +604,13 @@ cargo run --quiet -p stickymd-smoke --locked -- release macos-ready --release-so
 `macos-source-tests` starts only on a clean checkout of R. It records its own run identity,
 removes any earlier receipt, runs the row's exact `cargo test --locked` over the eight packages,
 then the explicit runs (P18-L08's two volumes and P16-S06's exFAT test, by exact name), and
-builds the `mac-gui` driver on R into `target/macos-driver`, which it empties first so no cache
-of another commit can stand in for R's build. The same holds for the tests: target discovery,
-each target's listings, the main run and the explicit runs all build with
-`CARGO_TARGET_DIR=target/macos-source-tests`, which the runner empties before discovery (Cargo
+builds the `mac-gui` driver on R into `target/macos-driver` (its intermediate artifacts too,
+`CARGO_BUILD_BUILD_DIR=target/macos-driver/build`, recorded in the receipt's driver command),
+which it empties first so no cache of another commit can stand in for R's build. The same holds
+for the tests: target discovery, each target's listings, the main run and the explicit runs all
+build with `CARGO_TARGET_DIR=target/macos-source-tests` and
+`CARGO_BUILD_BUILD_DIR=target/macos-source-tests/build`, whatever build directory your shell
+sets, and the runner empties that directory before discovery (Cargo
 judges freshness by modification times, so a newer test program another source left in the
 default `target/` could pass for R's). Every test is therefore rebuilt from R on each run, and
 the runner refuses that directory if it is a link or holds the running `stickymd-smoke` (run the

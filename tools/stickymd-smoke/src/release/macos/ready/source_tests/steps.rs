@@ -17,10 +17,15 @@ use std::process::{Command, Stdio};
 /// Where steps 3–5 build, relative to the checkout's root: emptied before step 3.
 pub(super) const TEST_TARGET: &str = "target/macos-source-tests";
 
+/// Where they keep their intermediate artifacts: inside [`TEST_TARGET`], so emptying it leaves
+/// none behind even when the shell sets a shared `CARGO_BUILD_BUILD_DIR` (fix-round review R1-1).
+const TEST_BUILD_DIR: &str = "target/macos-source-tests/build";
+
 /// The builder of the Cargo processes of steps 3–5 in one checkout.
 pub(super) struct Steps<'a> {
     root: &'a Path,
-    /// `CARGO_TARGET_DIR` for every process, or `None` for Cargo's default directory.
+    /// `CARGO_TARGET_DIR` for every process (with `CARGO_BUILD_BUILD_DIR` inside it), or `None`
+    /// for Cargo's default directories.
     target: Option<&'static str>,
 }
 
@@ -52,7 +57,9 @@ impl<'a> Steps<'a> {
             .env("CARGO_TERM_COLOR", "never")
             .stdin(Stdio::null());
         if let Some(target) = self.target {
-            process.env("CARGO_TARGET_DIR", target);
+            process
+                .env("CARGO_TARGET_DIR", target)
+                .env("CARGO_BUILD_BUILD_DIR", TEST_BUILD_DIR);
         }
         process
     }
@@ -274,6 +281,13 @@ mod tests {
                 "{:?}",
                 argv(process)
             );
+            // Fix-round review R1-1: the intermediate artifacts too, whatever the shell sets.
+            assert_eq!(
+                environment(process, "CARGO_BUILD_BUILD_DIR"),
+                Some(Some(OsStr::new("target/macos-source-tests/build"))),
+                "{:?}",
+                argv(process)
+            );
             assert_eq!(process.get_current_dir(), Some(root));
         }
         assert_eq!(argv(&processes[6]), super::command());
@@ -288,6 +302,10 @@ mod tests {
         // The phase 18 check keeps Cargo's default directory.
         let default = Steps::in_default_directory(root);
         assert_eq!(environment(&default.main_run(), "CARGO_TARGET_DIR"), None);
+        assert_eq!(
+            environment(&default.main_run(), "CARGO_BUILD_BUILD_DIR"),
+            None
+        );
     }
 
     /// Whole-gate review A2: a link at the directory, and a directory holding the running

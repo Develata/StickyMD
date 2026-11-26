@@ -207,10 +207,13 @@ pub(super) fn command() -> Vec<String> {
 pub(super) const DRIVER_TARGET: &str = "target/macos-driver";
 
 /// How the runner builds the `mac-gui` driver on R: the README's build, into `DRIVER_TARGET`; it
-/// records the SHA-256 of what Cargo built (review round 4, BLOCKER 1). The first entry is the
-/// environment the build is given.
+/// records the SHA-256 of what Cargo built (review round 4, BLOCKER 1). The leading `KEY=VALUE`
+/// entries are the environment the build is given: its intermediate artifacts go under
+/// `DRIVER_TARGET` too, whatever `CARGO_BUILD_BUILD_DIR` the shell sets (fix-round review R1-1),
+/// so the recorded command is the build as it ran and the gate compares it with this one.
 pub(super) fn driver_command() -> Vec<String> {
     [
+        "CARGO_BUILD_BUILD_DIR=target/macos-driver/build",
         "CARGO_PROFILE_RELEASE_PANIC=unwind",
         "cargo",
         "build",
