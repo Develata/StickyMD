@@ -11,7 +11,7 @@ use crate::integrity;
 use crate::release::json;
 
 /// Where the record lies; reserved beside the candidate receipt and the reuse record.
-pub(crate) const PATH: &str = "dist/evidence/release-promotion-macos.json";
+pub(crate) const PATH: &str = crate::qualification::reserved_paths::MACOS_PROMOTION_CHECK;
 const KIND: &str = "macos-promotion-check";
 
 /// What a record states: the promotion was re-checked on `release_source` and produced the
@@ -53,6 +53,21 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Check, String> {
         release_source: release.to_owned(),
         candidate_receipt_sha256: receipt.to_owned(),
     })
+}
+
+/// Whether `bytes` are a promotion-check record at all, of any layout: a JSON object whose
+/// `kind` is this record's. Promotion retires only such a file; anything else at the path is
+/// someone's (fix-round review R1-9). Not a validity check: `parse` is.
+pub(crate) fn is_record(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|text| json::parse(text).ok())
+        .is_some_and(|document| {
+            document
+                .field("kind")
+                .and_then(|kind| kind.string().map(|kind| kind == KIND))
+                .unwrap_or(false)
+        })
 }
 
 /// The record's bytes under `root`, `None` when there is none; anything but a regular file there

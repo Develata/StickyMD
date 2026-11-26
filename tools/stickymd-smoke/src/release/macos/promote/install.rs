@@ -72,6 +72,16 @@ pub(super) fn install(
     let old_receipt = existing(&receipt_path)?;
     let old_record = existing(&record_path)?;
     let old_promotion = existing(&promotion_path)?;
+    // Only a promotion-check record is ours to retire (fix-round review R1-9).
+    if old_promotion
+        .as_deref()
+        .is_some_and(|bytes| !super::super::promotion_check::is_record(bytes))
+    {
+        return Err(format!(
+            "{} is not a promotion-check record; it is kept: move it away and promote again",
+            promotion_path.display()
+        ));
+    }
     let mut done = Vec::new();
     let io = |what: &str, error: std::io::Error| format!("cannot {what}: {error}");
     let outcome = (|| {
@@ -219,7 +229,7 @@ mod tests {
         fs::write(root.join(STAGING).join(MARKER), candidate).unwrap();
         fs::create_dir_all(root.join("dist/evidence")).unwrap();
         fs::write(root.join(RECEIPT), receipt).unwrap();
-        fs::write(root.join(PROMOTION_CHECK), "old check").unwrap();
+        fs::write(root.join(PROMOTION_CHECK), old_check()).unwrap();
         if let Some(record) = record {
             fs::write(root.join(REUSE_RECORD), record).unwrap();
         }
@@ -243,12 +253,17 @@ mod tests {
         }
     }
 
+    /// A promotion-check record an earlier promotion wrote.
+    fn old_check() -> String {
+        crate::release::macos::promotion_check::render(&"a".repeat(40), &"b".repeat(64))
+    }
+
     fn old() -> (String, String, Option<String>, Option<String>) {
         (
             "old".into(),
             "old receipt".into(),
             Some("old record".into()),
-            Some("old check".into()),
+            Some(old_check()),
         )
     }
 
@@ -409,6 +424,31 @@ mod tests {
             "old"
         );
         assert!(staged.exists());
+    }
+
+    /// Fix-round review R1-9: a file at the promotion-check path that is not a promotion-check
+    /// record (here a ledger written there by mistake) is kept, and the promotion fails before
+    /// anything changes; a record that lost its final newline is still one and is retired.
+    #[test]
+    fn a_foreign_file_at_the_promotion_check_path_is_kept() {
+        let scratch = TemporaryDirectory::new("macos-install-foreign-check").unwrap();
+        let root = scratch.path();
+        tree(root, "old", "old receipt", None);
+        let ledger = "{\"kind\":\"automated\",\"row\":\"W02\"}\n";
+        fs::write(root.join(PROMOTION_CHECK), ledger).unwrap();
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(staged.join("StickyMD")).unwrap();
+        fs::write(staged.join(MARKER), "new").unwrap();
+        let error = install(root, &staged, outputs(None), || Ok(())).unwrap_err();
+        assert!(
+            error.contains(PROMOTION_CHECK) && error.contains("not a promotion-check record"),
+            "{error}"
+        );
+        assert_eq!(read(root).0, "old");
+        assert_eq!(read(root).3.as_deref(), Some(ledger));
+        fs::write(root.join(PROMOTION_CHECK), old_check().trim_end()).unwrap();
+        install(root, &staged, outputs(None), || Ok(())).unwrap();
+        assert_eq!(read(root).3.as_deref(), Some("new check"));
     }
 
     /// Fix-round review R3-5: a link at the receipt, reuse-record or promotion-check path, even
