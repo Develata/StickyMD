@@ -5,7 +5,11 @@ All notable changes are recorded here.
 ## 0.3.0 - unreleased
 
 - Prepare 0.3.0. From this version a release ships Windows x64 and macOS arm64 together (Phase 18); each platform's
-  release notes name its build source. Release notes and acceptance results are written before the source freeze.
+  release notes name its build source. Release notes: [`docs/release-notes/0.3.0.md`](docs/release-notes/0.3.0.md); candidate
+  record: [`docs/report/2026-11-26-v0.3.0-candidate-preparation.md`](docs/report/2026-11-26-v0.3.0-candidate-preparation.md).
+- The macOS package passes a row-by-row release gate (M5): the candidate and its promotion on the release commit, the source
+  tests run on it, the VM runs recorded in a ledger and the USER's release receipts; it had one complete cross-model review
+  before the source freeze.
 - macOS: the app copied straight into an Applications folder keeps its note in
   `~/Library/Application Support/StickyMD/<app name>/note/`; anywhere else the note stays beside the app (Phase 18).
 - Copy semantics, the copy side strip, notices and the end-of-document room (Phase 17).

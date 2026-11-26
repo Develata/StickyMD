@@ -929,7 +929,9 @@ mod tests {
             "phase11b math_action_1mib_definition_paragraphs parse_median={parse:?} \
              median={median:?} p95={p95:?} max={max:?}"
         );
-        assert!(median < parse * 12, "median={median:?} parse={parse:?}");
+        // 14 parse medians (USER 2026-11-26): CI's Windows runners measured 10.6-13.0 against
+        // 12, failing twice on unchanged code; a per-node search would cost hundreds.
+        assert!(median < parse * 14, "median={median:?} parse={parse:?}");
     }
 
     /// What a join may never change, read from one Preview parse in document order: around
