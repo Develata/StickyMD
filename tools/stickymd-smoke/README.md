@@ -629,9 +629,12 @@ have run on. P16-S06 holds only by its explicit run.
 The gate classifies every test a receipt lists as ignored by a table in
 `src/release/macos/ready/source_tests/ignored.rs`. On a Mac, `phase 18` checks that table
 before R exists: it finds the eight packages' test targets and their `--list --ignored` the
-way the runner does (in the default build directory) and fails on any ignored test the table
-lacks and any entry no listing names, so a renamed, added or moved ignored test is classified
-before it merges. Off macOS the task is NOT_TESTED.
+way the runner does and fails unless the sorted listings and the table are the same sequence
+(an ignored test the table lacks, an entry no listing names, or a test listed more often than
+the table names it) and every target found is listed exactly once, so a renamed, added or moved
+ignored test is classified before it merges. It builds in the default build directory, so it
+assumes that cache agrees with the sources' modification times (plan 11, USER 2026-11-26).
+Off macOS the task is NOT_TESTED.
 
 The candidate is promoted on a clean checkout of R too:
 

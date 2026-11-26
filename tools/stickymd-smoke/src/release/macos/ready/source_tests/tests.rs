@@ -909,16 +909,21 @@ fn the_ignored_table_must_match_the_listings_exactly() {
         }
         out
     };
+    // The targets Cargo found are those listed, unless a sample says otherwise.
+    let check = |listed: &[output::Listed]| {
+        let expected: Vec<Target> = listed.iter().map(|l| l.target.clone()).collect();
+        differences(listed, &expected)
+    };
     let table: Vec<(&str, &str, &str, &str)> = IGNORED
         .iter()
         .map(|(p, k, n, t, _)| (*p, *k, *n, *t))
         .collect();
-    assert_eq!(differences(&listings(&table)), Vec::<String>::new());
+    assert_eq!(check(&listings(&table)), Vec::<String>::new());
 
     let renamed_from = table[0].3;
     let mut renamed = table.clone();
     renamed[0].3 = "a::renamed_test";
-    let found = differences(&listings(&renamed));
+    let found = check(&listings(&renamed));
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(
         found[0].starts_with("ignored but not classified") && found[0].contains("a::renamed_test")
@@ -932,13 +937,44 @@ fn the_ignored_table_must_match_the_listings_exactly() {
         "stickymd_core",
         "a::new_ignored_test",
     ));
-    assert_eq!(differences(&listings(&added)).len(), 1);
+    assert_eq!(check(&listings(&added)).len(), 1);
 
-    assert_eq!(differences(&listings(&table[1..])).len(), 1);
+    assert_eq!(check(&listings(&table[1..])).len(), 1);
 
     let mut moved = table.clone();
     moved[0].1 = if moved[0].1 == "test" { "lib" } else { "test" };
-    assert_eq!(differences(&listings(&moved)).len(), 2);
+    assert_eq!(check(&listings(&moved)).len(), 2);
+
+    // Fix-round review R1-5: the comparison is of whole sequences, so a classified test a
+    // listing names twice (`[K, K]` against the table's `[K]`) differs, though both name K.
+    let mut doubled = table.clone();
+    doubled.push(table[0]);
+    let found = check(&listings(&doubled));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains(table[0].3) && found[0].contains("more often"),
+        "{found:?}"
+    );
+
+    // And of the target set: a target listed twice, or one Cargo found that has no listing,
+    // differs even when the ignored names agree.
+    let mut twice = listings(&table);
+    twice.push(output::Listed {
+        target: twice[0].target.clone(),
+        all: Vec::new(),
+        ignored: Vec::new(),
+    });
+    let mut expected: Vec<Target> = listings(&table).iter().map(|l| l.target.clone()).collect();
+    let found = differences(&twice, &expected);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("listed twice"), "{found:?}");
+    expected.push(target("stickymd-core", "test", "unlisted"));
+    let found = differences(&listings(&table), &expected);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains("no listing") && found[0].contains("unlisted"),
+        "{found:?}"
+    );
 }
 
 /// Fix round, BLOCKER 5: a test registered twice is listed twice; the explicit run, which runs
