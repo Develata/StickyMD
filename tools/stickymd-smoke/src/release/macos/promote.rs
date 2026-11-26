@@ -508,4 +508,21 @@ pub(super) mod tests {
         scratch_git(root, &["checkout", "-q", "--", "a.txt"]);
         assert_eq!(on_release(root, &r.to_ascii_uppercase()).unwrap(), r);
     }
+
+    /// Fix-round review R3-1: the release commit must be on the remote-tracking
+    /// `refs/remotes/origin/main`; a local branch of that name, which Git resolves first for the
+    /// short name, does not put R on the main line for promotion, the resolver or `macos-ready`.
+    #[test]
+    fn check_release_ignores_a_local_branch_named_origin_main() {
+        let scratch = TemporaryDirectory::new("macos-release-shadow").unwrap();
+        let root = scratch.path();
+        let s = release_checkout(root);
+        fs::write(root.join("a.txt"), "r").unwrap();
+        scratch_git(root, &["commit", "-q", "-am", "r"]);
+        let r = scratch_git(root, &["rev-parse", "HEAD"]);
+        scratch_git(root, &["branch", "origin/main", &r]);
+        let error = check_release(root, &r).unwrap_err();
+        assert!(error.contains("is not on origin/main"), "{error}");
+        check_release(root, &s).unwrap();
+    }
 }
