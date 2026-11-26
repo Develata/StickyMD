@@ -284,3 +284,22 @@ Develata 对四项都选了推荐的一项：
   - CI 的 macOS 作业不运行 `phase 18`，A1 的归类表核对目前只在本机运行 `phase 18` 时生效；
   - `docs/release-checklist.md` 的 Windows 一步称 `verify-reuse` 会写下 `dist/evidence/release-reuse-windows-x64.json`，而这个命令只打印（本轮之前就如此）；
   - `mac_ledger` 未要求 `automated` 行号必须有生产者（C6 的扩展）。
+
+## 更正：两轮修复的验证范围（2026-11-26）
+
+上文两处“每项都先有坏样本，并做过删去守卫的检查”说得过满。
+
+**由各组子代理实施并报告、我没有逐项重做的：** 坏样本与删去守卫的检查。按其报告，有这些例外：
+- D1、D2、D13 与 D8 的判定样本在修复前没有一次失败的运行，只经删去守卫的检查验证；
+- R1-11 的后半（只清理本次移开的目录）删去守卫后仍为绿，那一半样本只固定行为；
+- R1-8 中 `receipt_present` 的读取错误使核对停止，这一点没有样本；
+- 账本追加之前对整本做的成对核对（`run.rs`）没有样本，因为 `record` 总是一次写两行；
+- B1 中“锁一直持到打印之后”与“先候选、后源码身份”的顺序，都没有删去守卫的检查。
+
+**我亲自做的：**
+- 合并后的全量基线与运行器演练（各轮“验证”所列）；
+- 用 `fb4ad6a` 之后的读取器读真实账本的副本：337 行全部读入，原账本前后都是 `6feb4e7e…`；
+- 确认 `verify-reuse` 与 `refs/remotes/origin/main` 的调用方都在干净的 R 上、引用存在的环境中运行：发布 workflow 都以 `fetch-depth: 0` 检出，`verify-reuse` 只由发布清单在本机调用；
+- 读过这些会改变判定的函数：第一轮的 `steps.rs` 与 `resource_pairs`，第二轮的 `major_version`、`old_pre_launch`、`resource_pairs`、`on_main`、`foreign`、`candidate::confirm`，以及 `verify-reuse` 的身份核对。
+
+`d12d29e` 把第二轮已实现、`419e4a5` 没有写进契约的规则补进了 `11`：R1-3、R1-4、R1-6、R1-8、R1-9、R1-11、R2-3、R2-5、R3-5。
