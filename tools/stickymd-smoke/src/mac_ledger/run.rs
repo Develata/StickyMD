@@ -112,13 +112,14 @@ fn refuse_links(root: &Path, ledger: &Path) -> Result<(), String> {
         }
     }
     // M5 gate review C4: compared as the reserved paths are on macOS (this module's only
-    // target), without case; still before any lock is taken or file created.
-    if ledger
-        .file_name()
-        .is_some_and(|name| name.to_string_lossy().to_lowercase().ends_with(".lock"))
-    {
+    // target), without case; still before any lock is taken or file created. Every component:
+    // creating the ledger's parents would make a lock's name a directory (second round R2-3).
+    if ledger.components().any(|part| {
+        matches!(part, std::path::Component::Normal(name)
+            if name.to_string_lossy().to_lowercase().ends_with(".lock"))
+    }) {
         return Err(format!(
-            "{} is a lock file; name the ledger itself",
+            "{} is a lock file or lies under one's name; name the ledger itself",
             ledger.display()
         ));
     }
@@ -393,13 +394,22 @@ mod reading_tests {
 
     /// M5 gate review C4: `--ledger` naming a ledger's lock file (in any case on macOS) is
     /// refused before any lock is taken or file created, so a writer cannot replace the lock a
-    /// reader holds; the reader's entry point refuses it too.
+    /// reader holds; the reader's entry point refuses it too. Nor may any directory on its path be
+    /// named so (second round R2-3).
     #[test]
     fn a_ledger_cannot_be_a_lock_file() {
         let scratch =
             stickymd_package::temporary::TemporaryDirectory::new("ledger-as-lock").unwrap();
         let root = scratch.path();
-        for name in ["records.jsonl.lock", "other.LOCK", "x.Lock"] {
+        // Second round R2-3: nor under a directory of a lock name, which creating the parents
+        // would make a directory and so block the real lock.
+        for name in [
+            "records.jsonl.lock",
+            "other.LOCK",
+            "x.Lock",
+            "records.jsonl.lock/round.jsonl",
+            "a.LOCK/b/records.jsonl",
+        ] {
             let ledger = root.join("missing").join(name);
             let args = [
                 "revoke",

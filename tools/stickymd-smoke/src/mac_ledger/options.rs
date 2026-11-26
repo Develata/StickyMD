@@ -67,7 +67,8 @@ pub(super) const HELP: &str =
           result stays in the ledger as history. After a withdrawn PASS no PASS of that row under
           the same identity is reused (for I01-I03 and R03: in the same batch).
   --ledger <file> defaults to dist/evidence/mac-gui-ledger/records.jsonl under the repository.
-          It may not be a symbolic link nor a lock file (a name ending in .lock, in any case).
+          It may not be a symbolic link nor a lock file, nor lie under one's name (any path
+          component ending in .lock, in any case).
   --image is the Tart image digest the VM was cloned from (the VM cannot see it).
   --system is a file holding the target VM's sw_vers output, taken just before the run.
   --batch names the acceptance batch (1-64 of A-Z a-z 0-9 . _ -). I01-I03 and R03 count only
