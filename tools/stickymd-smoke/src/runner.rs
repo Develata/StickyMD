@@ -1762,6 +1762,30 @@ mod tests {
         }
     }
 
+    /// Whole-gate review A1: `phase 18` plans the ignored-test table check after the host tests,
+    /// and it is refused off macOS like them, where the table's listings do not exist.
+    #[test]
+    fn phase_18_plans_the_ignored_test_table_check_and_refuses_it_off_macos() {
+        let ids: Vec<TaskId> =
+            build_plan(&Options::parse(["phase", "18"].map(str::to_owned)).unwrap())
+                .unwrap()
+                .iter()
+                .map(Task::id)
+                .collect();
+        assert_eq!(
+            ids,
+            [
+                TaskId::Governance,
+                TaskId::Phase18ReleaseTests,
+                TaskId::Phase18MacTests,
+                TaskId::Phase18IgnoredTestTable
+            ]
+        );
+        let message = refused_on_host(TaskId::Phase18IgnoredTestTable, false).expect("refused");
+        assert!(message.starts_with("NOT_TESTED: "), "{message}");
+        assert_eq!(refused_on_host(TaskId::Phase18IgnoredTestTable, true), None);
+    }
+
     #[test]
     fn failed_task_replaces_stale_evidence_without_claiming_success() {
         let nonce = std::time::SystemTime::now()
