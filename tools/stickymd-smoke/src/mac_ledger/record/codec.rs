@@ -160,24 +160,6 @@ impl Record {
                 recorded_unix,
             },
             "revocation" => {
-                // Exactly its fields: an unknown one (a batch, a schema) would be dropped by every
-                // reader and the withdrawal applied wider than it says.
-                if let Value::Object(fields) = &value
-                    && let Some(extra) = fields.keys().find(|key| {
-                        !matches!(
-                            key.as_str(),
-                            "kind"
-                                | "row"
-                                | "evidence_sha256"
-                                | "app_inputs"
-                                | "candidate_receipt_sha256"
-                                | "quote"
-                                | "recorded_unix"
-                        )
-                    })
-                {
-                    return Err(format!("a revocation has no field {extra}"));
-                }
                 let revoked = match (
                     optional_text(&value, "evidence_sha256")?,
                     inputs,
@@ -215,8 +197,100 @@ impl Record {
                 label(row)
             ));
         }
+        historical_fields(&kind, &value)?;
         record.validate()?;
         Ok(record.normalized())
+    }
+}
+
+/// The fields of a program result, as the first writer (5e57b5a) wrote them.
+const RESULT: [&str; 11] = [
+    "kind",
+    "row",
+    "verdict",
+    "app_executable_sha256",
+    "app_bundle_manifest_sha256",
+    "driver_sha256",
+    "image",
+    "system",
+    "evidence",
+    "evidence_sha256",
+    "recorded_unix",
+];
+
+/// The fields of a USER receipt, as the first writer (5e57b5a) wrote them.
+const RECEIPT: [&str; 7] = [
+    "kind",
+    "row",
+    "verdict",
+    "app_executable_sha256",
+    "environment",
+    "quote",
+    "recorded_unix",
+];
+
+/// Each record kind has exactly its fields: an unknown or misspelled member would be dropped by
+/// every reader (a FAIL's `batch` spelled `Batch` read as batchless), so it rejects the ledger.
+/// Program results and receipts are read only in the field sets some writer of them wrote, from
+/// `git log -p` of the record writers (M5 gate review C6):
+/// - `automated`: the result fields (5e57b5a); `app_inputs` when the bundle carried its
+///   fingerprint (2853071); `run_unix` on every record since be07b02, with `batch` when the run
+///   named one; R03's `zip_sha256` (8c47cfc) and `write_watch` (f0aec99), written only beside
+///   `run_unix`, the watch only beside the ZIP (checked where it is read);
+/// - `resources` (1c45e17): the result fields and `run_unix`, `app_inputs` when present; never a
+///   batch or a ZIP;
+/// - `manual`: its fields (5e57b5a); `app_inputs` on every receipt since 2853071, which
+///   refuses a bundle without it, with `batch` when given (be07b02);
+/// - `revocation`: its fields, one target among them (checked where it is read).
+///
+/// The release kinds check their own (`ReleaseRecord::parse`).
+fn historical_fields(kind: &str, value: &Value) -> Result<(), String> {
+    let (base, optional): (&[&str], &[&str]) = match kind {
+        "automated" => (
+            &RESULT,
+            &[
+                "app_inputs",
+                "run_unix",
+                "batch",
+                "zip_sha256",
+                "write_watch",
+            ],
+        ),
+        "resources" => (&RESULT, &["app_inputs", "run_unix"]),
+        "manual" => (&RECEIPT, &["app_inputs", "batch"]),
+        "revocation" => (
+            &["kind", "row", "quote", "recorded_unix"],
+            &["evidence_sha256", "app_inputs", "candidate_receipt_sha256"],
+        ),
+        _ => return Ok(()),
+    };
+    if let Value::Object(members) = value
+        && let Some(unknown) = members
+            .keys()
+            .find(|key| !base.contains(&key.as_str()) && !optional.contains(&key.as_str()))
+    {
+        return Err(format!("a {kind:?} record has no field {unknown}"));
+    }
+    let has = |key: &str| value.field(key).is_ok();
+    let beside = |member: &str, needed: &str| {
+        if has(member) && !has(needed) {
+            Err(format!(
+                "a {kind:?} record has {member} only beside {needed}: no writer wrote it without"
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    match kind {
+        "automated" => {
+            beside("batch", "run_unix")?;
+            beside("zip_sha256", "run_unix")
+        }
+        "resources" if !has("run_unix") => Err(format!(
+            "a {kind:?} record has no run_unix: every writer of it wrote the run's start"
+        )),
+        "manual" => beside("batch", "app_inputs"),
+        _ => Ok(()),
     }
 }
 

@@ -337,7 +337,8 @@ fn records_survive_a_round_trip_and_bad_lines_reject_the_ledger() {
     let records = vec![
         automated("W02", "PASS", identity()),
         timed,
-        in_batch(run("R03", "FAIL", identity(), 'f'), "batch-1"),
+        // A batch is written only beside the run's start (M5 gate review C6).
+        in_batch(started("R03", 'f', Some(5), "FAIL"), "batch-1"),
         quoted,
         in_batch(manual("I02", Some(hex('1'))), "batch-1"),
         manual("W11", None),
@@ -398,6 +399,113 @@ fn records_survive_a_round_trip_and_bad_lines_reject_the_ledger() {
     );
     assert!(read_all(&text.replacen('\n', "\n\n", 1)).is_err());
     assert!(read_all(text.trim_end()).is_ok());
+}
+
+/// M5 gate review C6: a program result or a USER receipt is read only in a field set some writer
+/// of it wrote (`git log -p` of the record writers); any other member, a misspelled one above
+/// all, rejects the ledger rather than being dropped.
+#[test]
+fn each_record_kind_takes_exactly_the_field_sets_its_writers_wrote() {
+    let timed = |mut record: Record| {
+        if let Record::Automated { run_unix, .. } = &mut record {
+            *run_unix = Some(1_795_018_746);
+        }
+        record
+    };
+    let opened = |mut record: Record, write_watch: bool| {
+        if let Record::Automated { zip, .. } = &mut record {
+            *zip = Some(super::record::OpenedZip {
+                sha256: hex('7'),
+                write_watch,
+            });
+        }
+        record
+    };
+    let legacy = || Identity {
+        inputs: None,
+        ..identity()
+    };
+    // One synthetic sample per historical shape.
+    let shapes = [
+        // automated, 5e57b5a: the result fields alone.
+        run("W02", "PASS", legacy(), '1'),
+        // 2853071: with the bundle's product inputs.
+        run("W03", "PASS", identity(), '2'),
+        // be07b02 on: the run's start, with or without inputs and a batch.
+        timed(run("W04", "PASS", legacy(), '3')),
+        timed(run("W05", "PASS", identity(), '4')),
+        in_batch(timed(run("R03", "FAIL", legacy(), '5')), "rc1"),
+        in_batch(timed(run("R03", "FAIL", identity(), '6')), "rc1"),
+        // 8c47cfc: R03 names the ZIP it opened; f0aec99: and the write watch.
+        opened(timed(run("R03", "FAIL", identity(), '7')), false),
+        in_batch(
+            opened(timed(run("R03", "PASS", identity(), '8')), true),
+            "rc1",
+        ),
+        // resources, 1c45e17: R01 and R02 of one run, with the run's start, with or without inputs.
+        timed(run("R01", "PASS", identity(), '9')),
+        timed(run("R02", "PASS", identity(), '9')),
+        timed(run("R01", "PASS", legacy(), 'a')),
+        timed(run("R02", "FAIL", legacy(), 'a')),
+        // manual, 5e57b5a: its fields alone; 2853071: with inputs; be07b02: and a batch.
+        manual("W06", None),
+        manual("W01", Some(hex('1'))),
+        in_batch(manual("I01", Some(hex('1'))), "rc1"),
+    ];
+    let text: String = shapes.iter().map(|r| r.line() + "\n").collect();
+    assert_eq!(read_all(&text).unwrap(), shapes);
+    let refused = |line: String, why: &str| match read_all(&format!("{text}{line}\n")) {
+        Ok(_) => panic!("read, not refused ({why}): {line}"),
+        Err(error) => assert!(error.contains(why), "{line}: {error}"),
+    };
+    // The review's sample: an R03 FAIL whose batch is misspelled is not read as batchless.
+    let fail = in_batch(timed(run("R03", "FAIL", identity(), 'b')), "rc1").line();
+    refused(fail.replace("\"batch\"", "\"Batch\""), "has no field Batch");
+    // Any other member of each kind.
+    let note =
+        |line: String| line.replace(",\"recorded_unix\"", ",\"note\":\"x\",\"recorded_unix\"");
+    refused(note(fail), "has no field note");
+    refused(
+        note(timed(run("R01", "PASS", identity(), 'c')).line()),
+        "has no field note",
+    );
+    refused(
+        note(manual("W11", Some(hex('1'))).line()),
+        "has no field note",
+    );
+    // Fields of one kind in another.
+    refused(
+        timed(run("W09", "PASS", identity(), 'd'))
+            .line()
+            .replace(",\"recorded_unix\"", ",\"quote\":\"q\",\"recorded_unix\""),
+        "has no field quote",
+    );
+    refused(
+        manual("W11", Some(hex('1'))).line().replace(
+            ",\"recorded_unix\"",
+            &format!(",\"evidence_sha256\":\"{}\",\"recorded_unix\"", hex('e')),
+        ),
+        "has no field evidence_sha256",
+    );
+    // Combinations no writer wrote: a batch or a ZIP before the run's start was kept, a
+    // resource record without the run's start or with a batch, a batch on an old receipt.
+    refused(
+        in_batch(run("R03", "FAIL", identity(), 'b'), "rc1").line(),
+        "batch only beside run_unix",
+    );
+    refused(
+        opened(run("R03", "FAIL", identity(), 'b'), false).line(),
+        "zip_sha256 only beside run_unix",
+    );
+    refused(run("R01", "PASS", identity(), 'c').line(), "run_unix");
+    refused(
+        in_batch(timed(run("R01", "PASS", identity(), 'c')), "rc1").line(),
+        "has no field batch",
+    );
+    refused(
+        in_batch(manual("I02", None), "rc1").line(),
+        "batch only beside app_inputs",
+    );
 }
 
 /// The ledger takes runs in any order: only the same evidence for a row twice is refused.

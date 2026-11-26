@@ -66,7 +66,8 @@ fn record(row: &str, verdict: &str, driver: char, built: &Built, evidence: char)
         evidence: format!("dist/evidence/run-{evidence}/mac-gui.json"),
         evidence_sha256: hex(evidence),
         run_unix: Some(1),
-        batch: Some("rc1".into()),
+        // `mac-resources` evidence names no batch, so its records carry none (M5 gate review C6).
+        batch: (!matches!(row, "R01" | "R02")).then(|| "rc1".into()),
         recorded_unix: 2,
     }
 }
