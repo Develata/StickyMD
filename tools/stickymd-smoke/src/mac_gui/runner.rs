@@ -11,10 +11,10 @@ use super::{
     },
     options::IDS,
     scenarios::{self, Driver},
-    staging::{self, Bytes, Candidate},
+    staging,
 };
 use crate::mac_common::{
-    fixture::{Expected, PreLaunch, bundle_hash, contained_executable, copy_fixture},
+    fixture::{bundle_hash, contained_executable, copy_fixture},
     session::Session,
 };
 use std::{
@@ -23,36 +23,14 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+mod evidence;
+mod outcome;
+#[cfg(test)]
+pub(crate) use evidence::failed_f01_evidence;
+pub(crate) use evidence::written_here;
+use evidence::{AppHash, save};
+use outcome::{Failure, joined, settle, untested_after_error};
 const CONFIG: &str = "version = 1\nview_mode = \"source\"\nopacity = 100\nalways_on_top = false\ncontent_zoom_percent = 100\n[window]\nwidth_dip = 520\nheight_dip = 480\ndock_edge = \"none\"\n";
-struct AppHash {
-    executable: String,
-    bundle: String,
-    /// The product inputs the bundle was built from, when `build-app.sh` recorded them.
-    inputs: Option<String>,
-    /// This driver's own executable, so the ledger can tell which driver produced the evidence.
-    driver: String,
-    /// The candidate ZIP R03 opens (`--zip`), checked to hold this bundle before any row runs.
-    zip: Option<Candidate>,
-    /// R03's write watch calibration (`--r03-write-restore`): its evidence cannot be recorded.
-    write_restore: bool,
-}
-
-impl AppHash {
-    fn expected(&self) -> Expected<'_> {
-        Expected {
-            executable: &self.executable,
-            bundle: &self.bundle,
-            inputs: self.inputs.as_deref(),
-        }
-    }
-
-    fn bytes(&self) -> Bytes {
-        Bytes {
-            executable: self.executable.clone(),
-            bundle: self.bundle.clone(),
-        }
-    }
-}
 pub(super) fn execute(options: &Options) -> Result<(), String> {
     // This must precede app canonicalization, TCC checks, output creation and native GUI APIs.
     let vm = Command::new("/usr/sbin/sysctl")
@@ -284,106 +262,6 @@ fn ready(session: &mut Session, pid: u32) -> Result<Window, String> {
     events::wait(500)?;
     Ok(window)
 }
-/// `path` made absolute with its existing part canonical; `..` is refused. W12's logout cases use
-/// it too.
-/// Writes the evidence; `finished` is true only on the write after the last row, so a checkpoint
-/// of an interrupted run is never taken for a finished one (mac-ledger records only finished runs).
-/// Schema 2 is the first whose `finished` only this driver's rules set, and the first that names
-/// the batch the run was started for; mac-ledger records no older schema.
-/// Whether `name` (lowercased) is one `mac-gui` may write into --out: the evidence, each row's
-/// `<id>-stderr.log`, R03's attachments and F01's screenshot.
-pub(crate) fn written_here(name: &str) -> bool {
-    name == "mac-gui.json"
-        || name == "f01.ppm"
-        || name.ends_with("-stderr.log")
-        || name.starts_with("r03-")
-}
-
-/// `first`: the run's first checkpoint, created exclusively; later ones replace only it.
-fn save(
-    out: &Path,
-    environment: &str,
-    hash: &AppHash,
-    rows: &[Row],
-    finished: bool,
-    batch: Option<&str>,
-    first: bool,
-) -> Result<(), String> {
-    let json = evidence_json(environment, hash, rows, finished, batch);
-    let path = out.join("mac-gui.json");
-    if first {
-        crate::atomic_evidence::write_new(&path, json.as_bytes())
-    } else {
-        crate::atomic_evidence::write(&path, json.as_bytes())
-    }
-}
-
-/// How `one` failed. Before the product process was spawned (its session directory, the copy and
-/// its check against the evidence, the fixture writes, the spawn itself) the error is the
-/// machine's: not a product result (plan 11 #phase-16-macos-host, “记录”; gate review D2). After
-/// the spawn it is the product's FAIL, a window that never appears included.
-#[derive(Debug)]
-enum Failure {
-    PreLaunch(String),
-    Run(String),
-}
-
-impl From<PreLaunch> for Failure {
-    fn from(error: PreLaunch) -> Self {
-        Self::PreLaunch(error.0)
-    }
-}
-
-/// The row after `one` returned or unwound, and whether the run must stop (`stopped`, which
-/// keeps it from being marked finished). An error before the product was spawned, and any error
-/// around R03 (review round 3, B4: its session directory, attachments, cleanup), leave the row
-/// untested and stop the run; another error is the product's FAIL; an unwind stops the run.
-fn settle(
-    id: &str,
-    result: std::thread::Result<Result<(), Failure>>,
-    row: &mut Row,
-    stopped: &mut Option<String>,
-) {
-    match result {
-        Ok(Ok(())) => {}
-        Ok(Err(Failure::PreLaunch(error))) => {
-            untested_after_error(row, &error);
-            *stopped = Some(format!("{id} could not start the product: {error}"));
-        }
-        Ok(Err(Failure::Run(error))) if id == "R03" => {
-            untested_after_error(row, &error);
-            *stopped = Some(format!("R03 could not complete: {error}"));
-        }
-        Ok(Err(Failure::Run(error))) => row.check("execution", false, error),
-        Err(payload) => {
-            std::mem::forget(payload);
-            *stopped = Some("scenario unwound; owned child cleanup attempted".into());
-            row.check(
-                "execution",
-                false,
-                "scenario panicked; all later injection stopped",
-            );
-        }
-    }
-}
-
-/// R03's row after an error of the machine (review round 3 B4, fix round 4): untested, whatever
-/// its checks said before, which stay in its trace for diagnosis.
-fn untested_after_error(row: &mut Row, error: &str) {
-    for check in std::mem::take(&mut row.checks) {
-        row.trace.push(Trace {
-            ms: 0,
-            event: format!(
-                "before the error: {}: {}: {}",
-                check.name,
-                check.verdict.name(),
-                check.observation
-            ),
-        });
-    }
-    row.skip("execution", error);
-}
-
 /// Whether an attachment must exist: R03's prompt image, once its prompt check passed.
 fn required(id: &str, name: &str, row: &Row) -> bool {
     id == "R03"
@@ -393,42 +271,6 @@ fn required(id: &str, name: &str, row: &Row) -> bool {
         })
 }
 
-/// The evidence as written. A calibration run (`--r03-write-restore`) is never marked finished,
-/// so a `mac-ledger` that does not know the `calibration` member refuses it too (review fix
-/// round, B1): its R03 FAIL is the driver's bad sample, not the product's.
-fn evidence_json(
-    environment: &str,
-    hash: &AppHash,
-    rows: &[Row],
-    finished: bool,
-    batch: Option<&str>,
-) -> String {
-    let finished = finished && !hash.write_restore;
-    let batch = batch.map_or_else(String::new, |b| format!(",\"batch\":{}", quote(b)));
-    // The candidate ZIP R03 opened; mac-ledger records it with R03 alone.
-    let zip = hash.zip.as_ref().map_or_else(String::new, |zip| {
-        format!(",\"zip_sha256\":{}", quote(&zip.sha256))
-    });
-    // A calibration run's evidence says so, and mac-ledger refuses it.
-    let zip = if hash.write_restore {
-        format!("{zip},\"calibration\":\"r03-write-restore\"")
-    } else {
-        zip
-    };
-    format!(
-        "{{\"schema_version\":2,\"acceptance_status\":\"INCOMPLETE\",\"finished\":{finished}{batch},\"environment\":{environment}{},\"app_executable_sha256\":{},\"app_bundle_manifest_sha256\":{},\"driver_sha256\":{}{zip},\"scenarios\":[{}]}}\n",
-        hash.inputs
-            .as_ref()
-            .map_or_else(String::new, |inputs| format!(
-                ",\"app_inputs\":{}",
-                quote(inputs)
-            )),
-        quote(&hash.executable),
-        quote(&hash.bundle),
-        quote(&hash.driver),
-        rows.iter().map(Row::json).collect::<Vec<_>>().join(",")
-    )
-}
 fn one(
     app: &Path,
     out: &Path,
@@ -554,57 +396,9 @@ fn one(
     joined(result, [release, writable, log, cleanup])
 }
 
-/// `one`'s outcome from the scenario's and the errors of what follows it (input release, fault
-/// restore, attachments, cleanup): an error before the spawn stays one, whatever failed after.
-fn joined(result: Result<(), Failure>, after: [Result<(), String>; 4]) -> Result<(), Failure> {
-    let (pre_launch, result) = match result {
-        Err(Failure::PreLaunch(error)) => (true, Err(error)),
-        Err(Failure::Run(error)) => (false, Err(error)),
-        Ok(()) => (false, Ok(())),
-    };
-    let errors = std::iter::once(result)
-        .chain(after)
-        .filter_map(Result::err)
-        .collect::<Vec<_>>();
-    match (errors.is_empty(), pre_launch) {
-        (true, _) => Ok(()),
-        (false, true) => Err(Failure::PreLaunch(errors.join("; "))),
-        (false, false) => Err(Failure::Run(errors.join("; "))),
-    }
-}
-
-/// The evidence of an F01 run whose only row failed before (`pre_launch`) or after the product
-/// was spawned, as this driver writes it, for mac-ledger's tests (gate review D2).
-#[cfg(test)]
-pub(crate) fn failed_f01_evidence(pre_launch: bool) -> String {
-    let error = "ditto failed: exit status: 1".to_owned();
-    let failure = if pre_launch {
-        Failure::from(PreLaunch(error))
-    } else {
-        Failure::Run(error)
-    };
-    let mut row = Row::new("F01");
-    let mut stopped = None;
-    settle("F01", Ok(Err(failure)), &mut row, &mut stopped);
-    let hash = AppHash {
-        executable: "a".repeat(64),
-        bundle: "b".repeat(64),
-        inputs: Some("e".repeat(64)),
-        driver: "d".repeat(64),
-        zip: None,
-        write_restore: false,
-    };
-    let environment = r#"{"os":"ProductName:\tmacOS\nProductVersion:\t27.2\nBuildVersion:\t26B123\n","hv_vmm_present":"1","allow_host":false,"unix_seconds":42}"#;
-    // `execute` marks a run finished only when nothing stopped it.
-    evidence_json(environment, &hash, &[row], stopped.is_none(), Some("b1"))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        AppHash, Failure, PreLaunch, Row, evidence_json, joined, required, settle,
-        untested_after_error,
-    };
+    use super::{Row, required, untested_after_error};
     use crate::mac_gui::{
         model::{Verdict, aggregate},
         translocation::{CHECKS, PROMPTED, UNWRITTEN},
@@ -638,67 +432,5 @@ mod tests {
         untested_after_error(&mut row, "prompt.ppm is missing");
         assert_eq!(aggregate(&row.checks), Verdict::NotTested);
         assert!(row.trace.iter().any(|t| t.event.contains(PROMPTED)));
-    }
-
-    /// Gate review D2: an error before the product was spawned (here `copy_fixture`'s) leaves
-    /// the row untested and stops the run, so it is not marked finished; it stays one when a
-    /// cleanup fails after it. A failure after the spawn, a window that never appeared included,
-    /// is the product's FAIL and does not stop the run; R03's errors are untested as before.
-    #[test]
-    fn an_error_before_the_spawn_is_untested_and_stops_the_run() {
-        let copy = || Failure::from(PreLaunch("ditto failed: exit status: 1".into()));
-        let mut row = Row::new("F01");
-        let mut stopped = None;
-        settle("F01", Ok(Err(copy())), &mut row, &mut stopped);
-        assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
-        assert!(
-            stopped
-                .as_deref()
-                .is_some_and(|s| s.contains("ditto failed"))
-        );
-        let after_cleanup = joined(Err(copy()), [Ok(()), Ok(()), Ok(()), Err("rmdir".into())]);
-        assert!(
-            matches!(&after_cleanup, Err(Failure::PreLaunch(e)) if e.contains("rmdir")),
-            "{after_cleanup:?}"
-        );
-        let window = || Failure::Run("no unique on-screen product window within 20s".into());
-        let mut row = Row::new("F01");
-        let mut stopped = None;
-        settle("F01", Ok(Err(window())), &mut row, &mut stopped);
-        assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
-        assert_eq!(stopped, None);
-        assert!(matches!(
-            joined(
-                Err(window()),
-                [Ok(()), Err("release".into()), Ok(()), Ok(())]
-            ),
-            Err(Failure::Run(_))
-        ));
-        let mut row = Row::new("R03");
-        settle("R03", Ok(Err(window())), &mut row, &mut stopped);
-        assert_eq!(aggregate(&row.checks), Verdict::NotTested);
-        assert!(stopped.is_some());
-        assert!(joined(Ok(()), [Ok(()), Ok(()), Ok(()), Ok(())]).is_ok());
-    }
-
-    /// Review fix round, B1: a calibration run's evidence is never marked finished, so a reader
-    /// that ignores `calibration` (the mac-ledger of 916a0f1) refuses it as unfinished too.
-    #[test]
-    fn calibration_evidence_is_never_finished() {
-        let hash = |write_restore| AppHash {
-            executable: "a".repeat(64),
-            bundle: "b".repeat(64),
-            inputs: None,
-            driver: "d".repeat(64),
-            zip: None,
-            write_restore,
-        };
-        let rows = [Row::new("R03")];
-        let ordinary = evidence_json("{}", &hash(false), &rows, true, Some("rc1"));
-        assert!(ordinary.contains("\"finished\":true"), "{ordinary}");
-        assert!(!ordinary.contains("calibration"));
-        let calibration = evidence_json("{}", &hash(true), &rows, true, Some("rc1"));
-        assert!(calibration.contains("\"finished\":false"), "{calibration}");
-        assert!(calibration.contains("\"calibration\":\"r03-write-restore\""));
     }
 }
