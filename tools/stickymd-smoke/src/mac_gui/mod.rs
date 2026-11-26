@@ -73,6 +73,10 @@ mod visual;
 #[cfg(any(target_os = "macos", test))]
 pub(crate) use options::IDS;
 pub(crate) use options::{Options, parse};
+/// An F01 run failed before or after the product's spawn, as `mac-gui` writes it, for
+/// mac-ledger's tests (gate review D2).
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use runner::failed_f01_evidence;
 /// The names `mac-gui` may write into --out, for the shared --out rule's tests.
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) use runner::written_here;

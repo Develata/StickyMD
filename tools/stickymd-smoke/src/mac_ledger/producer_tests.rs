@@ -704,3 +704,21 @@ fn image_digests_are_validated_and_kept_in_one_spelling() {
     );
     assert_eq!(read_all(&line).unwrap(), records);
 }
+
+/// Gate review D2: an F01 run whose copy failed before the product was spawned leaves the row
+/// untested and the run unfinished, so `record` refuses it and no FAIL lands on the candidate's
+/// bytes; the same error after the spawn is the product's FAIL and is recorded.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_run_stopped_before_the_product_was_spawned_is_not_recorded() {
+    let before = crate::mac_gui::failed_f01_evidence(true);
+    assert!(before.contains("\"finished\":false"), "{before}");
+    assert!(before.contains("\"verdict\":\"NOT_TESTED\""), "{before}");
+    let error = record(&before).unwrap_err();
+    assert!(error.contains("not finished"), "{error}");
+    let after = record(&crate::mac_gui::failed_f01_evidence(false)).unwrap();
+    assert!(
+        matches!(after.as_slice(), [Record::Automated { row, verdict, .. }] if row == "F01" && verdict == "FAIL"),
+        "{after:?}"
+    );
+}

@@ -1047,8 +1047,11 @@ at or after the latest-onset deadline; otherwise it is NOT_TESTED (elsewhere a s
 seen after its deadline stays late).
 
 `mac-gui.json` (schema 2) is atomically checkpointed after every scenario with `"finished":false`; only the
-write after the last scenario of a run that was not cut short (cancelled, or stopped after a panic
-or a failed cleanup) says `"finished":true`, and `mac-ledger record` refuses any other file, and
+write after the last scenario of a run that was not cut short (cancelled, or stopped after a panic,
+a failed cleanup, or an error before a row's product process was spawned: its session directory,
+the copy and its check, the fixture writes, the spawn itself; that row is NOT_TESTED, while a
+failure after the spawn, a window that never appears included, is the product's FAIL) says
+`"finished":true`, and `mac-ledger record` refuses any other file, and
 any file with a row stopped by the shared stop or never started, and any older schema (whose
 drivers could mark such a run finished). `mac-gui --batch <name>` writes the acceptance batch the
 run is for into the file; `mac-ledger record` takes it from there. It records OS,

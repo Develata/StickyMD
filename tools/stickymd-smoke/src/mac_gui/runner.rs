@@ -14,7 +14,7 @@ use super::{
     staging::{self, Bytes, Candidate},
 };
 use crate::mac_common::{
-    fixture::{Expected, bundle_hash, contained_executable, copy_fixture},
+    fixture::{Expected, PreLaunch, bundle_hash, contained_executable, copy_fixture},
     session::Session,
 };
 use std::{
@@ -167,25 +167,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 one(&app, &out, &hash, id, permissions, &mut input, &mut row)
             }));
-            match result {
-                Ok(Ok(())) => {}
-                // Review round 3, B4: an error around R03 (its session directory, attachments,
-                // cleanup) is the machine's, not the product's: untested, and the run unfinished.
-                Ok(Err(error)) if id == "R03" => {
-                    untested_after_error(&mut row, &error);
-                    input.stopped = Some(format!("R03 could not complete: {error}"));
-                }
-                Ok(Err(error)) => row.check("execution", false, error),
-                Err(payload) => {
-                    std::mem::forget(payload);
-                    input.stopped = Some("scenario unwound; owned child cleanup attempted".into());
-                    row.check(
-                        "execution",
-                        false,
-                        "scenario panicked; all later injection stopped",
-                    );
-                }
-            }
+            settle(id, result, &mut row, &mut input.stopped);
         }
         row.trace.append(&mut input.backend.trace);
         row.trace.sort_by_key(|t| t.ms);
@@ -248,6 +230,17 @@ pub(super) fn launch(
     relaunch: bool,
     diagnostic: bool,
 ) -> Result<(u32, Window), String> {
+    let pid = start(session, executable, relaunch, diagnostic)?;
+    Ok((pid, ready(session, pid)?))
+}
+
+/// [`launch`] up to the spawn: an error here means no product process was started.
+fn start(
+    session: &mut Session,
+    executable: &Path,
+    relaunch: bool,
+    diagnostic: bool,
+) -> Result<u32, String> {
     let stderr = fs::OpenOptions::new()
         .append(relaunch)
         .write(true)
@@ -268,7 +261,11 @@ pub(super) fn launch(
             .stdout(Stdio::null())
             .stderr(stderr),
     )?;
-    let pid = session.child.as_ref().ok_or("missing child")?.id();
+    Ok(session.child.as_ref().ok_or("missing child")?.id())
+}
+
+/// [`launch`] after the spawn: the product's one on-screen window within 20 s.
+fn ready(session: &mut Session, pid: u32) -> Result<Window, String> {
     let start = Instant::now();
     let window = loop {
         if let Some(status) = session.poll()? {
@@ -285,7 +282,7 @@ pub(super) fn launch(
         events::wait(100)?;
     };
     events::wait(500)?;
-    Ok((pid, window))
+    Ok(window)
 }
 /// `path` made absolute with its existing part canonical; `..` is refused. W12's logout cases use
 /// it too.
@@ -318,6 +315,55 @@ fn save(
         crate::atomic_evidence::write_new(&path, json.as_bytes())
     } else {
         crate::atomic_evidence::write(&path, json.as_bytes())
+    }
+}
+
+/// How `one` failed. Before the product process was spawned (its session directory, the copy and
+/// its check against the evidence, the fixture writes, the spawn itself) the error is the
+/// machine's: not a product result (plan 11 #phase-16-macos-host, “记录”; gate review D2). After
+/// the spawn it is the product's FAIL, a window that never appears included.
+#[derive(Debug)]
+enum Failure {
+    PreLaunch(String),
+    Run(String),
+}
+
+impl From<PreLaunch> for Failure {
+    fn from(error: PreLaunch) -> Self {
+        Self::PreLaunch(error.0)
+    }
+}
+
+/// The row after `one` returned or unwound, and whether the run must stop (`stopped`, which
+/// keeps it from being marked finished). An error before the product was spawned, and any error
+/// around R03 (review round 3, B4: its session directory, attachments, cleanup), leave the row
+/// untested and stop the run; another error is the product's FAIL; an unwind stops the run.
+fn settle(
+    id: &str,
+    result: std::thread::Result<Result<(), Failure>>,
+    row: &mut Row,
+    stopped: &mut Option<String>,
+) {
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(Failure::PreLaunch(error))) => {
+            untested_after_error(row, &error);
+            *stopped = Some(format!("{id} could not start the product: {error}"));
+        }
+        Ok(Err(Failure::Run(error))) if id == "R03" => {
+            untested_after_error(row, &error);
+            *stopped = Some(format!("R03 could not complete: {error}"));
+        }
+        Ok(Err(Failure::Run(error))) => row.check("execution", false, error),
+        Err(payload) => {
+            std::mem::forget(payload);
+            *stopped = Some("scenario unwound; owned child cleanup attempted".into());
+            row.check(
+                "execution",
+                false,
+                "scenario panicked; all later injection stopped",
+            );
+        }
     }
 }
 
@@ -391,8 +437,8 @@ fn one(
     permissions: Permissions,
     input: &mut Injection<Events>,
     row: &mut Row,
-) -> Result<(), String> {
-    let mut session = Session::new()?;
+) -> Result<(), Failure> {
+    let mut session = Session::new().map_err(Failure::PreLaunch)?;
     // A save fault left in place would make cleanup fail and stop every later scenario. Declared
     // after the session, the guard drops first, on unwind too.
     let mut fault =
@@ -407,7 +453,8 @@ fn one(
                 hash.write_restore,
                 input.backend.started,
                 row,
-            )?;
+            )
+            .map_err(Failure::Run)?;
             // Not a product result: the row stays untested and the run is not finished.
             if let Some(reason) = stopped {
                 untested_after_error(row, &reason);
@@ -422,13 +469,15 @@ fn one(
             _ => "",
         };
         let executable = copy_fixture(&mut session, app, note, CONFIG, &hash.expected())?;
-        let (pid, window) = launch(&mut session, &executable, false, id == "W10")?;
+        let pid =
+            start(&mut session, &executable, false, id == "W10").map_err(Failure::PreLaunch)?;
+        let window = ready(&mut session, pid).map_err(Failure::Run)?;
         row.trace.push(Trace {
             ms: input.backend.started.elapsed().as_millis() as u64,
             event: format!(
                 "spawn PID={pid}; program_dir={}; fixture_sha256={}",
                 session.path().display(),
-                crate::integrity::sha256_bytes(note.as_bytes())?
+                crate::integrity::sha256_bytes(note.as_bytes()).map_err(Failure::Run)?
             ),
         });
         let mut live = Live {
@@ -448,6 +497,7 @@ fn one(
             },
             id,
         )
+        .map_err(Failure::Run)
     })();
     let release = input.release();
     let writable = fault.restore();
@@ -501,20 +551,60 @@ fn one(
     if cleanup.is_err() {
         input.stopped = Some("child/directory cleanup failed; no more scenarios may launch".into());
     }
-    let errors = [result, release, writable, log, cleanup]
-        .into_iter()
+    joined(result, [release, writable, log, cleanup])
+}
+
+/// `one`'s outcome from the scenario's and the errors of what follows it (input release, fault
+/// restore, attachments, cleanup): an error before the spawn stays one, whatever failed after.
+fn joined(result: Result<(), Failure>, after: [Result<(), String>; 4]) -> Result<(), Failure> {
+    let (pre_launch, result) = match result {
+        Err(Failure::PreLaunch(error)) => (true, Err(error)),
+        Err(Failure::Run(error)) => (false, Err(error)),
+        Ok(()) => (false, Ok(())),
+    };
+    let errors = std::iter::once(result)
+        .chain(after)
         .filter_map(Result::err)
         .collect::<Vec<_>>();
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
+    match (errors.is_empty(), pre_launch) {
+        (true, _) => Ok(()),
+        (false, true) => Err(Failure::PreLaunch(errors.join("; "))),
+        (false, false) => Err(Failure::Run(errors.join("; "))),
     }
+}
+
+/// The evidence of an F01 run whose only row failed before (`pre_launch`) or after the product
+/// was spawned, as this driver writes it, for mac-ledger's tests (gate review D2).
+#[cfg(test)]
+pub(crate) fn failed_f01_evidence(pre_launch: bool) -> String {
+    let error = "ditto failed: exit status: 1".to_owned();
+    let failure = if pre_launch {
+        Failure::from(PreLaunch(error))
+    } else {
+        Failure::Run(error)
+    };
+    let mut row = Row::new("F01");
+    let mut stopped = None;
+    settle("F01", Ok(Err(failure)), &mut row, &mut stopped);
+    let hash = AppHash {
+        executable: "a".repeat(64),
+        bundle: "b".repeat(64),
+        inputs: Some("e".repeat(64)),
+        driver: "d".repeat(64),
+        zip: None,
+        write_restore: false,
+    };
+    let environment = r#"{"os":"ProductName:\tmacOS\nProductVersion:\t27.2\nBuildVersion:\t26B123\n","hv_vmm_present":"1","allow_host":false,"unix_seconds":42}"#;
+    // `execute` marks a run finished only when nothing stopped it.
+    evidence_json(environment, &hash, &[row], stopped.is_none(), Some("b1"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AppHash, Row, evidence_json, required, untested_after_error};
+    use super::{
+        AppHash, Failure, PreLaunch, Row, evidence_json, joined, required, settle,
+        untested_after_error,
+    };
     use crate::mac_gui::{
         model::{Verdict, aggregate},
         translocation::{CHECKS, PROMPTED, UNWRITTEN},
@@ -548,6 +638,47 @@ mod tests {
         untested_after_error(&mut row, "prompt.ppm is missing");
         assert_eq!(aggregate(&row.checks), Verdict::NotTested);
         assert!(row.trace.iter().any(|t| t.event.contains(PROMPTED)));
+    }
+
+    /// Gate review D2: an error before the product was spawned (here `copy_fixture`'s) leaves
+    /// the row untested and stops the run, so it is not marked finished; it stays one when a
+    /// cleanup fails after it. A failure after the spawn, a window that never appeared included,
+    /// is the product's FAIL and does not stop the run; R03's errors are untested as before.
+    #[test]
+    fn an_error_before_the_spawn_is_untested_and_stops_the_run() {
+        let copy = || Failure::from(PreLaunch("ditto failed: exit status: 1".into()));
+        let mut row = Row::new("F01");
+        let mut stopped = None;
+        settle("F01", Ok(Err(copy())), &mut row, &mut stopped);
+        assert_eq!(aggregate(&row.checks), Verdict::NotTested, "{}", row.json());
+        assert!(
+            stopped
+                .as_deref()
+                .is_some_and(|s| s.contains("ditto failed"))
+        );
+        let after_cleanup = joined(Err(copy()), [Ok(()), Ok(()), Ok(()), Err("rmdir".into())]);
+        assert!(
+            matches!(&after_cleanup, Err(Failure::PreLaunch(e)) if e.contains("rmdir")),
+            "{after_cleanup:?}"
+        );
+        let window = || Failure::Run("no unique on-screen product window within 20s".into());
+        let mut row = Row::new("F01");
+        let mut stopped = None;
+        settle("F01", Ok(Err(window())), &mut row, &mut stopped);
+        assert_eq!(aggregate(&row.checks), Verdict::Fail, "{}", row.json());
+        assert_eq!(stopped, None);
+        assert!(matches!(
+            joined(
+                Err(window()),
+                [Ok(()), Err("release".into()), Ok(()), Ok(())]
+            ),
+            Err(Failure::Run(_))
+        ));
+        let mut row = Row::new("R03");
+        settle("R03", Ok(Err(window())), &mut row, &mut stopped);
+        assert_eq!(aggregate(&row.checks), Verdict::NotTested);
+        assert!(stopped.is_some());
+        assert!(joined(Ok(()), [Ok(()), Ok(()), Ok(()), Ok(())]).is_ok());
     }
 
     /// Review fix round, B1: a calibration run's evidence is never marked finished, so a reader
