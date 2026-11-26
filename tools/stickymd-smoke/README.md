@@ -614,6 +614,25 @@ be the driver that run built, `target/macos-driver/release/stickymd-smoke`; othe
 checkout builds the same driver: copy that file into the VM for the release's `mac-gui` runs. `--macos-major` is the macOS major version the five download paths must
 have run on. P16-S06 holds only by its explicit run.
 
+The candidate is promoted on a clean checkout of R too:
+
+```sh
+cargo run --quiet -p stickymd-smoke --locked -- release macos-promote --run-id <run> --attempt <n> --release-source <R> --zip <downloaded ZIP>
+```
+
+`macos-promote` checks the source identity (HEAD is R, the checkout clean) before it takes its
+lock or downloads anything, and again just before it writes the receipt. After the receipt it
+writes `dist/evidence/release-promotion-macos.json`, naming R and the receipt's SHA-256.
+`macos-ready` reads that record: when it is missing, malformed, or names another commit or
+another receipt, the package and P16-P01 are `NOT_TESTED`. Promote again on R before
+`macos-ready`, even a candidate promoted earlier on another commit: the receipt names neither R
+nor a time, so the same attempt writes the same receipt and the USER records bound to its digest
+still stand. The last reading of `macos-ready` (the candidate, then the source identity) holds
+the promotion lock shared, so it fails while a promotion runs; with no lock file there must be
+no candidate either. A replaced staging directory is deleted only when it holds nothing but what
+a promotion writes; anything else (a note written beside the staged `.app`, say) keeps it, and
+its path is printed.
+
 The USER's records for a release go into the same ledger, bound to the candidate the resolver
 returns for R:
 
