@@ -91,9 +91,13 @@ impl WindowHost for WinHost {
             .outer_position()
             .map_err(|_| FailureKind::Unsupported)?;
         let size = window.outer_size();
-        Ok(FrameFact {
-            outer: PhysicalRect::new(position.x, position.y, size.width, size.height),
-        })
+        // Windows places a window at any physical pixel.
+        Ok(FrameFact::exact(PhysicalRect::new(
+            position.x,
+            position.y,
+            size.width,
+            size.height,
+        )))
     }
 
     /// Only a tray-owned window has the identity: without the tray it keeps its taskbar entry.

@@ -16,6 +16,17 @@ use crate::platform::macos::window::{
     use_regular_activation_policy,
 };
 
+/// The grid AppKit places this window's frame on, in physical pixels: the origin lands on whole
+/// points, so one point at the backing scale (plan 04 #window-action-receipts). A scale that is not
+/// a positive finite number reads as 1.
+fn frame_grid(scale: f64) -> u32 {
+    if scale.is_finite() && scale >= 1.0 {
+        scale.round() as u32
+    } else {
+        1
+    }
+}
+
 fn visibility_of(window: &Window) -> Visibility {
     Visibility {
         visible: window.is_visible(),
@@ -140,11 +151,27 @@ impl WindowHost for MacHost {
     fn observe_frame(&self) -> Result<FrameFact, FailureKind> {
         let window = self.existing_window()?;
         Self::current_frame(window)
-            .map(|outer| FrameFact { outer })
+            .map(|outer| FrameFact::on_grid(outer, frame_grid(window.scale_factor())))
             .ok_or(FailureKind::Unsupported)
     }
 
     fn restore_ordinary_entry(&mut self) {
         use_regular_activation_policy();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frame_grid;
+
+    /// One point at the backing scale; anything that is not a usable scale is a 1 px grid.
+    #[test]
+    fn the_frame_grid_is_one_point_at_the_backing_scale() {
+        assert_eq!(frame_grid(1.0), 1);
+        assert_eq!(frame_grid(2.0), 2);
+        assert_eq!(frame_grid(3.0), 3);
+        for unusable in [0.0, 0.5, -2.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(frame_grid(unusable), 1, "{unusable}");
+        }
     }
 }

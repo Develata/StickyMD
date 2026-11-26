@@ -13,6 +13,8 @@ All notable changes are recorded here.
 - macOS: the app copied straight into an Applications folder keeps its note in
   `~/Library/Application Support/StickyMD/<app name>/note/`; anywhere else the note stays beside the app (Phase 18).
 - Copy semantics, the copy side strip, notices and the end-of-document room (Phase 17).
+- macOS: a window placement is confirmed to the precision AppKit places windows (whole points), so a placement at scale 2 no
+  longer ends in "窗口未能到达目标位置（Failed）" when its target falls on an odd physical pixel; Windows judges as before.
 - Comrak goes from 0.59 to 1.2.0. Display math inside a paragraph now renders as display math, and the `$` button
   rewrites dollar and bracket math into the standard Markdown forms, reading the result back before it keeps it.
 

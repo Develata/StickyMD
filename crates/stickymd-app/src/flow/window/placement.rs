@@ -48,14 +48,16 @@ impl PendingPlacement {
     }
 }
 
-/// Whether `observed` is `target`, edge by edge.
-// The comparison is the contract (plan 04); the tolerance only happens to be zero today.
-#[allow(clippy::absurd_extreme_comparisons)]
-fn within_tolerance(observed: PhysicalRect, target: PhysicalRect) -> bool {
-    observed.x.abs_diff(target.x) <= PLACEMENT_TOLERANCE_PX
-        && observed.y.abs_diff(target.y) <= PLACEMENT_TOLERANCE_PX
-        && observed.width.abs_diff(target.width) <= PLACEMENT_TOLERANCE_PX
-        && observed.height.abs_diff(target.height) <= PLACEMENT_TOLERANCE_PX
+/// Whether the observed frame is `target`, edge by edge, to the precision its host places frames:
+/// less than one step of the host's grid off is where that host can put the window (plan 04
+/// #window-action-receipts). On a 1 px grid this is `PLACEMENT_TOLERANCE_PX` alone.
+fn within_tolerance(observed: &FrameFact, target: PhysicalRect) -> bool {
+    let tolerance = PLACEMENT_TOLERANCE_PX.saturating_add(observed.grid_px.max(1) - 1);
+    let outer = observed.outer;
+    outer.x.abs_diff(target.x) <= tolerance
+        && outer.y.abs_diff(target.y) <= tolerance
+        && outer.width.abs_diff(target.width) <= tolerance
+        && outer.height.abs_diff(target.height) <= tolerance
 }
 
 impl WindowShellCoordinator {
@@ -127,9 +129,7 @@ impl WindowShellCoordinator {
         let target = pending.target;
         let deadline_ms = pending.deadline_ms;
         match observed {
-            Ok(fact) if within_tolerance(fact.outer, target) => {
-                self.confirm_placement(fact, effects)
-            }
+            Ok(fact) if within_tolerance(&fact, target) => self.confirm_placement(fact, effects),
             // This host cannot ever report the frame; waiting would only delay the same answer.
             Err(FailureKind::Unsupported) => {
                 self.fail_placement(FailureKind::Unsupported, effects);
@@ -238,7 +238,7 @@ pub(super) mod tests {
 
     /// The observation of `frame`, as a host reports it.
     pub(in super::super) fn fact(frame: PhysicalRect) -> FrameFact {
-        FrameFact { outer: frame }
+        FrameFact::exact(frame)
     }
 
     /// The placement a set of effects asks for that gets a verdict.
@@ -715,6 +715,30 @@ pub(super) mod tests {
         };
         assert_eq!(*placement, before);
         assert_eq!(*dock_edge, None);
+    }
+
+    /// A host that places frames on a 2 px grid (AppKit at scale 2, plan 04): a window one pixel off
+    /// an odd target is where that host can put it, so it is confirmed; two pixels off is not, and
+    /// on a 1 px grid one pixel off is not either. Each placement is judged past its deadline.
+    #[test]
+    fn a_frame_less_than_one_grid_step_off_is_confirmed() {
+        for (grid, off, confirmed) in [(2, 1, true), (2, 2, false), (1, 1, false), (2, 0, true)] {
+            let mut coordinator = coordinator(StableVisibility::Floating);
+            let effects = coordinator.dispatch(WindowIntent::DisplayTopologyChanged {
+                monitors: vec![monitor("replacement", 4000)],
+                now_ms: 10,
+            });
+            let (id, target) = placed(&effects).expect("a placement");
+            let seen = PhysicalRect::new(target.x, target.y + off, target.width, target.height);
+            let effects = observe(
+                &mut coordinator,
+                id,
+                Ok(FrameFact::on_grid(seen, grid)),
+                10 + PLACEMENT_CONFIRM_TIMEOUT_MS,
+            );
+            assert_eq!(committed(&effects), confirmed, "grid {grid}, {off} px off");
+            assert_eq!(failed(&effects), !confirmed, "grid {grid}, {off} px off");
+        }
     }
 
     /// A topology change while hidden moves nothing, so what was waiting can never be confirmed:
