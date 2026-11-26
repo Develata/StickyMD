@@ -93,8 +93,17 @@ fn ledger() -> Vec<Record> {
         .map(|(row, _, _)| (*row).to_owned())
         .collect();
     rows.extend(crate::mac_gui::logout::rows());
+    // The resource rows come from their own evidence: no other result names it (gate review
+    // round 2, R2-5).
     rows.iter()
-        .map(|row| record(row, "PASS", '1', &built, '9'))
+        .map(|row| {
+            let evidence = if matches!(row.as_str(), "R01" | "R02") {
+                '6'
+            } else {
+                '9'
+            };
+            record(row, "PASS", '1', &built, evidence)
+        })
         .collect()
 }
 

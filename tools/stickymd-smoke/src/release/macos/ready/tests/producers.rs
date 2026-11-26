@@ -177,7 +177,7 @@ fn a_resource_fail_on_the_candidates_bytes_cannot_be_waived() {
     let mut records = ledger();
     records.push(Record::Revocation {
         row: "R01".into(),
-        revoked: Revoked::Evidence(hex('9')),
+        revoked: Revoked::Evidence(hex('6')),
         quote: "读数不对".into(),
         recorded_unix: 3,
     });
