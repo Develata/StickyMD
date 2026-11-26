@@ -46,6 +46,12 @@ impl ReleaseClone {
         // As in the real repository, evidence and build output are never committed.
         write(&clone.main, ".gitignore", "/dist/\n/target/\n");
         write(&clone.main, "Cargo.toml", &root_manifest("0.1.0"));
+        // A tree is judged only with its classifier in place (fix-round review R3-3).
+        write(
+            &clone.main,
+            "tools/stickymd-smoke/src/release/platform_inputs.rs",
+            "the classifier\n",
+        );
         write(
             &clone.main,
             "crates/stickymd-core/Cargo.toml",
@@ -113,7 +119,7 @@ impl Drop for ReleaseClone {
 #[test]
 fn release_shaped_change_reuses_every_functional_module_from_a_linked_worktree() {
     let clone = ReleaseClone::new();
-    let first = candidate("0.1.0", "c", "d");
+    let first = candidate(&clone.main, "0.1.0", "c", "d");
     for module in modules() {
         write_valid_evidence(&clone.main, module, &first);
         record_success_at(&clone.main, module, &first, &first.source_commit)
@@ -125,7 +131,7 @@ fn release_shaped_change_reuses_every_functional_module_from_a_linked_worktree()
         !linked.join("dist").exists(),
         "the release worktree starts without local evidence"
     );
-    let second = candidate("0.1.1", "e", "f");
+    let second = candidate(&clone.main, "0.1.1", "e", "f");
     for module in modules() {
         let success = compatible_success(linked, module)
             .unwrap_or_else(|error| panic!("{module:?}: {error}"))
@@ -152,7 +158,7 @@ fn release_shaped_change_reuses_every_functional_module_from_a_linked_worktree()
 #[test]
 fn g5_screenshots_are_verified_from_the_store_in_a_linked_worktree() {
     let clone = ReleaseClone::new();
-    let first = candidate("0.1.0", "c", "d");
+    let first = candidate(&clone.main, "0.1.0", "c", "d");
     write_valid_evidence(&clone.main, ModuleId::G5, &first);
     record_success_at(&clone.main, ModuleId::G5, &first, &first.source_commit).unwrap();
     let document = fs::read_to_string(clone.main.join(ModuleId::G5.receipt())).unwrap();
@@ -196,7 +202,7 @@ fn an_inconsistent_lockfile_keeps_the_version_in_every_fingerprint() {
 #[test]
 fn records_with_different_inputs_coexist_instead_of_replacing_each_other() {
     let clone = ReleaseClone::new();
-    let first = candidate("0.1.0", "c", "d");
+    let first = candidate(&clone.main, "0.1.0", "c", "d");
     write_valid_evidence(&clone.main, ModuleId::G4, &first);
     record_success_at(&clone.main, ModuleId::G4, &first, &first.source_commit).unwrap();
     // Another worktree qualifies different harness inputs and records its own success.
@@ -296,7 +302,7 @@ fn real_manifests_release_bump_keeps_every_functional_fingerprint() {
 #[test]
 fn g5_reuse_verifies_archived_screenshots_and_the_record_origin() {
     let clone = ReleaseClone::new();
-    let first = candidate("0.1.0", "c", "d");
+    let first = candidate(&clone.main, "0.1.0", "c", "d");
     write_valid_evidence(&clone.main, ModuleId::G5, &first);
     record_success_at(&clone.main, ModuleId::G5, &first, &first.source_commit).unwrap();
     clone.release_bump("0.1.0", "0.1.1");
@@ -344,7 +350,7 @@ fn g5_reuse_verifies_archived_screenshots_and_the_record_origin() {
 #[test]
 fn artifact_cleanup_keeps_screenshots_of_cases_unknown_to_this_tool() {
     let clone = ReleaseClone::new();
-    let first = candidate("0.1.0", "c", "d");
+    let first = candidate(&clone.main, "0.1.0", "c", "d");
     write_valid_evidence(&clone.main, ModuleId::G5, &first);
     record_success_at(&clone.main, ModuleId::G5, &first, &first.source_commit).unwrap();
     // A newer tool recorded a success (under other inputs) with a case this tool does
@@ -554,7 +560,7 @@ fn a_dangling_dot_git_link_is_not_mistaken_for_no_repository() {
 #[test]
 fn a_link_below_the_store_root_makes_the_store_refuse_to_operate() {
     let clone = ReleaseClone::new();
-    let first = candidate("0.1.0", "c", "d");
+    let first = candidate(&clone.main, "0.1.0", "c", "d");
     write_valid_evidence(&clone.main, ModuleId::G4, &first);
     record_success_at(&clone.main, ModuleId::G4, &first, &first.source_commit).unwrap();
     let store = super::LedgerStore::for_repository(&clone.main).unwrap();
@@ -583,7 +589,7 @@ fn a_link_below_the_store_root_makes_the_store_refuse_to_operate() {
 #[ignore = "explicit timing profile for whole-ledger lookup"]
 fn lookup_all_profile() {
     let clone = ReleaseClone::new();
-    let first = candidate("0.1.0", "c", "d");
+    let first = candidate(&clone.main, "0.1.0", "c", "d");
     for module in modules() {
         write_valid_evidence(&clone.main, module, &first);
         record_success_at(&clone.main, module, &first, &first.source_commit).unwrap();
@@ -620,7 +626,7 @@ fn lookup_all_profile() {
 fn production_registration_takes_only_the_run_on_head() {
     let clone = ReleaseClone::new();
     let source = head(&clone.main);
-    let mut built = candidate("0.1.0", "c", "d");
+    let mut built = candidate(&clone.main, "0.1.0", "c", "d");
     built.source_commit = source.clone();
     let module = ModuleId::G4;
     write_valid_evidence(&clone.main, module, &built);
@@ -659,9 +665,11 @@ fn write_valid_evidence(root: &Path, module: ModuleId, candidate: &Candidate) {
     receipt::write_receipt(root, module.receipt(), &document).unwrap();
 }
 
-fn candidate(version: &str, exe: &str, zip: &str) -> Candidate {
+/// A candidate built on `root`'s HEAD: the same id must name a commit of the repository
+/// (fix-round review R3-4).
+fn candidate(root: &Path, version: &str, exe: &str, zip: &str) -> Candidate {
     Candidate {
-        source_commit: "a".repeat(40),
+        source_commit: head(root),
         version: version.to_owned(),
         cargo_lock_sha256: "b".repeat(64),
         exe_sha256: exe.repeat(64),

@@ -17,10 +17,15 @@ use std::process::{Command, Stdio};
 /// Where steps 3–5 build, relative to the checkout's root: emptied before step 3.
 pub(super) const TEST_TARGET: &str = "target/macos-source-tests";
 
+/// Where they keep their intermediate artifacts: inside [`TEST_TARGET`], so emptying it leaves
+/// none behind even when the shell sets a shared `CARGO_BUILD_BUILD_DIR` (fix-round review R1-1).
+const TEST_BUILD_DIR: &str = "target/macos-source-tests/build";
+
 /// The builder of the Cargo processes of steps 3–5 in one checkout.
 pub(super) struct Steps<'a> {
     root: &'a Path,
-    /// `CARGO_TARGET_DIR` for every process, or `None` for Cargo's default directory.
+    /// `CARGO_TARGET_DIR` for every process (with `CARGO_BUILD_BUILD_DIR` inside it), or `None`
+    /// for Cargo's default directories.
     target: Option<&'static str>,
 }
 
@@ -52,7 +57,9 @@ impl<'a> Steps<'a> {
             .env("CARGO_TERM_COLOR", "never")
             .stdin(Stdio::null());
         if let Some(target) = self.target {
-            process.env("CARGO_TARGET_DIR", target);
+            process
+                .env("CARGO_TARGET_DIR", target)
+                .env("CARGO_BUILD_BUILD_DIR", TEST_BUILD_DIR);
         }
         process
     }
@@ -103,16 +110,22 @@ impl<'a> Steps<'a> {
 }
 
 /// Removes `relative` under `root` so a build there starts from nothing; absence is fine. A link
-/// there is refused (it would empty what it points to), and so is the directory that holds
-/// `running`, the program doing this.
+/// there or at any level between it and `root` is refused (it would empty what it points to; a
+/// file in the way is an error too), and so is the directory that holds `running`, the program
+/// doing this.
 pub(super) fn empty_build_directory(
     root: &Path,
     relative: &str,
     running: Option<&Path>,
 ) -> Result<(), String> {
-    let directory = root.join(relative);
-    if !super::refuse_link(&directory)? {
-        return Ok(());
+    // Every level below the root, not only the last, must be a real directory: a link at
+    // `target` would lead the removal into whatever it points to (fix-round review R1-7).
+    let mut directory = root.to_path_buf();
+    for component in Path::new(relative).components() {
+        directory.push(component);
+        if !super::refuse_link(&directory)? {
+            return Ok(());
+        }
     }
     if let Some(running) = running
         && holds(&directory, running)?
@@ -274,6 +287,13 @@ mod tests {
                 "{:?}",
                 argv(process)
             );
+            // Fix-round review R1-1: the intermediate artifacts too, whatever the shell sets.
+            assert_eq!(
+                environment(process, "CARGO_BUILD_BUILD_DIR"),
+                Some(Some(OsStr::new("target/macos-source-tests/build"))),
+                "{:?}",
+                argv(process)
+            );
             assert_eq!(process.get_current_dir(), Some(root));
         }
         assert_eq!(argv(&processes[6]), super::command());
@@ -288,6 +308,10 @@ mod tests {
         // The phase 18 check keeps Cargo's default directory.
         let default = Steps::in_default_directory(root);
         assert_eq!(environment(&default.main_run(), "CARGO_TARGET_DIR"), None);
+        assert_eq!(
+            environment(&default.main_run(), "CARGO_BUILD_BUILD_DIR"),
+            None
+        );
     }
 
     /// Whole-gate review A2: a link at the directory, and a directory holding the running
@@ -305,6 +329,26 @@ mod tests {
         assert!(refused.contains("symbolic link"), "{refused}");
         assert!(elsewhere.join("kept").exists());
         std::fs::remove_file(root.join(TEST_TARGET)).unwrap();
+
+        // Fix-round review R1-7: a link above it (here `target` itself, pointing at a shared
+        // cache) is refused too, and the directory it leads to is kept.
+        std::fs::remove_dir(root.join("target")).unwrap();
+        let shared = root.join("shared-cache");
+        std::fs::create_dir_all(shared.join("macos-source-tests")).unwrap();
+        std::fs::write(shared.join("macos-source-tests/kept"), "").unwrap();
+        std::os::unix::fs::symlink(&shared, root.join("target")).unwrap();
+        let refused = super::empty_build_directory(root, TEST_TARGET, None).unwrap_err();
+        assert!(refused.contains("symbolic link"), "{refused}");
+        assert!(shared.join("macos-source-tests/kept").exists());
+        std::fs::remove_file(root.join("target")).unwrap();
+        // A file where a directory belongs is refused, not removed.
+        std::fs::write(root.join("target"), "").unwrap();
+        assert!(super::empty_build_directory(root, TEST_TARGET, None).is_err());
+        assert!(root.join("target").is_file());
+        std::fs::remove_file(root.join("target")).unwrap();
+        // Nothing there yet is nothing to empty.
+        super::empty_build_directory(root, TEST_TARGET, None).unwrap();
+        std::fs::create_dir_all(root.join("target")).unwrap();
 
         let running = root.join(TEST_TARGET).join("release/stickymd-smoke");
         std::fs::create_dir_all(running.parent().unwrap()).unwrap();

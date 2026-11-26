@@ -264,11 +264,28 @@ pub(super) fn role(target: &Target, test: &str) -> Option<Role> {
 }
 
 /// How the targets' own `--list --ignored` listings differ from the table, by package, kind,
-/// target name and full test name: an ignored test the table lacks, then an entry no listing
-/// names, so a rename shows as both (plan 11 #macos-readiness-check, the Phase 18 check;
-/// whole-gate review A1). Empty when they agree.
-pub(super) fn differences(listed: &[super::output::Listed]) -> Vec<String> {
+/// target name and full test name (plan 11 #macos-readiness-check, the Phase 18 check; whole-gate
+/// review A1): first the target set, each target Cargo found (`expected`) listed exactly once,
+/// then the two sorted sequences of keys, compared whole, so a test a listing names more often
+/// than the table (`[K, K]` against `[K]`) differs as an ignored test the table lacks does, and an
+/// entry no listing names; a rename shows as both (fix-round review R1-5). Empty when they agree.
+pub(super) fn differences(listed: &[super::output::Listed], expected: &[Target]) -> Vec<String> {
     type Key<'a> = (&'a str, &'a str, &'a str, &'a str);
+    let mut problems = Vec::new();
+    let mut targets: Vec<&Target> = listed.iter().map(|l| &l.target).collect();
+    targets.sort_unstable();
+    for pair in targets.windows(2).filter(|pair| pair[0] == pair[1]) {
+        problems.push(format!("listed twice: {}", target_name(pair[0])));
+    }
+    for target in expected
+        .iter()
+        .filter(|t| targets.binary_search(t).is_err())
+    {
+        problems.push(format!(
+            "found but with no listing: {}",
+            target_name(target)
+        ));
+    }
     let mut found: Vec<Key> = listed
         .iter()
         .flat_map(|l| {
@@ -289,13 +306,45 @@ pub(super) fn differences(listed: &[super::output::Listed]) -> Vec<String> {
         .collect();
     table.sort_unstable();
     let named = |(package, kind, name, test): &Key| format!("{package} {kind} {name}: {test}");
-    let extra = found
-        .iter()
-        .filter(|key| table.binary_search(key).is_err())
-        .map(|key| format!("ignored but not classified: {}", named(key)));
-    let missing = table
-        .iter()
-        .filter(|key| found.binary_search(key).is_err())
-        .map(|key| format!("classified but not ignored: {}", named(key)));
-    extra.chain(missing).collect()
+    // One walk over both sorted sequences: each key either occurs as often in both or is left
+    // over on one side.
+    let (mut extra, mut missing) = (Vec::new(), Vec::new());
+    let (mut f, mut t) = (found.iter().peekable(), table.iter().peekable());
+    loop {
+        // The smaller key is the one left over; the other side's once one side runs out.
+        let side = match (f.peek(), t.peek()) {
+            (None, None) => break,
+            (Some(a), Some(b)) => a.cmp(b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+        };
+        match side {
+            std::cmp::Ordering::Equal => {
+                f.next();
+                t.next();
+            }
+            std::cmp::Ordering::Less => extra.extend(f.next().map(|a| {
+                if table.binary_search(a).is_ok() {
+                    format!("listed as ignored more often than classified: {}", named(a))
+                } else {
+                    format!("ignored but not classified: {}", named(a))
+                }
+            })),
+            std::cmp::Ordering::Greater => missing.extend(t.next().map(|b| {
+                if found.binary_search(b).is_ok() {
+                    format!("classified more often than listed as ignored: {}", named(b))
+                } else {
+                    format!("classified but not ignored: {}", named(b))
+                }
+            })),
+        }
+    }
+    problems.extend(extra);
+    problems.extend(missing);
+    problems
+}
+
+/// A target as the check's messages name it.
+fn target_name(target: &Target) -> String {
+    format!("{} {} {}", target.package, target.kind, target.name)
 }

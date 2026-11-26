@@ -604,13 +604,17 @@ cargo run --quiet -p stickymd-smoke --locked -- release macos-ready --release-so
 `macos-source-tests` starts only on a clean checkout of R. It records its own run identity,
 removes any earlier receipt, runs the row's exact `cargo test --locked` over the eight packages,
 then the explicit runs (P18-L08's two volumes and P16-S06's exFAT test, by exact name), and
-builds the `mac-gui` driver on R into `target/macos-driver`, which it empties first so no cache
-of another commit can stand in for R's build. The same holds for the tests: target discovery,
-each target's listings, the main run and the explicit runs all build with
-`CARGO_TARGET_DIR=target/macos-source-tests`, which the runner empties before discovery (Cargo
+builds the `mac-gui` driver on R into `target/macos-driver` (its intermediate artifacts too,
+`CARGO_BUILD_BUILD_DIR=target/macos-driver/build`, recorded in the receipt's driver command),
+which it empties first so no cache of another commit can stand in for R's build. The same holds
+for the tests: target discovery, each target's listings, the main run and the explicit runs all
+build with `CARGO_TARGET_DIR=target/macos-source-tests` and
+`CARGO_BUILD_BUILD_DIR=target/macos-source-tests/build`, whatever build directory your shell
+sets, and the runner empties that directory before discovery (Cargo
 judges freshness by modification times, so a newer test program another source left in the
 default `target/` could pass for R's). Every test is therefore rebuilt from R on each run, and
-the runner refuses that directory if it is a link or holds the running `stickymd-smoke` (run the
+the runner refuses that directory if it, or `target` above it, is a link (a `target` linked to a
+shared cache is refused rather than emptied) or if it holds the running `stickymd-smoke` (run the
 runner with the default `cargo run` above, not from that directory). It writes
 `dist/evidence/release-source-tests-macos.json` (schema 3) with every test of every target, how
 each process ended, the source identity at both ends and the driver's SHA-256. `macos-ready` is
@@ -625,9 +629,12 @@ have run on. P16-S06 holds only by its explicit run.
 The gate classifies every test a receipt lists as ignored by a table in
 `src/release/macos/ready/source_tests/ignored.rs`. On a Mac, `phase 18` checks that table
 before R exists: it finds the eight packages' test targets and their `--list --ignored` the
-way the runner does (in the default build directory) and fails on any ignored test the table
-lacks and any entry no listing names, so a renamed, added or moved ignored test is classified
-before it merges. Off macOS the task is NOT_TESTED.
+way the runner does and fails unless the sorted listings and the table are the same sequence
+(an ignored test the table lacks, an entry no listing names, or a test listed more often than
+the table names it) and every target found is listed exactly once, so a renamed, added or moved
+ignored test is classified before it merges. It builds in the default build directory, so it
+assumes that cache agrees with the sources' modification times (plan 11, USER 2026-11-26).
+Off macOS the task is NOT_TESTED.
 
 The candidate is promoted on a clean checkout of R too:
 

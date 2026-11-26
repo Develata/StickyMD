@@ -16,7 +16,7 @@ use crate::qualification::receipt::{self, Candidate, RELEASE_ARTIFACT_NAME};
 #[test]
 fn changed_input_requires_rerun_without_overwriting_last_success() {
     let root = fixture();
-    let candidate = candidate();
+    let candidate = committed(&root);
     write_evidence(&root, ModuleId::G4, "first pass");
     record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit)
         .expect("record first success");
@@ -49,7 +49,13 @@ fn precomputed_planning_input_still_verifies_archived_evidence_and_schema() {
     let root = fixture();
     let module = ModuleId::G4;
     write_evidence(&root, module, "complete pass");
-    record_success_at(&root, module, &candidate(), &candidate().source_commit).unwrap();
+    record_success_at(
+        &root,
+        module,
+        &committed(&root),
+        &committed(&root).source_commit,
+    )
+    .unwrap();
     let input = super::fingerprint::calculate(&root, module).unwrap();
     let planned = lookup_for_input(&root, module, &input)
         .unwrap()
@@ -71,7 +77,7 @@ fn precomputed_planning_input_still_verifies_archived_evidence_and_schema() {
 #[test]
 fn a_damaged_record_is_invalid_and_a_formal_rerun_replaces_it() {
     let root = fixture();
-    let candidate = candidate();
+    let candidate = committed(&root);
     write_evidence(&root, ModuleId::G4, "first pass");
     record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit).unwrap();
     let record = record_path(&root, ModuleId::G4);
@@ -96,7 +102,7 @@ fn a_damaged_record_is_invalid_and_a_formal_rerun_replaces_it() {
 #[test]
 fn registration_applies_the_same_contract_as_readiness() {
     let root = fixture();
-    let candidate = candidate();
+    let candidate = committed(&root);
     write_evidence(&root, ModuleId::G4, "passing run");
     record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit).unwrap();
     let evidence_before = fs::read(
@@ -311,7 +317,7 @@ fn win32_aliases_are_reserved_without_changing_verbatim_path_identity() {
 #[test]
 fn successful_rerun_atomically_promotes_new_evidence() {
     let root = fixture();
-    let candidate = candidate();
+    let candidate = committed(&root);
     write_evidence(&root, ModuleId::G4, "first pass");
     record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit)
         .expect("record first success");
@@ -338,7 +344,7 @@ fn successful_rerun_atomically_promotes_new_evidence() {
 #[test]
 fn failed_result_cannot_replace_the_last_success() {
     let root = fixture();
-    let candidate = candidate();
+    let candidate = committed(&root);
     write_evidence(&root, ModuleId::G4, "passing run");
     record_success_at(&root, ModuleId::G4, &candidate, &candidate.source_commit)
         .expect("record success");
@@ -388,7 +394,7 @@ fn status_distinguishes_current_candidate_run_from_reused_success() {
 fn resource_failures_preserve_completed_groups_and_old_aggregate_is_not_imported() {
     use crate::cli::ResourceModule::{Math, SourcePreview, Window};
     let root = fixture();
-    let candidate = candidate();
+    let candidate = committed(&root);
     for group in [SourcePreview, Math] {
         write_resource_evidence(&root, group);
         record_success_at(
@@ -444,7 +450,7 @@ fn resource_input_or_candidate_drift_cannot_promote_an_old_measurement() {
     use crate::cli::ResourceModule::Window;
     let root = fixture();
     let module = ModuleId::Resource(Window);
-    let candidate = candidate();
+    let candidate = committed(&root);
     write_resource_evidence(&root, Window);
     record_success_at(&root, module, &candidate, &candidate.source_commit).unwrap();
     let record = record_path(&root, module);
@@ -473,7 +479,7 @@ fn resource_input_or_candidate_drift_cannot_promote_an_old_measurement() {
 #[test]
 fn every_resource_group_needs_its_own_success() {
     let root = fixture();
-    let candidate = candidate();
+    let candidate = committed(&root);
     for group in crate::resource_plan::GROUPS {
         write_resource_evidence(&root, group);
         record_success_at(
@@ -507,12 +513,12 @@ fn every_resource_group_needs_its_own_success() {
 fn write_resource_evidence(root: &Path, group: crate::cli::ResourceModule) {
     let module = ModuleId::Resource(group);
     let input = super::fingerprint::calculate(root, module).unwrap();
-    let document = valid_document(root, module, &candidate(), &input, "measured");
+    let document = valid_document(root, module, &committed(root), &input, "measured");
     receipt::write_receipt(root, group.receipt(), &document).unwrap();
 }
 
 fn write_evidence(root: &Path, module: ModuleId, marker: &str) {
-    let document = valid_document(root, module, &candidate(), "", marker);
+    let document = valid_document(root, module, &committed(root), "", marker);
     receipt::write_receipt(root, module.receipt(), &document).expect("write evidence");
 }
 
@@ -521,7 +527,13 @@ fn fixture() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("stickymd-module-ledger-{nonce}"));
+    // One directory per call: tests run in parallel, and the clock alone can repeat.
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "stickymd-module-ledger-{}-{nonce}-{sequence}",
+        std::process::id()
+    ));
     let input = root.join("tools/stickymd-smoke/src/qualification/g4/cases/dock.rs");
     fs::create_dir_all(input.parent().expect("parent")).expect("mkdir");
     fs::write(&input, "initial").expect("write input");
@@ -542,7 +554,42 @@ fn fixture() -> PathBuf {
             .expect("git add")
             .success()
     );
+    // The candidate is a commit of this repository: the same id must name one (fix-round review
+    // R3-4).
+    assert!(
+        Command::new("git")
+            .args([
+                "-c",
+                "user.name=StickyMD ledger test",
+                "-c",
+                "user.email=ledger@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ])
+            .current_dir(&root)
+            .status()
+            .expect("git commit")
+            .success()
+    );
     root
+}
+
+/// [`candidate`] built on the fixture repository's commit.
+fn committed(root: &Path) -> Candidate {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .expect("git rev-parse");
+    assert!(output.status.success());
+    Candidate {
+        source_commit: String::from_utf8(output.stdout).unwrap().trim().to_owned(),
+        ..candidate()
+    }
 }
 
 fn candidate() -> Candidate {

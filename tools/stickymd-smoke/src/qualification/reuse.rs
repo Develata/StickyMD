@@ -1,7 +1,8 @@
 //! The one reuse judgement Windows qualification applies wherever the build source S of the
 //! promoted artifact meets another commit R: the remote record, Promote, the resolver, module
-//! evidence and readiness. Equal commits are accepted without Git; otherwise the release tool's
-//! rule decides (S an ancestor of R with the same Windows Platform Build Input Fingerprint).
+//! evidence and readiness. Equal commits are accepted once Git confirms the commit is in this
+//! repository; otherwise the release tool's rule decides (S an ancestor of R with the same
+//! Windows Platform Build Input Fingerprint).
 //! Promote writes the audit record of a reuse, and readiness checks it against the judgement.
 //!
 //! plan_ref: docs/plan/11_testing_and_release.md#platform-artifact-reuse
@@ -14,7 +15,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use super::json;
 use crate::release::platform::Platform;
-use crate::release::platform_inputs::{Reuse, verify_reuse};
+use crate::release::platform_inputs::{Reuse, require_commit, verify_reuse};
 
 pub(super) const REUSE_RECORD: &str = "dist/evidence/release-reuse-windows-x64.json";
 const PLATFORM: Platform = Platform::WindowsX64;
@@ -23,9 +24,10 @@ use crate::release::platform_inputs::ALGORITHM;
 
 /// Whether the Windows artifact built on `build_source` (S) may stand for `release_source` (R).
 /// Both must be full lowercase commit ids, so one commit is never spelled two ways in the
-/// receipts that compare them. The same id needs no Git: every caller holds an R it has already
-/// checked as a commit (the Source Freeze HEAD, or a run commit compared with it); anything else
-/// goes to the reuse rule, which checks both objects.
+/// receipts that compare them. The same id must still be a commit of this repository: a ledger
+/// restored into a checkout that lacks an old commit names one no longer here, so it is not the
+/// same commit (fix-round review R3-4); anything else goes to the reuse rule, which checks both
+/// objects.
 pub(super) fn candidate_source_matches(
     root: &Path,
     build_source: &str,
@@ -46,6 +48,7 @@ pub(super) fn candidate_source_matches(
         }
     }
     if build_source == release_source {
+        require_commit(root, "build source", build_source)?;
         return Ok(Reuse::SameCommit);
     }
     let key = (
