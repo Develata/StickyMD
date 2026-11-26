@@ -56,6 +56,20 @@ fn unique_directory(label: &str) -> PathBuf {
     ))
 }
 
+/// This checkout and its HEAD, read once: a repository and a commit of it, for tests that only
+/// need a candidate's id to name a real commit (fix-round review R3-4). Read-only.
+pub(in crate::qualification) fn checkout_head() -> &'static (PathBuf, String) {
+    static HEAD: std::sync::OnceLock<(PathBuf, String)> = std::sync::OnceLock::new();
+    HEAD.get_or_init(|| {
+        let root = crate::governance::find_repository_root(
+            &std::env::current_dir().expect("current directory"),
+        )
+        .expect("the tests run inside the checkout");
+        let head = git(&root, &["rev-parse", "HEAD"]);
+        (root, head)
+    })
+}
+
 pub(in crate::qualification) fn repository() -> Repository {
     let root = unique_directory("reuse-repository");
     fs::create_dir(&root).expect("repository directory");
@@ -93,15 +107,40 @@ pub(in crate::qualification) fn repository() -> Repository {
     }
 }
 
+/// Fix-round review R3-4: two equal SHAs still name a commit of this repository. With no
+/// repository at all, or a repository that no longer holds the object (a ledger restored into a
+/// checkout without the old commit), the same id is refused; a commit the repository holds is
+/// the same commit.
 #[test]
-fn the_same_commit_is_accepted_without_git() {
-    // No repository at all: any Git command here would fail.
+fn the_same_commit_must_be_a_commit_of_this_repository() {
     let nowhere = unique_directory("reuse-no-repository");
     let commit = "0123456789abcdef0123456789abcdef01234567";
+    let error =
+        candidate_source_matches(&nowhere, commit, commit).expect_err("no repository holds it");
+    assert!(error.contains("not a commit in this repository"), "{error}");
+    let repository = repository();
     assert_eq!(
-        candidate_source_matches(&nowhere, commit, commit),
+        candidate_source_matches(&repository.root, &repository.first, &repository.first),
         Ok(Reuse::SameCommit)
     );
+    // An old commit whose object is gone: made on a branch, then the branch deleted and pruned.
+    git(
+        &repository.root,
+        &["checkout", "-q", "-b", "old", &repository.first],
+    );
+    fs::write(repository.root.join("docs/plan/a.md"), "an old run").expect("file");
+    git(&repository.root, &["commit", "-q", "-am", "old"]);
+    let old = git(&repository.root, &["rev-parse", "HEAD"]);
+    git(&repository.root, &["checkout", "-q", "main"]);
+    git(&repository.root, &["branch", "-q", "-D", "old"]);
+    git(
+        &repository.root,
+        &["reflog", "expire", "--expire=now", "--all"],
+    );
+    git(&repository.root, &["gc", "-q", "--prune=now"]);
+    let error = candidate_source_matches(&repository.root, &old, &old)
+        .expect_err("the old object is missing");
+    assert!(error.contains("not a commit in this repository"), "{error}");
     // The form is checked before the comparison: one spelling only, on both sides.
     let upper = commit.to_ascii_uppercase();
     for (build, release) in [(commit, upper.as_str()), (upper.as_str(), upper.as_str())] {
