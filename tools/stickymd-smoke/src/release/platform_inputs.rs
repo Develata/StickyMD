@@ -45,6 +45,12 @@ const COMMON_EXCLUDED_FILES: &[&str] = &[
 const WINDOWS_EXCLUDED_PREFIXES: &[&str] = &["apps/stickymd-mac/", "crates/stickymd-posix/"];
 /// The Windows host and its PowerShell packaging scripts.
 const MACOS_EXCLUDED_PREFIXES: &[&str] = &["apps/stickymd-win/", "tools/release/"];
+/// This classifier's one path. A tree is judged only with a regular file here, below directories
+/// all the way down (fix-round review R3-3): moved elsewhere (say `platform_inputs/mod.rs`, which
+/// Rust would still load) it would fall under the excluded tool and a change to it alone would
+/// leave both platforms reusable.
+const CLASSIFIER: &str = "tools/stickymd-smoke/src/release/platform_inputs.rs";
+
 /// Files under excluded directories that are inputs of both platforms anyway:
 /// - every workspace member's manifest: another member's manifest can change the feature set Cargo
 ///   merges without changing `Cargo.lock`, and the macOS product input fingerprint written into
@@ -66,7 +72,7 @@ const COUNTED_DESPITE_EXCLUSION: &[&str] = &[
     "crates/stickymd-posix/build.rs",
     "tools/stickymd-smoke/Cargo.toml",
     "tools/stickymd-smoke/build.rs",
-    "tools/stickymd-smoke/src/release/platform_inputs.rs",
+    CLASSIFIER,
 ];
 
 /// Whether `path` (repository-relative, `/`-separated) is an input of `platform`'s artifact.
@@ -202,8 +208,21 @@ fn tree(root: &Path, commit: &str) -> Result<Vec<Entry>, String> {
 /// platform, then for every input path in byte order its path, mode, length and content.
 pub(crate) fn fingerprint(root: &Path, platform: Platform, commit: &str) -> Result<String, String> {
     require_commit(root, "the fingerprinted commit", commit)?;
+    let entries = tree(root, commit)?;
+    // `ls-tree -r` names a path only below trees, so the exact path listed is the classifier at
+    // its place (a link or submodule on the way, or another spelling, is not); it is counted on
+    // both platforms, so the loop below also requires it to be a regular file.
+    if !entries
+        .iter()
+        .any(|entry| entry.path == CLASSIFIER.as_bytes())
+    {
+        return Err(format!(
+            "{commit} has no regular file {CLASSIFIER} below directories in its tree; without \
+             the classifier at its path the commit is not judged"
+        ));
+    }
     let mut inputs = Vec::new();
-    for entry in tree(root, commit)? {
+    for entry in entries {
         if !is_input_path(platform, &entry.path) {
             continue;
         }

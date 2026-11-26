@@ -72,6 +72,11 @@ pub(in crate::qualification) fn repository() -> Repository {
     };
     let first = commit(&[
         ("Cargo.toml", "[workspace]\n"),
+        // A tree is judged only with its classifier in place (fix-round review R3-3).
+        (
+            "tools/stickymd-smoke/src/release/platform_inputs.rs",
+            "the classifier",
+        ),
         ("apps/stickymd-win/src/main.rs", "win 1"),
         ("apps/stickymd-mac/src/main.rs", "mac 1"),
         ("docs/plan/a.md", "doc 1"),

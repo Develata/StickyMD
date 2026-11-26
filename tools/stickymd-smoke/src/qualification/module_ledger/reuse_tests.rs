@@ -46,6 +46,12 @@ impl ReleaseClone {
         // As in the real repository, evidence and build output are never committed.
         write(&clone.main, ".gitignore", "/dist/\n/target/\n");
         write(&clone.main, "Cargo.toml", &root_manifest("0.1.0"));
+        // A tree is judged only with its classifier in place (fix-round review R3-3).
+        write(
+            &clone.main,
+            "tools/stickymd-smoke/src/release/platform_inputs.rs",
+            "the classifier\n",
+        );
         write(
             &clone.main,
             "crates/stickymd-core/Cargo.toml",

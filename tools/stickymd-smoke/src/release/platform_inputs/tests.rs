@@ -117,6 +117,11 @@ fn repository() -> Repository {
     };
     commit(&[
         ("Cargo.toml", "[workspace]\n"),
+        // A tree is judged only with its classifier in place (fix-round review R3-3).
+        (
+            "tools/stickymd-smoke/src/release/platform_inputs.rs",
+            "the classifier",
+        ),
         ("apps/stickymd-win/src/main.rs", "win 1"),
         ("apps/stickymd-mac/src/main.rs", "mac 1"),
         ("docs/plan/a.md", "doc 1"),
@@ -239,6 +244,10 @@ fn only_the_packaging_crate_and_the_counted_tool_files_reach_the_fingerprints() 
     };
     let base = commit(&[
         ("Cargo.toml", "[workspace]\n"),
+        (
+            "tools/stickymd-smoke/src/release/platform_inputs.rs",
+            "the classifier",
+        ),
         ("tools/stickymd-package/Cargo.toml", "[package]\n"),
         ("tools/stickymd-package/src/lib.rs", "package 1"),
         ("tools/stickymd-smoke/Cargo.toml", "[package]\n"),
@@ -310,4 +319,94 @@ fn a_symbolic_link_among_the_inputs_fails_the_fingerprint() {
     let linked = git(root, &["rev-parse", "HEAD"]);
     let error = fingerprint(root, Platform::WindowsX64, &linked).unwrap_err();
     assert!(error.contains("crates/input.md"), "{error}");
+}
+/// Fix-round review R3-3: the classifier is an input of both platforms only while it sits at its
+/// one path. Moved to `platform_inputs/mod.rs` (a plain Rust refactor; the module still loads),
+/// it would fall under the excluded tool, and a change to it alone would leave both platforms
+/// reusable; a tree without the classifier at that path, as a regular file below directories, is
+/// not judged.
+#[test]
+fn a_tree_without_the_classifier_at_its_path_is_not_judged() {
+    let directory = TemporaryDirectory::new("platform-inputs-classifier").unwrap();
+    let root = directory.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    let commit = |files: &[(&str, &str)], removed: &[&str]| {
+        for (path, text) in files {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for path in removed {
+            std::fs::remove_file(root.join(path)).unwrap();
+        }
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-q", "-m", "c"]);
+        git(root, &["rev-parse", "HEAD"])
+    };
+    let classifier = "tools/stickymd-smoke/src/release/platform_inputs.rs";
+    let moved = "tools/stickymd-smoke/src/release/platform_inputs/mod.rs";
+    let base = commit(
+        &[("Cargo.toml", "[workspace]\n"), (classifier, "the table")],
+        &[],
+    );
+    let s = commit(&[(moved, "the table")], &[classifier]);
+    let r = commit(&[(moved, "another table")], &[]);
+    for platform in [Platform::WindowsX64, Platform::MacOsArm64] {
+        fingerprint(root, platform, &base).unwrap();
+        for commit in [&s, &r] {
+            let error = fingerprint(root, platform, commit).unwrap_err();
+            assert!(error.contains(classifier), "{error}");
+        }
+        let error = verify_reuse(root, platform, &s, &r).unwrap_err();
+        assert!(error.contains(classifier), "{error}");
+    }
+    // Back at its path, but as a directory's name (`platform_inputs.rs/x`): still not there.
+    let as_directory = commit(&[(&format!("{classifier}/x"), "a file")], &[moved]);
+    let error = fingerprint(root, Platform::WindowsX64, &as_directory).unwrap_err();
+    assert!(error.contains(classifier), "{error}");
+    directory.close().unwrap();
+}
+
+/// Fix-round review R3-3: a link where the classifier's parent directory belongs leaves no
+/// classifier at its path in the tree, whatever the link leads to.
+#[cfg(unix)]
+#[test]
+fn a_linked_parent_of_the_classifier_is_not_a_tree() {
+    let directory = TemporaryDirectory::new("platform-inputs-linked-classifier").unwrap();
+    let root = directory.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+    std::fs::create_dir_all(root.join("docs/release")).unwrap();
+    std::fs::write(root.join("docs/release/platform_inputs.rs"), "the table").unwrap();
+    std::fs::create_dir_all(root.join("tools/stickymd-smoke/src")).unwrap();
+    std::os::unix::fs::symlink(
+        "../../../docs/release",
+        root.join("tools/stickymd-smoke/src/release"),
+    )
+    .unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "linked"]);
+    let linked = git(root, &["rev-parse", "HEAD"]);
+    let error = fingerprint(root, Platform::MacOsArm64, &linked).unwrap_err();
+    assert!(
+        error.contains("tools/stickymd-smoke/src/release/platform_inputs.rs"),
+        "{error}"
+    );
+    // The classifier itself as a link, below real directories, is not a regular file.
+    std::fs::remove_file(root.join("tools/stickymd-smoke/src/release")).unwrap();
+    std::fs::create_dir_all(root.join("tools/stickymd-smoke/src/release")).unwrap();
+    std::os::unix::fs::symlink(
+        "../../../../docs/release/platform_inputs.rs",
+        root.join("tools/stickymd-smoke/src/release/platform_inputs.rs"),
+    )
+    .unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "linked leaf"]);
+    let leaf = git(root, &["rev-parse", "HEAD"]);
+    let error = fingerprint(root, Platform::WindowsX64, &leaf).unwrap_err();
+    assert!(
+        error.contains("platform_inputs.rs") && error.contains("not a regular file"),
+        "{error}"
+    );
+    directory.close().unwrap();
 }
