@@ -648,6 +648,15 @@ a FAIL of R03 in the batch is a FAIL, otherwise it is `NOT_TESTED`
 holds when one identity has a clean run even if another failed (the approved grouping rule);
 Manual and resource rows keep a recorded FAIL.
 
+`--ledger` may not be a symbolic link, nor occupy the source-test receipt, its lock or its run
+record, nor be a lock file itself (a name ending in `.lock`, in any case): such a command reads
+and writes nothing. The ledger is read as strictly as it is written: each record kind has exactly
+its fields, and program results and older USER receipts only in a field set some writer of them
+wrote, so an unknown or misspelled member rejects the whole ledger rather than being dropped.
+The P16-R01 and P16-R02 lines of one `mac-resources` evidence are read only together, alike but
+for row and verdict; a ledger holding one without the other is refused (a `mac-gui --only` run
+still records one row).
+
 
 The release workflow uses `workspace-version` too. `verify-workflow` reads one
 GitHub Actions run API observation from a UTF-8 JSON file, or stdin when

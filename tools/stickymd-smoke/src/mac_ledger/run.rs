@@ -55,6 +55,8 @@ pub(super) fn execute(options: &Options, root: &Path) -> Result<(), String> {
         all.push(record.clone());
     }
     decide::check_system(&all)?;
+    // The ledger as it will be read: a resource evidence is both its rows (M5 gate review C2).
+    record::resource_pairs(&all)?;
     let mut out = text;
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
@@ -86,7 +88,7 @@ fn read(ledger: &Path) -> Result<String, String> {
 /// The ledger and its lock are read, locked and replaced by name: through a link the lock would
 /// name the link and a publish would replace the link, not the ledger, and a reader could follow
 /// it to another file. Every entry point refuses them. Nor may the ledger occupy the release
-/// gate's own files.
+/// gate's own files, nor be a ledger's lock: a writer would replace the lock a reader holds.
 fn refuse_links(root: &Path, ledger: &Path) -> Result<(), String> {
     for path in [ledger.to_path_buf(), lock_path(ledger)] {
         match fs::symlink_metadata(&path) {
@@ -108,6 +110,17 @@ fn refuse_links(root: &Path, ledger: &Path) -> Result<(), String> {
                 path.display()
             ));
         }
+    }
+    // M5 gate review C4: compared as the reserved paths are on macOS (this module's only
+    // target), without case; still before any lock is taken or file created.
+    if ledger
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().to_lowercase().ends_with(".lock"))
+    {
+        return Err(format!(
+            "{} is a lock file; name the ledger itself",
+            ledger.display()
+        ));
     }
     Ok(())
 }
@@ -376,5 +389,40 @@ mod reading_tests {
         let through = root.join("dist/evidence/Release-Source-Tests-MacOS.json/records.jsonl");
         let error = refuse_links(root, &through).unwrap_err();
         assert!(error.contains("source-test receipt or its lock"), "{error}");
+    }
+
+    /// M5 gate review C4: `--ledger` naming a ledger's lock file (in any case on macOS) is
+    /// refused before any lock is taken or file created, so a writer cannot replace the lock a
+    /// reader holds; the reader's entry point refuses it too.
+    #[test]
+    fn a_ledger_cannot_be_a_lock_file() {
+        let scratch =
+            stickymd_package::temporary::TemporaryDirectory::new("ledger-as-lock").unwrap();
+        let root = scratch.path();
+        for name in ["records.jsonl.lock", "other.LOCK", "x.Lock"] {
+            let ledger = root.join("missing").join(name);
+            let args = [
+                "revoke",
+                "--rows",
+                "W02",
+                "--evidence-sha256",
+                &"e".repeat(64),
+                "--quote=q",
+                "--ledger",
+                ledger.to_str().unwrap(),
+            ]
+            .map(String::from);
+            let options = crate::mac_ledger::parse(&args).unwrap();
+            let error = super::execute(&options, root).unwrap_err();
+            assert!(error.contains("is a lock file"), "{name}: {error}");
+            let error = read_whole(root, &ledger).unwrap_err();
+            assert!(error.contains("is a lock file"), "{name}: {error}");
+            assert!(
+                std::fs::read_dir(root).unwrap().next().is_none(),
+                "{name}: nothing is created"
+            );
+        }
+        assert!(refuse_links(root, &root.join("records.jsonl")).is_ok());
+        assert!(refuse_links(root, &root.join("records.lock.jsonl")).is_ok());
     }
 }

@@ -599,7 +599,12 @@ fn resource_rows_are_recorded_only_under_their_own_kind() {
     let records = record(&crate::mac_resources::evidence_json(false)).unwrap();
     let line = records[0].line();
     assert!(line.contains("\"kind\":\"resources\""), "{line}");
-    assert_eq!(read_all(&line).unwrap(), records[..1]);
+    let both = format!("{line}\n{}\n", records[1].line());
+    assert_eq!(read_all(&both).unwrap(), records);
+    // M5 gate review C2: one evidence is R01 and R02 together; a ledger holding only the first
+    // line (cut short or spliced) could let a lost R02 FAIL be waived.
+    let error = read_all(&line).unwrap_err();
+    assert!(error.contains("both P16-R01 and P16-R02"), "{error}");
     let error =
         read_all(&line.replace("\"kind\":\"resources\"", "\"kind\":\"automated\"")).unwrap_err();
     assert!(error.contains("not one any producer writes"), "{error}");

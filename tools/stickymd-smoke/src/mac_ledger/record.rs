@@ -15,7 +15,7 @@ mod evidence;
 
 pub(super) use codec::optional_text;
 pub(crate) use codec::read_all;
-pub(super) use consistency::consistent_with;
+pub(super) use consistency::{consistent_with, resource_pairs};
 pub(super) use evidence::from_evidence;
 
 /// What a reused PASS must match exactly (plan 11 #phase-16-macos-host).
