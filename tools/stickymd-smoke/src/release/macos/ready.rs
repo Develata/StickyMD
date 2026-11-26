@@ -8,7 +8,8 @@
 mod candidate;
 mod groups;
 /// The source identity; promotion requires it too (M5 gate review B2).
-pub(super) mod identity;
+#[cfg(target_os = "macos")]
+pub(super) use crate::release::source_identity as identity;
 mod judge;
 mod promotion;
 mod receipts;

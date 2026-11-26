@@ -12,6 +12,10 @@ mod package_runtime;
 pub(crate) mod platform_inputs;
 mod promoted;
 mod remote_state;
+/// The source identity of a clean checkout of R (plan 11 #macos-readiness-check).
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod source_identity;
 pub(crate) mod workflow;
 
 // The packaging crate's modules under the names the verification code has always used.
