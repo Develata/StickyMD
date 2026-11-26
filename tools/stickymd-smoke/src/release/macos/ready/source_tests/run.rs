@@ -5,16 +5,17 @@
 //! before anything else can fail, so a run that fails after its start never leaves an earlier
 //! PASS standing: the receipt the gate accepts names the run the record names (review round 4).
 //! It also builds the `mac-gui` driver on R the documented way and records its SHA-256, so the
-//! gate can tell R's driver from any other (review round 4, BLOCKER 1). Everything
-//! after the start is recorded as it happened; the gate, not this runner, decides what the
-//! receipt proves.
+//! gate can tell R's driver from any other (review round 4, BLOCKER 1). The tests themselves are
+//! found, listed and run from programs built in this run, in an emptied directory of their own
+//! (`steps`, whole-gate review A2). Everything after the start is recorded as it happened; the
+//! gate, not this runner, decides what the receipt proves.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-readiness-check
 
 use super::super::identity;
 use super::output::{self, Executable, Listed, Section};
+use super::steps::{self, Steps};
 use super::{
     DRIVER_TARGET, Driver, EXPLICIT, Exit, Explicit, Host, PACKAGES, RECEIPT, RUN, Receipt, Side,
-    Target,
 };
 use super::{command, driver_command, explicit_command, explicit_target};
 use std::io::{ErrorKind, Read, Write};
@@ -86,11 +87,12 @@ struct Merged {
     problem: Option<String>,
 }
 
-/// Runs `argv` in `root` with stdout and stderr on one pipe, echoing it to this process's
-/// stderr. A command that cannot start ends `NotStarted`; one whose output cannot be read to its
-/// end is stopped and ends `Unknown`, so the pipe cannot fill while this process waits; otherwise
-/// it ends with its exit code or a signal (review round 4).
-fn run_merged(root: &Path, argv: &[String], report: Option<&Path>) -> Merged {
+/// Runs `command` (built by `steps`; `argv` is its text, for messages) with stdout and stderr on
+/// one pipe, echoing it to this process's stderr. A command that cannot start ends `NotStarted`;
+/// one whose output cannot be read to its end is stopped and ends `Unknown`, so the pipe cannot
+/// fill while this process waits; otherwise it ends with its exit code or a signal (review
+/// round 4).
+fn run_merged(mut command: Command, argv: &[String]) -> Merged {
     let not_started = |problem: String| Merged {
         exit: Exit::NotStarted,
         output: String::new(),
@@ -104,18 +106,7 @@ fn run_merged(root: &Path, argv: &[String], report: Option<&Path>) -> Merged {
         Ok(shared) => shared,
         Err(error) => return not_started(format!("cannot share the pipe: {error}")),
     };
-    let mut command = Command::new(&argv[0]);
-    command
-        .args(&argv[1..])
-        .current_dir(root)
-        // Colour codes would hide Cargo's headers; this changes only how output is drawn.
-        .env("CARGO_TERM_COLOR", "never")
-        .stdin(Stdio::null())
-        .stdout(shared)
-        .stderr(writer);
-    if let Some(report) = report {
-        command.env("STICKYMD_VOLUME_REPORT", report);
-    }
+    command.stdout(shared).stderr(writer);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => return not_started(format!("cannot start {argv:?}: {error}")),
@@ -218,12 +209,7 @@ fn listed_of(all: &[String], tests: &[&str]) -> Vec<String> {
 /// Empties the driver's own build directory: nothing a build of another commit left there can be
 /// reused (fix round, BLOCKER 1).
 fn empty_driver_target(root: &Path) -> Result<(), String> {
-    let directory = root.join(DRIVER_TARGET);
-    if super::refuse_link(&directory)? {
-        std::fs::remove_dir_all(&directory)
-            .map_err(|error| format!("cannot empty {}: {error}", directory.display()))?;
-    }
-    Ok(())
+    steps::empty_build_directory(root, DRIVER_TARGET, None)
 }
 
 /// Builds the `mac-gui` driver on R as documented, into its own emptied directory, and hashes
@@ -265,101 +251,6 @@ fn run_identity() -> Result<String, String> {
     Ok(format!("{}-{}", since.as_nanos(), std::process::id()))
 }
 
-/// What Cargo will run: the test executables of the build and the doc-tested libraries.
-fn discover(root: &Path) -> Result<(Vec<Executable>, Vec<Target>), String> {
-    let mut argv = command();
-    argv.extend(["--no-run", "--message-format=json"].map(str::to_owned));
-    let output = Command::new(&argv[0])
-        .args(&argv[1..])
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|error| format!("cannot run the discovery build: {error}"))?;
-    if !output.status.success() {
-        return Err("the discovery build failed".to_owned());
-    }
-    let executables = output::executables(
-        std::str::from_utf8(&output.stdout).map_err(|_| "Cargo printed non-UTF-8")?,
-    )?;
-    let metadata = query(
-        root,
-        "cargo",
-        &["metadata", "--no-deps", "--format-version", "1", "--locked"],
-    )?;
-    Ok((executables, output::doc_libraries(&metadata)?))
-}
-
-/// One listing: `argv` with `--list --format terse`, and again with `--ignored` added; a library's
-/// doc-tests (`doc`) are read as rustdoc prints them.
-fn list(
-    root: &Path,
-    program: &Path,
-    argv: &[&str],
-    doc: bool,
-) -> Result<(Vec<String>, Vec<String>), String> {
-    let once = |ignored: bool| -> Result<Vec<String>, String> {
-        let mut arguments: Vec<&str> = argv.to_vec();
-        arguments.extend(["--list", "--format", "terse"]);
-        if ignored {
-            arguments.push("--ignored");
-        }
-        let output = Command::new(program)
-            .args(&arguments)
-            .current_dir(root)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .map_err(|error| format!("cannot list {}: {error}", program.display()))?;
-        if !output.status.success() {
-            return Err(format!("listing {} failed", program.display()));
-        }
-        let text = std::str::from_utf8(&output.stdout).map_err(|_| "a listing is not UTF-8")?;
-        if doc {
-            output::doc_listing(text)
-        } else {
-            output::listing(text)
-        }
-    };
-    Ok((once(false)?, once(true)?))
-}
-
-/// Every target's own listing of its tests: each test executable's `--list`, and each
-/// doc-tested library's `cargo test --doc -- --list`. A target whose listing fails is a problem
-/// of that target alone; the others keep theirs (pre-freeze item 4).
-fn listings(root: &Path, executables: &[Executable], doc: &[Target]) -> (Vec<Listed>, Vec<String>) {
-    gather(executables, doc, |program, argv, is_doc| {
-        list(root, program, argv, is_doc)
-    })
-}
-
-/// [`listings`] over any lister, `(program, argv, doc)` to `(all, ignored)`.
-fn gather(
-    executables: &[Executable],
-    doc: &[Target],
-    list: impl Fn(&Path, &[&str], bool) -> Result<(Vec<String>, Vec<String>), String>,
-) -> (Vec<Listed>, Vec<String>) {
-    let mut out = Vec::new();
-    let mut problems = Vec::new();
-    let mut take =
-        |target: &Target, listed: Result<(Vec<String>, Vec<String>), String>| match listed {
-            Ok((all, ignored)) => out.push(Listed {
-                target: target.clone(),
-                all,
-                ignored,
-            }),
-            Err(error) => problems.push(format!("the listing of {target:?}: {error}")),
-        };
-    for executable in executables {
-        take(&executable.target, list(&executable.path, &[], false));
-    }
-    for library in doc {
-        let argv = ["test", "--locked", "-p", &library.package, "--doc", "--"];
-        take(library, list(Path::new("cargo"), &argv, true));
-    }
-    (out, problems)
-}
-
 /// The volumes P18-L08's tests reported (`<volume> <case behaviour>` lines): exactly one line for
 /// each of `temporary` and `image`, or what is wrong.
 fn volumes(report: &str) -> Result<(String, String), String> {
@@ -388,7 +279,7 @@ fn volumes(report: &str) -> Result<(String, String), String> {
 /// One explicit run: one section, of stickymd-mac's binary, with its printed tests named. With
 /// `report`, the tests write the volumes they measured to that file.
 fn explicit(
-    root: &Path,
+    steps: &Steps,
     item: &str,
     tests: &[&str],
     executables: &[Executable],
@@ -414,7 +305,11 @@ fn explicit(
         temporary_volume: None,
         image_volume: None,
     };
-    let merged = run_merged(root, &argv, report);
+    let mut process = steps.explicit_run(tests);
+    if let Some(report) = report {
+        process.env("STICKYMD_VOLUME_REPORT", report);
+    }
+    let merged = run_merged(process, &argv);
     entry.exit = merged.exit;
     if let Some(problem) = merged.problem {
         problems.push(format!("the {item} run: {problem}"));
@@ -533,15 +428,18 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
     // No probe of this process's own temporary directory: P18-L08's tests measure the volumes
     // where their assertions run, and the receipt records that (review round 3, B4).
     let host = host(root)?;
+    // Steps 3–5 build in their own directory, emptied first, so every program they run is built
+    // from R now (whole-gate review A2); one that cannot be emptied stops the run.
+    let steps = Steps::fresh(root)?;
     let mut problems = Vec::new();
-    let (executables, doc) = discover(root).unwrap_or_else(|error| {
+    let (executables, doc) = steps::discover(&steps).unwrap_or_else(|error| {
         problems.push(error);
         (Vec::new(), Vec::new())
     });
-    let (listed, unlisted) = listings(root, &executables, &doc);
+    let (listed, unlisted) = steps::listings(&steps, &executables, &doc);
     problems.extend(unlisted);
     let argv = command();
-    let merged = run_merged(root, &argv, None);
+    let merged = run_merged(steps.main_run(), &argv);
     problems.extend(merged.problem);
     // What was read before any break is kept, attributed to listed names, so a printed failure
     // survives output cut short; only a whole output can pass (fix round, BLOCKER 3).
@@ -570,7 +468,7 @@ pub(in super::super) fn run(root: &Path, release: &str) -> Result<Receipt, Strin
                 .filter(|_| *item == "same-key")
                 .map(|reports| reports.path().join("volumes.txt"));
             explicit(
-                root,
+                &steps,
                 item,
                 tests,
                 &executables,
@@ -683,45 +581,6 @@ mod tests {
         assert!(super::driver_path(&lib).is_err());
         let other = format!("{}\n{finished}\n", artifact("stickymd-mac", "bin"));
         assert!(super::driver_path(&other).is_err());
-    }
-
-    /// Pre-freeze item 4 (fix-round review 15): one target whose listing fails is a problem of
-    /// that target alone; the other targets keep their listings, so their runs are still judged.
-    #[test]
-    fn a_failed_listing_drops_only_its_own_target() {
-        use super::super::Target;
-        use super::output::Executable;
-        let target = |name: &str, kind: &str| Target {
-            package: "p".to_owned(),
-            kind: kind.to_owned(),
-            name: name.to_owned(),
-        };
-        let executables = [
-            Executable {
-                target: target("good", "bin"),
-                path: "target/debug/deps/good-1".into(),
-            },
-            Executable {
-                target: target("bad", "bin"),
-                path: "target/debug/deps/bad-1".into(),
-            },
-        ];
-        let doc = [target("p", "doctest")];
-        let (listed, problems) = super::gather(&executables, &doc, |program, _, is_doc| {
-            if program.ends_with("bad-1") {
-                Err("listing bad-1 failed".to_owned())
-            } else {
-                Ok((
-                    vec![format!("{}::t", if is_doc { "doc" } else { "bin" })],
-                    Vec::new(),
-                ))
-            }
-        });
-        let names: Vec<_> = listed.iter().map(|l| l.target.name.as_str()).collect();
-        assert_eq!(names, ["good", "p"]);
-        assert_eq!(listed[1].all, ["doc::t"]);
-        assert_eq!(problems.len(), 1, "{problems:?}");
-        assert!(problems[0].contains("bad") && problems[0].contains("listing bad-1 failed"));
     }
 
     /// Fix round, BLOCKER 5: the listing keeps a name as often as the binary lists it.

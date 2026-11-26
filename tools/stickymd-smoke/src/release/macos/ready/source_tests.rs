@@ -12,6 +12,8 @@ pub(super) mod output;
 mod read;
 #[cfg(target_os = "macos")]
 pub(super) mod run;
+#[cfg(target_os = "macos")]
+mod steps;
 #[cfg(test)]
 mod tests;
 mod verdict;
@@ -112,6 +114,29 @@ pub(super) fn lock_for_reading(root: &std::path::Path) -> Result<Reading, String
         Err(std::fs::TryLockError::Error(error)) => {
             Err(format!("cannot lock {}: {error}", path.display()))
         }
+    }
+}
+
+/// `phase 18`'s check of the ignored-test table on a Mac (plan 11 #macos-readiness-check, the
+/// Phase 16 row classification; whole-gate review A1): the eight packages' test targets and their
+/// `--list --ignored`, found and listed with the runner's own commands (in Cargo's default build
+/// directory, which this never empties), must name exactly the table's tests, so a renamed or new
+/// ignored test is caught before it is merged rather than on R. A target that cannot be listed
+/// fails the check, since its ignored tests are unknown.
+#[cfg(target_os = "macos")]
+pub(super) fn ignored_table(root: &std::path::Path) -> Result<(), String> {
+    let steps = steps::Steps::in_default_directory(root);
+    let (executables, doc) = steps::discover(&steps)?;
+    let (listed, mut problems) = steps::listings(&steps, &executables, &doc);
+    problems.extend(ignored::differences(&listed));
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the ignored-test table ({}) does not match the targets' own listings: {}",
+            "tools/stickymd-smoke/src/release/macos/ready/source_tests/ignored.rs",
+            problems.join("; ")
+        ))
     }
 }
 

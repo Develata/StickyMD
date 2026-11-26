@@ -74,6 +74,7 @@ enum TaskId {
     Phase17Tests,
     Phase18MacTests,
     Phase18ReleaseTests,
+    Phase18IgnoredTestTable,
     FormatCheck,
     ClippyCheck,
     DependencyPolicy,
@@ -123,6 +124,9 @@ enum Task {
     UnitTestOwners {
         packages: Option<Vec<&'static str>>,
     },
+    /// Compare the macOS ignored-test table of the readiness check with what the eight packages'
+    /// targets list as ignored (plan 11 #macos-readiness-check); macOS only.
+    IgnoredTestTable,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -186,6 +190,7 @@ impl Task {
             Self::PackageArtifact => TaskId::PackageArtifact,
             Self::GenerateSbom => TaskId::GenerateSbom,
             Self::UnitTestOwners { .. } => TaskId::UnitTestOwners,
+            Self::IgnoredTestTable => TaskId::Phase18IgnoredTestTable,
             Self::Cargo { id, .. } | Self::Runtime { id, .. } => *id,
         }
     }
@@ -617,6 +622,7 @@ fn task_label(task: &Task) -> &'static str {
         Task::PromotedCandidate => "promoted candidate identity and artifact verification",
         Task::VerifyPackage => "portable package verification",
         Task::UnitTestOwners { .. } => UNIT_TEST_OWNERS_TASK,
+        Task::IgnoredTestTable => "Phase 18 macOS ignored-test table against the targets' listings",
         Task::Cargo { label, .. } => label,
         Task::PackageArtifact => "portable package creation",
         Task::GenerateSbom => "SPDX SBOM generation",
@@ -685,9 +691,7 @@ fn run_task(
     capture_output: bool,
     identity: &evidence::SourceIdentity,
 ) -> Result<TaskExecution, String> {
-    if let Task::Cargo { id, .. } = task
-        && let Some(refusal) = refused_on_host(*id, cfg!(target_os = "macos"))
-    {
+    if let Some(refusal) = refused_on_host(task.id(), cfg!(target_os = "macos")) {
         // Recorded as not tested where the evidence model has that state; the run still stops.
         #[cfg(not(windows))]
         return Ok(TaskExecution::NotTested(refusal));
@@ -720,14 +724,32 @@ fn run_task(
         Task::UnitTestOwners { packages } => {
             run_unit_test_owners(root, packages.as_deref(), identity)
         }
+        Task::IgnoredTestTable => ignored_test_table(root),
     }
 }
 
 /// Off macOS the host crate compiles to a stub with no tests, so cargo would pass without testing
-/// anything; the task is refused there as NOT_TESTED instead.
+/// anything, and the ignored-test table describes the macOS listings; these tasks are refused
+/// there as NOT_TESTED instead.
 fn refused_on_host(id: TaskId, macos: bool) -> Option<String> {
-    (matches!(id, TaskId::Phase16MacTests | TaskId::Phase18MacTests) && !macos)
+    (matches!(
+        id,
+        TaskId::Phase16MacTests | TaskId::Phase18MacTests | TaskId::Phase18IgnoredTestTable
+    ) && !macos)
         .then(|| "NOT_TESTED: the macOS host tests require a macOS host".to_owned())
+}
+
+/// The ignored-test table against the targets' own listings, on a Mac (whole-gate review A1).
+#[cfg(target_os = "macos")]
+fn ignored_test_table(root: &Path) -> Result<TaskExecution, String> {
+    crate::release::macos::ignored_table_check(root)
+        .map(|()| TaskExecution::Passed(TaskEvidence::default()))
+}
+
+/// Refused before it gets here (`refused_on_host`).
+#[cfg(not(target_os = "macos"))]
+fn ignored_test_table(_root: &Path) -> Result<TaskExecution, String> {
+    Err("the ignored-test table is checked on a macOS host".to_owned())
 }
 
 /// The owners of the selected packages (all owners for `None`), verified on Windows.
@@ -987,6 +1009,7 @@ fn build_plan(options: &Options) -> Result<Vec<Task>, String> {
             Selection::Phase(Phase::P18) => {
                 push_unique(&mut tasks, phase18_release_tests());
                 push_unique(&mut tasks, phase18_mac_tests());
+                push_unique(&mut tasks, Task::IgnoredTestTable);
             }
         }
     }
@@ -1737,6 +1760,30 @@ mod tests {
         ] {
             assert_eq!(refused_on_host(id, false), None);
         }
+    }
+
+    /// Whole-gate review A1: `phase 18` plans the ignored-test table check after the host tests,
+    /// and it is refused off macOS like them, where the table's listings do not exist.
+    #[test]
+    fn phase_18_plans_the_ignored_test_table_check_and_refuses_it_off_macos() {
+        let ids: Vec<TaskId> =
+            build_plan(&Options::parse(["phase", "18"].map(str::to_owned)).unwrap())
+                .unwrap()
+                .iter()
+                .map(Task::id)
+                .collect();
+        assert_eq!(
+            ids,
+            [
+                TaskId::Governance,
+                TaskId::Phase18ReleaseTests,
+                TaskId::Phase18MacTests,
+                TaskId::Phase18IgnoredTestTable
+            ]
+        );
+        let message = refused_on_host(TaskId::Phase18IgnoredTestTable, false).expect("refused");
+        assert!(message.starts_with("NOT_TESTED: "), "{message}");
+        assert_eq!(refused_on_host(TaskId::Phase18IgnoredTestTable, true), None);
     }
 
     #[test]
