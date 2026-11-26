@@ -635,6 +635,10 @@ a FAIL of R03 in the batch is a FAIL, otherwise it is `NOT_TESTED`
 holds when one identity has a clean run even if another failed (the approved grouping rule);
 Manual and resource rows keep a recorded FAIL.
 
+`--ledger` may not be a symbolic link, nor occupy the source-test receipt, its lock or its run
+record, nor be a lock file itself (a name ending in `.lock`, in any case): such a command reads
+and writes nothing.
+
 
 The release workflow uses `workspace-version` too. `verify-workflow` reads one
 GitHub Actions run API observation from a UTF-8 JSON file, or stdin when
