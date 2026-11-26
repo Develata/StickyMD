@@ -8,7 +8,7 @@ use super::{
 };
 use crate::mac_common::uptime_ns as now_ns;
 use crate::mac_common::{
-    fixture::{bundle_hash, contained_executable, copy_fixture},
+    fixture::{Expected, app_inputs, bundle_hash, contained_executable, copy_fixture},
     session::Session,
 };
 use crate::mac_gui::{
@@ -68,6 +68,7 @@ struct App {
     path: PathBuf,
     executable: String,
     bundle: String,
+    inputs: Option<String>,
 }
 
 struct Run {
@@ -132,6 +133,7 @@ pub(super) fn execute(options: &Options) -> Result<(), String> {
         apps.push(App {
             executable: crate::integrity::sha256(&contained_executable(&path)?)?,
             bundle: bundle_hash(&path)?,
+            inputs: app_inputs(&path)?,
             path,
         });
     }
@@ -277,7 +279,18 @@ fn measure(
     run: &mut Run,
 ) -> Result<(), String> {
     let note = fixture(case.bytes);
-    let executable = copy_fixture(session, &app.path, &note, CONFIG, &app.executable)?;
+    // Each round's copy must be the bundle hashed at the start (gate review D1 and D-9).
+    let executable = copy_fixture(
+        session,
+        &app.path,
+        &note,
+        CONFIG,
+        &Expected {
+            executable: &app.executable,
+            bundle: &app.bundle,
+            inputs: app.inputs.as_deref(),
+        },
+    )?;
     let recording = session.path().join("latency.txt");
     let stderr = fs::File::create(session.path().join("stderr.log")).map_err(|e| e.to_string())?;
     session.spawn(

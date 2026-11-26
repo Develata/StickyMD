@@ -15,7 +15,8 @@ writes its timestamps, quits through SIGTERM and checks injected = recorded = ch
 Each key is paired with the first frame whose drawing started after the app saw it; stages are
 event to main thread, main thread to the start of drawing, and drawing through `present`. What
 follows `present` (commit, compositor, display) is not measured. Raw recordings are kept under
-`<out>/raw`; a cancel or a failed cleanup stops the campaign. Several `--app` values run
+`<out>/raw`; a cancel or a failed cleanup stops the campaign. Each round's copy must have the
+executable, bundle manifest and input fingerprint taken of its `--app` at the start. Several `--app` values run
 interleaved for A/B; run the same app twice for an A/A bound first, on an otherwise idle host.
 It needs Accessibility, PostEvent and an unwind build:
 
@@ -34,7 +35,8 @@ cargo run --quiet --locked -p stickymd-smoke -- mac-resources --help
 
 Supply a Release bundle. Each Source/Preview/Split run uses `ditto` to copy it into
 a fresh private program directory with a deterministic 20 KiB, 20-formula note.
-The copied executable hash must match the input. `CGWindowListCopyWindowInfo`
+The copy's executable, bundle manifest and product input fingerprint must match those the
+evidence records for the input, checked before the product starts. `CGWindowListCopyWindowInfo`
 checks the child's PID and a content-sized on-screen window, without titles or
 screen capture. This is window readiness, not proof of rendered formula correctness.
 The tool then warms up for 30 seconds, samples `proc_pid_rusage` V4 footprint,
@@ -1067,15 +1069,20 @@ at or after the latest-onset deadline; otherwise it is NOT_TESTED (elsewhere a s
 seen after its deadline stays late).
 
 `mac-gui.json` (schema 2) is atomically checkpointed after every scenario with `"finished":false`; only the
-write after the last scenario of a run that was not cut short (cancelled, or stopped after a panic
-or a failed cleanup) says `"finished":true`, and `mac-ledger record` refuses any other file, and
+write after the last scenario of a run that was not cut short (cancelled, or stopped after a panic,
+a failed cleanup, or an error before a row's product process was spawned: its session directory,
+the copy and its check, the fixture writes, the spawn itself; that row is NOT_TESTED, while a
+failure after the spawn, a window that never appears included, is the product's FAIL) says
+`"finished":true`, and `mac-ledger record` refuses any other file, and
 any file with a row stopped by the shared stop or never started, and any older schema (whose
 drivers could mark such a run finished). `mac-gui --batch <name>` writes the acceptance batch the
 run is for into the file; `mac-ledger record` takes it from there. It records OS,
 VM/override/permission/display facts, fixed config, executable SHA-256, a sorted
 bundle-content manifest SHA-256 (including Info.plist; excluding xattrs), PID,
 fixture hash, timestamped requests, individual injected events, observations,
-checks and row verdicts. Copies are rehashed before launch. Stderr is retained as
+checks and row verdicts. Every copy (`mac-gui`, `mac-logout`, `mac-resources`, each
+`mac-latency` round) is checked before launch against the executable, bundle manifest and input
+fingerprint the evidence records. Stderr is retained as
 `<ID>-stderr.log`; F01 optionally writes `F01.ppm`. Use a new output directory per
 run to avoid confusing old screenshots/logs with the current JSON. Any FAIL exits
 1, and so does a run cut short; NOT_TESTED alone exits 0. A row aggregates FAIL first, then NOT_TESTED, then
@@ -1096,7 +1103,7 @@ PASS. The acceptance matrix and qualification ledgers are never updated.
 | E01 | AX native panel cancel/dismiss, folder/name/save; exact exported Markdown bytes | No managed-image export fixture in this batch |
 | F01 | `font selection` stderr names PingFang SC and Times New Roman (plan 02 defaults); optional CGWindowListCreateImage screenshot | The log does not name the code face, so Menlo and per-glyph review are NOT_TESTED; row incomplete |
 | I03 | A scratch document in a TextEdit instance of its own (`open -n`) first: `a` held (one key-down, 15 key-downs flagged as automatic repeats 80ms apart, focus rechecked before each, the key-up) must open the accent menu, seen while the key is down as a new window of TextEdit's own process, and a real `2` must then pick an accented letter; only then the same hold in StickyMD must show no new window of StickyMD's process while the key is down, and after a real `2` the note must have gained 15 or 16 `a` then `2` | The repeats are injected (USER 2026-11-19), so the repeat rate is the driver's and "repeats at the system's rate" is not shown; if the control opens no menu or picks no accent, StickyMD is not held and nothing is judged (NOT_TESTED); another window appearing is NOT_TESTED; only the control's own TextEdit instance is killed, without saving; never reused across batches |
-| R03 | The app under test zipped, its archive and every extracted file marked with quarantine flags `00c3` (the user-approved bit preset, USER 2026-11-19), opened through `open` (LaunchServices); the one StickyMD process runs from `/AppTranslocation/` with a read-only nullfs mount of the copy; a fully shown window of the process (alpha ≥ 0.9, at least 200×150 pt) on screen at the modal-panel level (8) or above, and on its stderr `当前目录不可写` with a move advice (today's `请先用访达把 StickyMD.app 移到别处` or the phrase Phase 18 keeps, `把整个 StickyMD 文件夹移到别处`) and `Read-only file system` (the generic `请将程序移动到有写权限的文件夹` fails; the prefix with neither advice is NOT_TESTED; a modal window whose stderr lacks the prefix fails; a unit test holds the phrases to `apps/stickymd-mac/src/main.rs` and `paths.rs`); the process is the one whose executable lies in this copy's translocation mount (any other StickyMD is left alone); after `open` reactivates the instance, and only if that PID still shows that window, Return is posted to that PID alone and the process ends within 5s (still running is NOT_TESTED: no receipt says which window took the key); runningboard's termination record for the PID is an exit with status 1 (an unreadable log is NOT_TESTED); the download directory lists the same top-level names before and after. Cleanup, on every path, ends only processes started from this copy or its translocated mount | Skips the system's first-open confirmation; Gatekeeper assessment is off in the test VM, so neither path exercises it. The prompt is shown before launch finishes and answers no AX request (macOS 27.2: `kAXErrorCannotComplete`), so its text is read from stderr (the product's `fatal_startup` writes the same message just before the alert), not from the window; the window's image is kept as `R03-prompt.ppm` but not inspected. No translocation, no modal window seen while the process runs, or a prompt that could not be answered is NOT_TESTED; never reused across batches |
+| R03 | The app under test zipped, its archive and every extracted file marked with quarantine flags `00c3` (the user-approved bit preset, USER 2026-11-19), opened through `open` (LaunchServices); the one StickyMD process runs from `/AppTranslocation/` with a read-only nullfs mount of the copy; a fully shown window of the process (alpha ≥ 0.9, at least 200×150 pt) on screen at the modal-panel level (8) or above, and on its stderr a line starting with `当前目录不可写` that holds both parts of the portable advice (`请先把 StickyMD.app 拖进“应用程序”` and `或把整个 StickyMD 文件夹移到别处`), and `Read-only file system` (the generic `请将程序移动到有写权限的文件夹` fails; the prefix line without the whole advice, such as the older `请先用访达把 StickyMD.app 移到别处`, is NOT_TESTED; a modal window whose stderr has no line starting with the prefix fails, another prefix before it included; a unit test holds both parts to `apps/stickymd-mac/src/paths.rs`); the process is the one whose executable lies in this copy's translocation mount (any other StickyMD is left alone); after `open` reactivates the instance, and only if that PID still shows that window, Return is posted to that PID alone and the process ends within 5s (still running is NOT_TESTED: no receipt says which window took the key); runningboard's termination record for the PID is an exit with status 1 (an unreadable log is NOT_TESTED); the download directory lists the same top-level names before and after. Cleanup, on every path, ends only processes started from this copy or its translocated mount | Skips the system's first-open confirmation; Gatekeeper assessment is off in the test VM, so neither path exercises it. The prompt is shown before launch finishes and answers no AX request (macOS 27.2: `kAXErrorCannotComplete`), so its text is read from stderr (the product's `fatal_startup` writes the same message just before the alert), not from the window; the window's image is kept as `R03-prompt.ppm` but not inspected. No translocation, no modal window seen while the process runs, or a prompt that could not be answered is NOT_TESTED; never reused across batches |
 
 K02 covers typing, Cmd+S/Z/Shift+Z/A/C/X/V, Cmd+arrows, find and replace,
 Cmd+1/2/3 and Cmd+=/-/0. Cmd+S polls `note/note.md` directly until 550ms after the
@@ -1137,7 +1144,9 @@ NOT_TESTED; a seen wrong decision, answer or order fails even when a later fact 
 termination record counts only when the product had ended before the driver's cleanup began
 (else the exit may be the cleanup's own, NOT_TESTED).
 
-It writes `mac-gui.json` (schema 2) with the row `P16-W12-logout-<case>`, the boot session
+The private copy must have the executable, bundle manifest and input fingerprint the record
+names before the product starts; a copy that does not stops the case before its first record is
+written. It writes `mac-gui.json` (schema 2) with the row `P16-W12-logout-<case>`, the boot session
 (`kern.bootsessionuuid`), the coordinator, child and product PIDs and the last key's time, for
 `mac-ledger record`. The record is written with `finished:false` before anything starts and turns
 `finished:true` only after the case ran (the GUI part finished), every process of the fixture is

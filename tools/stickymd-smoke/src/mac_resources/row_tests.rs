@@ -618,3 +618,65 @@ fn the_wrong_view_calibration_holds_only_when_every_run_was_told_apart() {
         assert!(!bad.calibration_held(), "{what}");
     }
 }
+
+/// Gate review D5: what a VALID run states must be what the driver can produce, one field at a
+/// time. The middle sample's counters (CPU ticks and both wake-up counts) lie between the first
+/// and the last, also where it gives no lower bound; the process is a real one; Hidden's wait for
+/// the status item is a finite, non-negative time between readiness and the hide.
+#[test]
+fn the_reader_refuses_counters_processes_and_waits_the_driver_cannot_produce() {
+    type Change = fn(&mut Evidence);
+    let between = "counters do not sit between the others";
+    let samples: [(&str, Change); 9] = [
+        // The review's example: user ticks 1000, 999, 1010.
+        (between, |e| e.scenarios[1][2].samples[1].user_ticks = 999),
+        (between, |e| e.scenarios[1][2].samples[1].system_ticks = 999),
+        (between, |e| {
+            e.scenarios[1][2].samples[1].pkg_idle_wakeups = 1_999
+        }),
+        (between, |e| {
+            e.scenarios[1][2].samples[1].interrupt_wakeups = 1_999
+        }),
+        (between, |e| {
+            e.scenarios[1][2].samples[1].pkg_idle_wakeups = 2_000 + 1_501
+        }),
+        (between, |e| {
+            e.scenarios[1][2].samples[1].interrupt_wakeups = 2_000 + 6_001
+        }),
+        ("names no process", |e| e.scenarios[1][0].pid = Some(0)),
+        ("status item", |e| {
+            e.scenarios[3][0].status_item_wait_seconds = Some(-1.0)
+        }),
+        // Ready at 0.5 s and hidden at 1.0 s: the menu cannot have waited 0.6 s in between.
+        ("status item", |e| {
+            e.scenarios[3][0].status_item_wait_seconds = Some(0.6)
+        }),
+    ];
+    for (words, change) in samples {
+        let mut evidence = evidence();
+        change(&mut evidence);
+        refused(&evidence.json(), words);
+    }
+    // A wait that is no finite number.
+    let good = evidence().json();
+    let infinite = good.replacen(
+        "\"status_item_wait_seconds\":0.004",
+        "\"status_item_wait_seconds\":1e999",
+        1,
+    );
+    assert_ne!(infinite, good);
+    refused(&infinite, "status item");
+    // The bounds themselves are what an honest run gives: counters equal at the middle sample,
+    // a wait of exactly the time between readiness and the hide.
+    let mut equal = evidence();
+    let first = equal.scenarios[1][2].samples[0].clone();
+    let middle = &mut equal.scenarios[1][2].samples[1];
+    middle.user_ticks = first.user_ticks;
+    middle.system_ticks = first.system_ticks;
+    middle.pkg_idle_wakeups = first.pkg_idle_wakeups;
+    middle.interrupt_wakeups = first.interrupt_wakeups;
+    read(&equal.json()).unwrap();
+    let mut waited = evidence();
+    waited.scenarios[3][0].status_item_wait_seconds = Some(0.5);
+    read(&waited.json()).unwrap();
+}
