@@ -988,7 +988,8 @@ macOS 集合与 Windows 完全分开：独立的 workflow、run、checksum 文�
   receipt，所以绑定 receipt 摘要的 USER 记录仍然成立；在别的提交上晋升过的候选，在 R 上再晋升一次即可。旧的复核记录与旧 receipt 一同先被撤下，
   写 receipt 之前的失败按“失败路径”把两者恢复原样；receipt 写成之后复核记录才写，写不成时新候选照样成立，核对因缺记录判包完整性 `NOT TESTED`，
   在 R 上重新晋升即可（整门复审 B2）。
-- **旧 staging 的清理：** 替换成功后，旧 staging 目录只在其中恰为晋升会写的文件（ZIP、checksum 文件、SBOM 与 `StickyMD/StickyMD.app` 之下）时才删除；
+- **旧 staging 的清理：** 替换成功后，旧 staging 目录只在其中恰为晋升会写的文件（ZIP、checksum 文件、SBOM，以及解出的包中的成员：`StickyMD/` 下白名单中的文件与
+  `StickyMD/StickyMD.app` 之下的一切）时才删除；
   有别的内容（例如在暂存的 `.app` 旁打开后写下的 `StickyMD/note/`）即保留它并打印其位置，不删除（`AGENTS.md`：不自动删除用户文件；整门复审 B9）。
 - **失败路径：** 与 Windows 相同，fail closed：下载不完整、attempt 不是 `success`、artifact 不属于该 attempt、哈希、checksum、SBOM、签名、架构或包结构
   不符时，既有 macOS candidate 不得被半更新，也不写 receipt；receipt 缺失时 resolver 拒绝使用 staging 目录，不从本地构建补位。
