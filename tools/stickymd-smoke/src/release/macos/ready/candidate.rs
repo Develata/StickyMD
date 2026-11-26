@@ -81,7 +81,7 @@ pub(super) fn read(root: &Path, release: &str) -> Snapshot {
     };
     Snapshot {
         candidate,
-        promotion: judge::read_promotion(found),
+        promotion: super::promotion::read(found),
         state: format!("{state}; {record}"),
     }
 }
@@ -164,7 +164,13 @@ mod tests {
     fn a_changed_candidate_or_checkout_fails_the_last_reading() {
         let scratch = checkout();
         let root = scratch.path();
-        PromotionLock::take(root).map(drop).unwrap();
+        // A lock file in place, as any earlier promotion leaves it.
+        fs::create_dir_all(root.join("dist/evidence")).unwrap();
+        fs::write(
+            root.join(crate::release::macos::promote::PROMOTION_LOCK),
+            b"",
+        )
+        .unwrap();
         let start = identity::capture(root).unwrap();
         let first = read(root, R);
         fs::write(

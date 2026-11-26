@@ -271,9 +271,10 @@ impl PromotionLock {
             .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
         match file.try_lock() {
             Ok(()) => Ok(Self { _file: file }),
-            Err(fs::TryLockError::WouldBlock) => {
-                Err(format!("another macOS promotion holds {}", path.display()))
-            }
+            Err(fs::TryLockError::WouldBlock) => Err(format!(
+                "another macOS promotion or a readiness check holds {}",
+                path.display()
+            )),
             Err(fs::TryLockError::Error(error)) => {
                 Err(format!("cannot lock {}: {error}", path.display()))
             }
@@ -441,22 +442,35 @@ pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, Stri
         )),
         Reuse::SameCommit => None,
     };
-    let check =
-        super::promotion_check::render(&release, &integrity::sha256_bytes(json.as_bytes())?);
-    install(
-        root,
-        &staged,
-        install::Outputs {
-            reuse: record.as_deref(),
-            receipt: &json,
-            promotion: &check,
-        },
-        || on_release(root, &release).map(drop),
-    )?;
+    commit(root, &release, &staged, record.as_deref(), &json)?;
     if let Err(error) = download.close() {
         eprintln!("warning: promoted; the download directory was not removed: {error}");
     }
     Ok(json)
+}
+
+/// Installs the prepared candidate with `receipt` and, after it, the promotion-check record
+/// naming `release` and the receipt's SHA-256; the checkout must still be a clean `release` just
+/// before the receipt is written (M5 gate review B2).
+fn commit(
+    root: &Path,
+    release: &str,
+    staged: &Path,
+    reuse: Option<&str>,
+    receipt: &str,
+) -> Result<(), String> {
+    let check =
+        super::promotion_check::render(release, &integrity::sha256_bytes(receipt.as_bytes())?);
+    install(
+        root,
+        staged,
+        install::Outputs {
+            reuse,
+            receipt,
+            promotion: &check,
+        },
+        || on_release(root, release).map(drop),
+    )
 }
 
 /// The reuse record Promote writes beside the receipt and the resolver compares byte for byte.
@@ -651,18 +665,55 @@ pub(super) mod tests {
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
 
-    /// M5 gate review B2, sample (c): a promotion is refused, before it takes the lock or
-    /// downloads anything, on a checkout whose HEAD is not R, or that is not clean.
-    #[test]
-    fn promote_refuses_a_checkout_other_than_a_clean_r() {
-        let scratch = TemporaryDirectory::new("macos-promote-identity").unwrap();
-        let root = scratch.path();
+    /// A throwaway checkout that ignores `dist/`, with one commit R on `origin/main`; returns R.
+    fn release_checkout(root: &Path) -> String {
         scratch_git(root, &["init", "-q", "-b", "main"]);
         fs::write(root.join(".gitignore"), "/dist/\n").unwrap();
         fs::write(root.join("a.txt"), "1").unwrap();
         scratch_git(root, &["add", "-A"]);
         scratch_git(root, &["commit", "-q", "-m", "r"]);
         let r = scratch_git(root, &["rev-parse", "HEAD"]);
+        scratch_git(root, &["update-ref", "refs/remotes/origin/main", &r]);
+        r
+    }
+
+    /// M5 gate review B2: the source identity is checked again just before the receipt, and the
+    /// record written after it names R and the SHA-256 of the receipt as written, the digest the
+    /// resolver returns and the gate compares.
+    #[test]
+    fn the_commit_rechecks_r_and_records_the_receipt_it_wrote() {
+        let scratch = TemporaryDirectory::new("macos-promote-commit").unwrap();
+        let root = scratch.path();
+        let r = release_checkout(root);
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(root.join("a.txt"), "dirty").unwrap();
+        let error = commit(root, &r, &staged, None, "the receipt").unwrap_err();
+        assert!(error.contains("the work tree or index differs"), "{error}");
+        assert!(!root.join(RECEIPT).exists() && !root.join(PROMOTION_CHECK).exists());
+        assert!(!staged.exists() && !root.join(STAGING).exists());
+        scratch_git(root, &["checkout", "-q", "--", "a.txt"]);
+        fs::create_dir_all(&staged).unwrap();
+        commit(root, &r, &staged, None, "the receipt").unwrap();
+        let written = fs::read(root.join(RECEIPT)).unwrap();
+        assert_eq!(written, b"the receipt");
+        let check =
+            super::super::promotion_check::parse(&fs::read(root.join(PROMOTION_CHECK)).unwrap())
+                .unwrap();
+        assert_eq!(check.release_source, r);
+        assert_eq!(
+            check.candidate_receipt_sha256,
+            integrity::sha256_bytes(&written).unwrap()
+        );
+    }
+
+    /// M5 gate review B2, sample (c): a promotion is refused, before it takes the lock or
+    /// downloads anything, on a checkout whose HEAD is not R, or that is not clean.
+    #[test]
+    fn promote_refuses_a_checkout_other_than_a_clean_r() {
+        let scratch = TemporaryDirectory::new("macos-promote-identity").unwrap();
+        let root = scratch.path();
+        let r = release_checkout(root);
         fs::write(root.join("a.txt"), "2").unwrap();
         scratch_git(root, &["commit", "-q", "-am", "later"]);
         let later = scratch_git(root, &["rev-parse", "HEAD"]);

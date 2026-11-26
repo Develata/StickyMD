@@ -1133,7 +1133,7 @@ fn only_the_driver_built_on_r_holds_a_gui_row() {
 /// the candidate's bytes are still judged.
 #[test]
 fn the_package_needs_a_promotion_check_on_r_for_this_receipt() {
-    use super::judge::read_promotion;
+    use super::promotion::read as read_promotion;
     let candidate = candidate();
     let other_r = "2".repeat(40);
     for (found, words) in [

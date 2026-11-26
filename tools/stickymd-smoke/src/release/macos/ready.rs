@@ -10,6 +10,7 @@ mod groups;
 /// The source identity; promotion requires it too (M5 gate review B2).
 pub(super) mod identity;
 mod judge;
+mod promotion;
 mod receipts;
 mod rows;
 pub(crate) use rows::{receipt_row, waivable};
