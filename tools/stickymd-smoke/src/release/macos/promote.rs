@@ -26,6 +26,8 @@ pub(super) const RECEIPT: &str = "dist/evidence/release-candidate-macos.json";
 pub(super) const REUSE_RECORD: &str = "dist/evidence/release-reuse-macos-arm64.json";
 /// The promotion-check record, written after the receipt (M5 gate review B2).
 pub(super) const PROMOTION_CHECK: &str = super::promotion_check::PATH;
+/// The promotion lock: exclusive for a promotion, shared for the last reading of `macos-ready`.
+pub(super) const PROMOTION_LOCK: &str = "dist/evidence/.macos-promotion.lock";
 /// The artifact of attempt `n` is named for it, so each attempt's artifact is distinct.
 pub(super) const ARTIFACT_PREFIX: &str = "stickymd-macos-arm64-release-";
 
@@ -250,13 +252,14 @@ pub(crate) fn check_set(
 /// One promotion at a time: an advisory lock on a file that stays in place. The operating
 /// system releases it when the holder exits, killed or not, so an interrupted promotion does
 /// not block the next one.
-struct PromotionLock {
+#[derive(Debug)]
+pub(super) struct PromotionLock {
     _file: fs::File,
 }
 
 impl PromotionLock {
-    fn take(root: &Path) -> Result<Self, String> {
-        let path = root.join("dist/evidence/.macos-promotion.lock");
+    pub(super) fn take(root: &Path) -> Result<Self, String> {
+        let path = root.join(PROMOTION_LOCK);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
@@ -271,6 +274,28 @@ impl PromotionLock {
             Err(fs::TryLockError::WouldBlock) => {
                 Err(format!("another macOS promotion holds {}", path.display()))
             }
+            Err(fs::TryLockError::Error(error)) => {
+                Err(format!("cannot lock {}: {error}", path.display()))
+            }
+        }
+    }
+
+    /// The lock shared, for reading the candidate while no promotion can swap it (M5 gate review
+    /// B1): the file is opened read-only and never created, so `None` means no promotion has
+    /// ever run here; a promotion holding it is an error.
+    pub(super) fn share(root: &Path) -> Result<Option<Self>, String> {
+        let path = root.join(PROMOTION_LOCK);
+        let file = match fs::File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("cannot open {}: {error}", path.display())),
+        };
+        match file.try_lock_shared() {
+            Ok(()) => Ok(Some(Self { _file: file })),
+            Err(fs::TryLockError::WouldBlock) => Err(format!(
+                "a macOS promotion is in progress ({} is held); check again when it is done",
+                path.display()
+            )),
             Err(fs::TryLockError::Error(error)) => {
                 Err(format!("cannot lock {}: {error}", path.display()))
             }
@@ -488,7 +513,7 @@ fn prepare(root: &Path, set: &Path, receipt: &Receipt) -> Result<PathBuf, String
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     /// The downloaded set holds exactly the three plain files: a missing one, an extra one and a
     /// link are refused before any of them is read.
     #[test]
@@ -611,7 +636,8 @@ mod tests {
         );
     }
 
-    fn scratch_git(root: &Path, arguments: &[&str]) -> String {
+    /// Runs `git` in a throwaway repository, with a fixed identity for its commits.
+    pub(in crate::release::macos) fn scratch_git(root: &Path, arguments: &[&str]) -> String {
         let output = Command::new("git")
             .current_dir(root)
             .args(arguments)

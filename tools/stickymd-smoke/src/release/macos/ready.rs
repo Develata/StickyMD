@@ -170,15 +170,11 @@ pub(in super::super) fn ready_command(
     let lines = judge::judge(&inputs);
     // The verdicts stand only for what was read: the same checkout and the same candidate at
     // the end, or nothing is printed as a verdict (review round 2, finding 9, SHOULD_FIX 2).
-    if identity::capture(root)? != start {
-        return Err("the checkout changed while it was checked; check again".to_owned());
-    }
     // The candidate's whole state (absent, not resolving, or resolving to this receipt, and the
     // promotion-check record) must be the one judged; a promotion or repair meanwhile voids this
-    // check (review round 3, S6; M5 gate review B2).
-    if candidate::read(root, &release).state != first.state {
-        return Err("the candidate changed while it was checked; check again".to_owned());
-    }
+    // check (review round 3, S6; M5 gate review B2). It is read under the promotion lock, held
+    // until the verdicts are printed, and the checkout after it (M5 gate review B1).
+    let _promotion_lock = candidate::confirm(root, &release, &first, &start)?;
     drop(run_lock);
     let ready = judge::ready(&lines);
     let rows: Vec<String> = lines
