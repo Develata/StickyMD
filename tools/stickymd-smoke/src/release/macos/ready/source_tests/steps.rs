@@ -110,16 +110,22 @@ impl<'a> Steps<'a> {
 }
 
 /// Removes `relative` under `root` so a build there starts from nothing; absence is fine. A link
-/// there is refused (it would empty what it points to), and so is the directory that holds
-/// `running`, the program doing this.
+/// there or at any level between it and `root` is refused (it would empty what it points to; a
+/// file in the way is an error too), and so is the directory that holds `running`, the program
+/// doing this.
 pub(super) fn empty_build_directory(
     root: &Path,
     relative: &str,
     running: Option<&Path>,
 ) -> Result<(), String> {
-    let directory = root.join(relative);
-    if !super::refuse_link(&directory)? {
-        return Ok(());
+    // Every level below the root, not only the last, must be a real directory: a link at
+    // `target` would lead the removal into whatever it points to (fix-round review R1-7).
+    let mut directory = root.to_path_buf();
+    for component in Path::new(relative).components() {
+        directory.push(component);
+        if !super::refuse_link(&directory)? {
+            return Ok(());
+        }
     }
     if let Some(running) = running
         && holds(&directory, running)?
@@ -323,6 +329,26 @@ mod tests {
         assert!(refused.contains("symbolic link"), "{refused}");
         assert!(elsewhere.join("kept").exists());
         std::fs::remove_file(root.join(TEST_TARGET)).unwrap();
+
+        // Fix-round review R1-7: a link above it (here `target` itself, pointing at a shared
+        // cache) is refused too, and the directory it leads to is kept.
+        std::fs::remove_dir(root.join("target")).unwrap();
+        let shared = root.join("shared-cache");
+        std::fs::create_dir_all(shared.join("macos-source-tests")).unwrap();
+        std::fs::write(shared.join("macos-source-tests/kept"), "").unwrap();
+        std::os::unix::fs::symlink(&shared, root.join("target")).unwrap();
+        let refused = super::empty_build_directory(root, TEST_TARGET, None).unwrap_err();
+        assert!(refused.contains("symbolic link"), "{refused}");
+        assert!(shared.join("macos-source-tests/kept").exists());
+        std::fs::remove_file(root.join("target")).unwrap();
+        // A file where a directory belongs is refused, not removed.
+        std::fs::write(root.join("target"), "").unwrap();
+        assert!(super::empty_build_directory(root, TEST_TARGET, None).is_err());
+        assert!(root.join("target").is_file());
+        std::fs::remove_file(root.join("target")).unwrap();
+        // Nothing there yet is nothing to empty.
+        super::empty_build_directory(root, TEST_TARGET, None).unwrap();
+        std::fs::create_dir_all(root.join("target")).unwrap();
 
         let running = root.join(TEST_TARGET).join("release/stickymd-smoke");
         std::fs::create_dir_all(running.parent().unwrap()).unwrap();

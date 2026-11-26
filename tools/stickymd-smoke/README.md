@@ -613,7 +613,8 @@ build with `CARGO_TARGET_DIR=target/macos-source-tests` and
 sets, and the runner empties that directory before discovery (Cargo
 judges freshness by modification times, so a newer test program another source left in the
 default `target/` could pass for R's). Every test is therefore rebuilt from R on each run, and
-the runner refuses that directory if it is a link or holds the running `stickymd-smoke` (run the
+the runner refuses that directory if it, or `target` above it, is a link (a `target` linked to a
+shared cache is refused rather than emptied) or if it holds the running `stickymd-smoke` (run the
 runner with the default `cargo run` above, not from that directory). It writes
 `dist/evidence/release-source-tests-macos.json` (schema 3) with every test of every target, how
 each process ended, the source identity at both ends and the driver's SHA-256. `macos-ready` is
