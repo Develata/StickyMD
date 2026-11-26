@@ -171,6 +171,8 @@ mod tests {
         let scratch = TemporaryDirectory::new("verify-reuse-identity").unwrap();
         let root = scratch.path();
         git(root, &["init", "-q", "-b", "main"]);
+        // Git on Windows may convert line endings, and the sample asks Git for a clean status.
+        git(root, &["config", "core.autocrlf", "false"]);
         let commit = |path: &str, text: &str| {
             let path = root.join(path);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
