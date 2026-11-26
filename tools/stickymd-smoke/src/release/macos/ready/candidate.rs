@@ -23,21 +23,21 @@ pub(super) struct Snapshot {
 /// no verdict is printed. The lock is returned to be held until the verdicts are printed, so no
 /// promotion can swap in another candidate between this reading and the output (M5 gate review
 /// B1). A promotion holding the lock fails the check; with no lock file no promotion ever ran
-/// here, which stands only when there is no candidate either.
+/// here, and the check fails too: a first promotion could create the lock and swap a candidate
+/// in meanwhile (fix-round review R1-6).
 pub(super) fn confirm(
     root: &Path,
     release: &str,
     first: &Snapshot,
     start: &Identity,
-) -> Result<Option<PromotionLock>, String> {
-    let lock = PromotionLock::share(root)?;
-    let last = read(root, release);
-    if lock.is_none() && !matches!(last.candidate, Read::Missing(_)) {
+) -> Result<PromotionLock, String> {
+    let Some(lock) = PromotionLock::share(root)? else {
         return Err(format!(
-            "no promotion lock ({}) beside a candidate receipt: promote the candidate again on R",
+            "no promotion lock ({}): no macOS promotion has run here; promote the candidate on R first",
             crate::release::macos::promote::PROMOTION_LOCK
         ));
-    }
+    };
+    let last = read(root, release);
     if last.state != first.state {
         return Err("the candidate changed while it was checked; check again".to_owned());
     }
@@ -135,27 +135,25 @@ mod tests {
         assert_eq!(fs::read(&lock).unwrap(), b"");
     }
 
-    /// Without a lock file no promotion ever ran, which holds only when there is no candidate
-    /// either; a receipt without the lock fails the reading. The lock is not created.
+    /// Fix-round review R1-6: without a lock file no promotion ever ran here, and the reading
+    /// fails without verdicts, with or without a candidate: a first promotion could create the
+    /// lock and swap a candidate in meanwhile. The lock is not created.
     #[test]
-    fn no_promotion_lock_stands_only_without_a_candidate() {
+    fn no_promotion_lock_fails_the_last_reading() {
         let scratch = checkout();
         let root = scratch.path();
         let start = identity::capture(root).unwrap();
-        let first = read(root, R);
-        confirm(root, R, &first, &start).unwrap();
         let lock = root.join(crate::release::macos::promote::PROMOTION_LOCK);
-        assert!(!lock.exists());
-        fs::create_dir_all(root.join("dist/evidence")).unwrap();
-        fs::write(
-            root.join(crate::release::macos::promote::RECEIPT),
-            "not a receipt",
-        )
-        .unwrap();
-        let first = read(root, R);
-        let error = confirm(root, R, &first, &start).unwrap_err();
-        assert!(error.contains("no promotion lock"), "{error}");
-        assert!(!lock.exists());
+        for receipt in [None, Some("not a receipt")] {
+            if let Some(receipt) = receipt {
+                fs::create_dir_all(root.join("dist/evidence")).unwrap();
+                fs::write(root.join(crate::release::macos::promote::RECEIPT), receipt).unwrap();
+            }
+            let first = read(root, R);
+            let error = confirm(root, R, &first, &start).unwrap_err();
+            assert!(error.contains("no promotion lock"), "{receipt:?}: {error}");
+            assert!(!lock.exists());
+        }
     }
 
     /// The candidate is read again before the source identity, and a change in either fails the

@@ -643,8 +643,8 @@ another receipt, the package and P16-P01 are `NOT_TESTED`. Promote again on R be
 `macos-ready`, even a candidate promoted earlier on another commit: the receipt names neither R
 nor a time, so the same attempt writes the same receipt and the USER records bound to its digest
 still stand. The last reading of `macos-ready` (the candidate, then the source identity) holds
-the promotion lock shared, so it fails while a promotion runs; with no lock file there must be
-no candidate either. A replaced staging directory is deleted only when it holds nothing but what
+the promotion lock shared, so it fails while a promotion runs, and without printing verdicts
+when there is no lock file at all (no promotion has run in this checkout yet). A replaced staging directory is deleted only when it holds nothing but what
 a promotion writes; anything else (a note written beside the staged `.app`, say) keeps it, and
 its path is printed.
 
