@@ -95,12 +95,21 @@ pub(super) fn downloads<'a>(
 /// (review round 3, S7; review round 4, BLOCKER 5: a label at the end, cut off from its value,
 /// is still a label; fix round, BLOCKER 6: so is one with its value attached, as in
 /// `ProductVersion:28.0`; M5 gate review B3: the label is counted wherever it starts, so a
-/// quoted `>ProductVersion:` is one too). A format check of what was recorded, not a proof of
-/// the machine.
+/// quoted `>ProductVersion:` is one too; fix-round review R1-4: but the one label must start a
+/// field name, so `TargetProductVersion:` is none). A format check of what was recorded, not a
+/// proof of the machine.
 pub(super) fn major_version(system: &str) -> Option<u32> {
     const LABEL: &str = "ProductVersion:";
-    let (_, rest) = system.split_once(LABEL)?;
+    let (before, rest) = system.split_once(LABEL)?;
     if rest.contains(LABEL) {
+        return None;
+    }
+    // A field name is letters, digits and `_`; the label starts one only after anything else.
+    if before
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    {
         return None;
     }
     // The value is the first word after the label, attached to it or not.

@@ -1074,6 +1074,16 @@ fn the_major_version_needs_one_complete_product_version() {
         major_version("ProductVersion: 27.2 (ProductVersion: 28.0)"),
         None
     );
+    // Fix-round review R1-4: the one label must start a field name; the end of another field's
+    // name is not a label, and any other copy anywhere still voids the text.
+    assert_eq!(major_version("TargetProductVersion: 27.2"), None);
+    assert_eq!(major_version("ÄProductVersion: 27.2"), None);
+    assert_eq!(major_version(">ProductVersion: 27.2"), Some(27));
+    assert_eq!(major_version("ProductVersion:27.2"), Some(27));
+    assert_eq!(
+        major_version("ProductVersion: 27.2\nTargetProductVersion: 28.0"),
+        None
+    );
 }
 
 /// Review round 4, BLOCKER 1: `--driver` counts only as the driver the run on R built; a file
