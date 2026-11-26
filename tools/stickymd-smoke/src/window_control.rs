@@ -1479,7 +1479,7 @@ pub(crate) fn reveal_primary_sensor(
     send_window_message(window, WM_MOUSELEAVE, 0, 0)?;
     // Windows may coalesce rapid pointer moves. Give the winit event loop a
     // full scheduling slice to observe CursorLeft before returning to the
-    // 3-DIP sensor; otherwise a long stress run can miss a synthetic enter.
+    // 2-DIP sensor; otherwise a long stress run can miss a synthetic enter.
     thread::sleep(Duration::from_millis(50));
     set_cursor_position(sensor_x, sensor_y, "hover StickyMD sensor")?;
     // A long stress loop can still have its final physical move coalesced by

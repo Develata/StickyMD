@@ -99,19 +99,18 @@ pub(crate) fn state(hwnd: WindowHandle, monitors: &[Monitor]) -> Result<State, S
     let visible = is_visible(hwnd)?;
     // SAFETY: the preceding queries validate the borrowed HWND; IsIconic copies one flag.
     let minimized = unsafe { IsIconic(hwnd.0) } != 0;
-    let strip = i64::from(dip_pixels(hwnd, 3.0)?);
+    // The product's 2 DIP sensor strip at this window's DPI (plan 09 #dock-auto-hide).
+    let strip = crate::dock_strip::strip_pixels(window_dpi(hwnd));
     let right = i64::from(rect.x) + i64::from(rect.width);
     let bottom = i64::from(rect.y) + i64::from(rect.height);
-    let collapsed = monitors.iter().any(|monitor| {
-        let w = monitor.work;
-        let wr = i64::from(w.x) + i64::from(w.width);
-        let wb = i64::from(w.y) + i64::from(w.height);
-        let vertical = rect.y >= w.y && bottom <= wb;
-        let horizontal = rect.x >= w.x && right <= wr;
-        (vertical && rect.x < w.x && right - i64::from(w.x) == strip)
-            || (vertical && right > wr && wr - i64::from(rect.x) == strip)
-            || (horizontal && rect.y < w.y && bottom - i64::from(w.y) == strip)
-    });
+    let area = |r: WindowRect| crate::dock_strip::Area {
+        x: r.x,
+        y: r.y,
+        width: r.width,
+        height: r.height,
+    };
+    let works: Vec<_> = monitors.iter().map(|monitor| area(monitor.work)).collect();
+    let collapsed = crate::dock_strip::collapsed_on(area(rect), &works, strip);
     let expanded = visible
         && !minimized
         && monitors.iter().any(|m| {

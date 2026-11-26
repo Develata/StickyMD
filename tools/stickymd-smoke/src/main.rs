@@ -7,6 +7,8 @@ use stickymd_package::{
 mod ci;
 mod cli;
 mod development;
+#[cfg(any(windows, test))]
+mod dock_strip;
 mod evidence;
 mod governance;
 mod headless;
