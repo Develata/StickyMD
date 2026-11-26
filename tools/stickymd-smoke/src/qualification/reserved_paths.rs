@@ -91,12 +91,19 @@ mod tests {
         let root = scratch.path();
         let record = std::path::Path::new("dist/evidence/release-promotion-macos.json");
         assert!(super::is_macos_source_test_path(root, record));
-        assert!(crate::qualification::validate_public_evidence_path(root, record).is_err());
+        let error = crate::qualification::validate_public_evidence_path(root, record).unwrap_err();
+        assert!(
+            error.contains("promotion-check record are owned"),
+            "{error}"
+        );
         // The ledger's entry points exist on macOS only.
         #[cfg(target_os = "macos")]
         {
             let error = crate::mac_ledger::read_whole(root, &root.join(record)).unwrap_err();
-            assert!(error.contains("release-promotion-macos.json"), "{error}");
+            assert!(
+                error.contains("release-promotion-macos.json") && error.contains("would occupy"),
+                "{error}"
+            );
         }
         let other = std::path::Path::new("dist/evidence/release-promotion-macos.json.bak");
         assert!(!super::is_macos_source_test_path(root, other));
