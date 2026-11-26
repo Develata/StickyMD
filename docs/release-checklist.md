@@ -129,8 +129,9 @@ USER 接受启动 p95 超过 550 ms、G4 首次失败后单独复测通过，以
 - [ ] checksum、SBOM、包结构、license/notices 与 source identity PASS。
 - [ ] exact EXE 的普通与 delay-load import gate PASS，无外置 developer runtime。
 - [ ] artifact 通过验证后原子 Promote 到 `dist/exact-candidate/`；失败不半更新既有 candidate。
-- [ ] Windows 发布物沿用祖先提交 S 上的构建时（`11` #platform-artifact-reuse），`release verify-reuse --platform windows-x64
-      --build-source <S> --release-source <R>` PASS，`dist/evidence/release-reuse-windows-x64.json` 已写出。
+- [ ] Windows 发布物沿用祖先提交 S 上的构建时（`11` #platform-artifact-reuse），在干净的 R 检出上（HEAD 为 R、工作树干净；否则命令在
+      判定之前即拒绝）：`release verify-reuse --platform windows-x64 --build-source <S> --release-source <R>` PASS，
+      `dist/evidence/release-reuse-windows-x64.json` 已写出。
 
 ## 2M. macOS Release Exact Artifact（Phase 18 起）
 
