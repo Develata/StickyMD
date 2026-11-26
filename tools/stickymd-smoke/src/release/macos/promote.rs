@@ -75,20 +75,11 @@ pub(crate) fn artifact_of_attempt(listing: &str, attempt: u64) -> Result<(u64, S
     }
 }
 
-/// `release` must be a full SHA contained in `origin/main`, as the release authorization names it.
+/// `release` must be a full SHA contained in `origin/main` (the remote-tracking ref itself,
+/// fix-round review R3-1), as the release authorization names it.
 pub(crate) fn check_release(root: &Path, release: &str) -> Result<(), String> {
     integrity::validate_hex(release, 40, "release commit")?;
-    let contained = crate::release::platform_inputs::git(root)
-        .args(["merge-base", "--is-ancestor", release, "origin/main"])
-        .status()
-        .map_err(|error| format!("cannot run git: {error}"))?;
-    if contained.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "release commit {release} is not contained in origin/main"
-        ))
-    }
+    crate::release::attachments::on_main(root, release)
 }
 
 /// `release`, lowercase, once it is a commit `check_release` accepts and the checkout is a clean
