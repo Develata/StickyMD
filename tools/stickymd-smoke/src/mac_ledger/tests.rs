@@ -596,6 +596,14 @@ fn one_resource_evidence_is_one_r01_and_one_r02_under_one_identity() {
             Err(error) => assert!(error.contains("one identity"), "{what}: {error}"),
         }
     }
+    // One row twice from one evidence: the read refuses it as a replay first, and the pair
+    // check (also run before an append) on its own as well.
+    let mut again = pair[0].clone();
+    if let Record::Automated { verdict, .. } = &mut again {
+        *verdict = "FAIL".into();
+    }
+    let error = super::record::resource_pairs(&[pair[0].clone(), again]).unwrap_err();
+    assert!(error.contains("two lines of P16-R01"), "{error}");
 }
 
 /// The ledger takes runs in any order: only the same evidence for a row twice is refused.
