@@ -24,6 +24,8 @@ use install::install;
 pub(super) const STAGING: &str = "dist/exact-candidate-macos";
 pub(super) const RECEIPT: &str = "dist/evidence/release-candidate-macos.json";
 pub(super) const REUSE_RECORD: &str = "dist/evidence/release-reuse-macos-arm64.json";
+/// The promotion-check record, written after the receipt (M5 gate review B2).
+pub(super) const PROMOTION_CHECK: &str = super::promotion_check::PATH;
 /// The artifact of attempt `n` is named for it, so each attempt's artifact is distinct.
 pub(super) const ARTIFACT_PREFIX: &str = "stickymd-macos-arm64-release-";
 
@@ -127,6 +129,16 @@ pub(crate) fn check_release(root: &Path, release: &str) -> Result<(), String> {
             "release commit {release} is not contained in origin/main"
         ))
     }
+}
+
+/// `release`, lowercase, once it is a commit `check_release` accepts and the checkout is a clean
+/// checkout of it, the source identity `macos-ready` requires (plan 11 #macos-release-artifact,
+/// "与发布提交的关系").
+fn on_release(root: &Path, release: &str) -> Result<String, String> {
+    check_release(root, release)?;
+    let release = release.to_ascii_lowercase();
+    super::ready::identity::require(root, &release, "macos-promote")?;
+    Ok(release)
 }
 
 /// Checks a downloaded set (the artifact's three files in `directory`) and the bundle inside,
@@ -301,10 +313,17 @@ fn checked_attempt(root: &Path, request: &Request<'_>) -> Result<String, String>
 
 /// The whole promotion, serialized by a lock. The new set is downloaded, checked and staged in a
 /// private directory first; only then is the old candidate retired and kept aside, the new one
-/// moved into place, the reuse record (if any) written, and the receipt written last. Any failure
-/// on the way puts the old candidate, receipt and record back.
+/// moved into place, the reuse record (if any) written, and the receipt written last, then the
+/// promotion-check record on R. Any failure before the receipt puts the old candidate, receipt
+/// and records back. The checkout must be a clean R at the start and again before the receipt.
 pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, String> {
-    check_release(root, request.release)?;
+    // The promotion's re-checks count only on a clean checkout of R (M5 gate review B2): before
+    // the lock is taken or anything downloaded, and again before the receipt is written.
+    let release = on_release(root, request.release)?;
+    let request = &Request {
+        release: &release,
+        ..*request
+    };
     let _lock = PromotionLock::take(root)?;
     let head = checked_attempt(root, request)?;
     let listing = gh(
@@ -397,7 +416,18 @@ pub(crate) fn promote(root: &Path, request: &Request<'_>) -> Result<String, Stri
         )),
         Reuse::SameCommit => None,
     };
-    install(root, &staged, record.as_deref(), &json)?;
+    let check =
+        super::promotion_check::render(&release, &integrity::sha256_bytes(json.as_bytes())?);
+    install(
+        root,
+        &staged,
+        install::Outputs {
+            reuse: record.as_deref(),
+            receipt: &json,
+            promotion: &check,
+        },
+        || on_release(root, &release).map(drop),
+    )?;
     if let Err(error) = download.close() {
         eprintln!("warning: promoted; the download directory was not removed: {error}");
     }
@@ -530,5 +560,108 @@ mod tests {
                 .unwrap_err()
                 .contains("more than one")
         );
+    }
+
+    fn sample_receipt() -> Receipt {
+        let hex = |digit: char| std::iter::repeat_n(digit, 64).collect::<String>();
+        Receipt {
+            source: "1".repeat(40),
+            version: "0.3.0".into(),
+            cargo_lock_sha256: hex('a'),
+            build_inputs: hex('b'),
+            run_id: 7,
+            attempt: 2,
+            artifact_id: 12,
+            artifact_name: format!("{ARTIFACT_PREFIX}2"),
+            zip_name: Platform::MacOsArm64.archive_name("0.3.0"),
+            zip_sha256: hex('c'),
+            checksums_sha256: hex('d'),
+            sbom_sha256: hex('e'),
+            facts: package::Facts {
+                zip: PathBuf::from("/Users/someone/Downloads/x.zip"),
+                zip_sha256: hex('c'),
+                source_commit: "1".repeat(40),
+                executable_sha256: hex('f'),
+                bundle_sha256: hex('0'),
+                app_inputs: hex('9'),
+                signing: "AD_HOC",
+                members: std::collections::BTreeMap::new(),
+            },
+        }
+    }
+
+    /// M5 gate review B2, sample (a): the receipt is the attempt's facts alone, with no release
+    /// commit, time or machine path, so the same attempt promoted again on R writes the same
+    /// bytes and USER records bound to its digest still stand; only the promotion-check record
+    /// names R.
+    #[test]
+    fn the_same_attempt_gives_the_same_receipt_whatever_the_release_commit() {
+        let first = sample_receipt().json();
+        assert_eq!(first, sample_receipt().json());
+        let release = "2".repeat(40);
+        assert!(!first.contains(&release), "{first}");
+        assert!(!first.contains("/Users/"), "{first}");
+        for word in ["time", "unix", "date", "release_source"] {
+            assert!(!first.contains(word), "{word}: {first}");
+        }
+        let digest = integrity::sha256_bytes(first.as_bytes()).unwrap();
+        assert_ne!(
+            super::super::promotion_check::render(&release, &digest),
+            super::super::promotion_check::render(&"3".repeat(40), &digest)
+        );
+    }
+
+    fn scratch_git(root: &Path, arguments: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(arguments)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {arguments:?}: {output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// M5 gate review B2, sample (c): a promotion is refused, before it takes the lock or
+    /// downloads anything, on a checkout whose HEAD is not R, or that is not clean.
+    #[test]
+    fn promote_refuses_a_checkout_other_than_a_clean_r() {
+        let scratch = TemporaryDirectory::new("macos-promote-identity").unwrap();
+        let root = scratch.path();
+        scratch_git(root, &["init", "-q", "-b", "main"]);
+        fs::write(root.join(".gitignore"), "/dist/\n").unwrap();
+        fs::write(root.join("a.txt"), "1").unwrap();
+        scratch_git(root, &["add", "-A"]);
+        scratch_git(root, &["commit", "-q", "-m", "r"]);
+        let r = scratch_git(root, &["rev-parse", "HEAD"]);
+        fs::write(root.join("a.txt"), "2").unwrap();
+        scratch_git(root, &["commit", "-q", "-am", "later"]);
+        let later = scratch_git(root, &["rev-parse", "HEAD"]);
+        scratch_git(root, &["update-ref", "refs/remotes/origin/main", &later]);
+        let zip = root.join("nowhere/StickyMD.zip");
+        let request = |release| Request {
+            run_id: 1,
+            attempt: 1,
+            release,
+            zip: &zip,
+        };
+        // HEAD is a later commit on origin/main, with the same version and files as R.
+        let error = promote(root, &request(&r)).unwrap_err();
+        assert!(
+            error.contains(&format!("clean checkout of {r}; HEAD is {later}")),
+            "{error}"
+        );
+        // HEAD is R, with a change in the work tree.
+        scratch_git(root, &["checkout", "-q", &r]);
+        fs::write(root.join("a.txt"), "dirty").unwrap();
+        let error = promote(root, &request(&r.to_ascii_uppercase())).unwrap_err();
+        assert!(error.contains("the work tree or index differs"), "{error}");
+        assert!(!root.join("dist").exists(), "nothing was locked or staged");
+        // A clean checkout of R passes, its commit named in any case.
+        scratch_git(root, &["checkout", "-q", "--", "a.txt"]);
+        assert_eq!(on_release(root, &r.to_ascii_uppercase()).unwrap(), r);
     }
 }

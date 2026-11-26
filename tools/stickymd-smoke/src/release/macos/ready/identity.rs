@@ -7,7 +7,7 @@
 use std::path::Path;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Identity {
+pub(in crate::release::macos) struct Identity {
     pub head: String,
     pub clean: bool,
     /// Why the checkout is not clean, when it is not.
@@ -98,7 +98,11 @@ pub(super) fn capture(root: &Path) -> Result<Identity, String> {
 }
 
 /// A clean checkout of `release`, or why not.
-pub(super) fn require(root: &Path, release: &str, what: &str) -> Result<Identity, String> {
+pub(in crate::release::macos) fn require(
+    root: &Path,
+    release: &str,
+    what: &str,
+) -> Result<Identity, String> {
     let identity = capture(root)?;
     if identity.head != release || !identity.clean {
         return Err(format!(

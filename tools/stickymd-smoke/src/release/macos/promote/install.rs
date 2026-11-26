@@ -1,10 +1,10 @@
-//! The swap that installs a prepared macOS candidate: the old receipt and record are retired,
+//! The swap that installs a prepared macOS candidate: the old receipt and records are retired,
 //! the old candidate is set aside, the new one moved in and the receipt written last; a failure
-//! before the receipt undoes every step.
+//! before the receipt undoes every step. The promotion-check record follows the receipt.
 //! plan_ref: docs/plan/11_testing_and_release.md#macos-release-artifact
 
 use super::super::content;
-use super::{RECEIPT, REUSE_RECORD, STAGING};
+use super::{PROMOTION_CHECK, RECEIPT, REUSE_RECORD, STAGING};
 use crate::atomic_evidence;
 use std::fs;
 use std::path::Path;
@@ -13,6 +13,7 @@ use std::path::Path;
 enum Step {
     ReceiptRetired(Vec<u8>),
     RecordRetired(Vec<u8>),
+    PromotionRetired(Vec<u8>),
     OldSetAside,
     NewInPlace,
     RecordWritten,
@@ -28,26 +29,39 @@ fn existing(path: &Path) -> Result<Option<Vec<u8>>, String> {
     }
 }
 
+/// What `install` writes: the reuse record (when the candidate was built on an ancestor), the
+/// receipt, and the promotion-check record on R.
+pub(super) struct Outputs<'a> {
+    pub reuse: Option<&'a str>,
+    pub receipt: &'a str,
+    pub promotion: &'a str,
+}
+
 /// Swaps the prepared candidate in. The receipt is retired first, so from then on the resolver
-/// refuses the staging directory; the old candidate is kept aside; the new one moves in, then
-/// the reuse record, and the receipt last: writing it is the commit. A failure before that
-/// undoes every step in reverse order (the old receipt last) and reports any step it could not
-/// undo. After the commit, leftover cleanup is only reported: the new candidate stands.
+/// refuses the staging directory, and the old records with it; the old candidate is kept aside;
+/// the new one moves in, then the reuse record, then `confirm` runs (the source identity is
+/// still a clean R, M5 gate review B2), and the receipt is written last: writing it is the
+/// commit. A failure before that undoes every step in reverse order (the old receipt last) and
+/// reports any step it could not undo. After the commit the promotion-check record is written:
+/// if it cannot be, the new candidate stands and the error says to promote again on R; leftover
+/// cleanup is only reported.
 pub(super) fn install(
     root: &Path,
     staged: &Path,
-    record: Option<&str>,
-    receipt: &str,
+    outputs: Outputs<'_>,
+    confirm: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     let target = root.join(STAGING);
     let receipt_path = root.join(RECEIPT);
     let record_path = root.join(REUSE_RECORD);
+    let promotion_path = root.join(PROMOTION_CHECK);
     let aside = root.join(format!(
         "dist/.exact-candidate-macos-old-{}",
         std::process::id()
     ));
     let old_receipt = existing(&receipt_path)?;
     let old_record = existing(&record_path)?;
+    let old_promotion = existing(&promotion_path)?;
     let mut done = Vec::new();
     let io = |what: &str, error: std::io::Error| format!("cannot {what}: {error}");
     let outcome = (|| {
@@ -59,6 +73,11 @@ pub(super) fn install(
             fs::remove_file(&record_path).map_err(|error| io("retire the reuse record", error))?;
             done.push(Step::RecordRetired(bytes));
         }
+        if let Some(bytes) = old_promotion {
+            fs::remove_file(&promotion_path)
+                .map_err(|error| io("retire the promotion-check record", error))?;
+            done.push(Step::PromotionRetired(bytes));
+        }
         if target.exists() {
             fs::rename(&target, &aside)
                 .map_err(|error| io("set the old candidate aside", error))?;
@@ -66,11 +85,12 @@ pub(super) fn install(
         }
         fs::rename(staged, &target).map_err(|error| io("move the candidate into place", error))?;
         done.push(Step::NewInPlace);
-        if let Some(record) = record {
+        if let Some(record) = outputs.reuse {
             atomic_evidence::write(&record_path, record.as_bytes())?;
             done.push(Step::RecordWritten);
         }
-        atomic_evidence::write(&receipt_path, receipt.as_bytes())
+        confirm()?;
+        atomic_evidence::write(&receipt_path, outputs.receipt.as_bytes())
     })();
     if let Err(error) = outcome {
         let mut failures = Vec::new();
@@ -79,6 +99,7 @@ pub(super) fn install(
                 Step::RecordWritten => fs::remove_file(&record_path).map_err(|e| e.to_string()),
                 Step::NewInPlace => fs::remove_dir_all(&target).map_err(|e| e.to_string()),
                 Step::OldSetAside => fs::rename(&aside, &target).map_err(|e| e.to_string()),
+                Step::PromotionRetired(bytes) => atomic_evidence::write(&promotion_path, &bytes),
                 Step::RecordRetired(bytes) => atomic_evidence::write(&record_path, &bytes),
                 Step::ReceiptRetired(bytes) => atomic_evidence::write(&receipt_path, &bytes),
             };
@@ -96,6 +117,7 @@ pub(super) fn install(
             )
         });
     }
+    let recorded = atomic_evidence::write(&promotion_path, outputs.promotion.as_bytes());
     if aside.exists() {
         // Only what a promotion writes is removed: a note written beside the staged `.app` is
         // the user's (M5 gate review B9; AGENTS.md: never delete user files).
@@ -113,7 +135,11 @@ pub(super) fn install(
             );
         }
     }
-    Ok(())
+    recorded.map_err(|error| {
+        format!(
+            "the new candidate stands (its receipt is written), but the promotion-check record {PROMOTION_CHECK} is not: {error}; promote again on R before macos-ready"
+        )
+    })
 }
 
 /// The first entry under `directory` (an old staging directory; `relative` is its path inside
@@ -177,21 +203,42 @@ mod tests {
     /// A file every promotion writes, which tells the old candidate from the new one.
     const MARKER: &str = super::super::content::README;
 
+    /// An old candidate, its receipt, its promotion-check record and maybe a reuse record.
     fn tree(root: &Path, candidate: &str, receipt: &str, record: Option<&str>) {
         fs::create_dir_all(root.join(STAGING).join("StickyMD")).unwrap();
         fs::write(root.join(STAGING).join(MARKER), candidate).unwrap();
         fs::create_dir_all(root.join("dist/evidence")).unwrap();
         fs::write(root.join(RECEIPT), receipt).unwrap();
+        fs::write(root.join(PROMOTION_CHECK), "old check").unwrap();
         if let Some(record) = record {
             fs::write(root.join(REUSE_RECORD), record).unwrap();
         }
     }
 
-    fn read(root: &Path) -> (String, String, Option<String>) {
+    /// The candidate's marker, the receipt, the reuse record and the promotion-check record.
+    fn read(root: &Path) -> (String, String, Option<String>, Option<String>) {
         (
             fs::read_to_string(root.join(STAGING).join(MARKER)).unwrap(),
             fs::read_to_string(root.join(RECEIPT)).unwrap(),
             fs::read_to_string(root.join(REUSE_RECORD)).ok(),
+            fs::read_to_string(root.join(PROMOTION_CHECK)).ok(),
+        )
+    }
+
+    fn outputs<'a>(reuse: Option<&'a str>) -> Outputs<'a> {
+        Outputs {
+            reuse,
+            receipt: "new receipt",
+            promotion: "new check",
+        }
+    }
+
+    fn old() -> (String, String, Option<String>, Option<String>) {
+        (
+            "old".into(),
+            "old receipt".into(),
+            Some("old record".into()),
+            Some("old check".into()),
         )
     }
 
@@ -218,9 +265,18 @@ mod tests {
         let staged = root.join("dist/.new");
         fs::create_dir_all(staged.join("StickyMD")).unwrap();
         fs::write(staged.join(MARKER), "new").unwrap();
-        install(root, &staged, None, "new receipt").unwrap();
-        // Same-commit promotion: the old ancestor record must not survive beside the new receipt.
-        assert_eq!(read(root), ("new".into(), "new receipt".into(), None));
+        install(root, &staged, outputs(None), || Ok(())).unwrap();
+        // Same-commit promotion: the old ancestor record must not survive beside the new receipt;
+        // the promotion-check record is the new one.
+        assert_eq!(
+            read(root),
+            (
+                "new".into(),
+                "new receipt".into(),
+                None,
+                Some("new check".into())
+            )
+        );
         assert!(!staged.exists());
         let leftovers = fs::read_dir(root.join("dist"))
             .unwrap()
@@ -258,7 +314,7 @@ mod tests {
         let staged = root.join("dist/.new");
         fs::create_dir_all(staged.join("StickyMD")).unwrap();
         fs::write(staged.join(MARKER), "new").unwrap();
-        install(root, &staged, None, "new receipt").unwrap();
+        install(root, &staged, outputs(None), || Ok(())).unwrap();
         assert_eq!(read(root).0, "new");
         let [kept] = set_aside(root).try_into().unwrap();
         assert_eq!(
@@ -276,19 +332,55 @@ mod tests {
         let error = install(
             root,
             &root.join("dist/.gone"),
-            Some("new record"),
-            "new receipt",
+            outputs(Some("new record")),
+            || Ok(()),
         )
         .unwrap_err();
         assert!(error.contains("into place"), "{error}");
-        assert_eq!(
-            read(root),
-            (
-                "old".into(),
-                "old receipt".into(),
-                Some("old record".into())
-            )
+        assert_eq!(read(root), old());
+    }
+
+    /// M5 gate review B2: the source identity is checked again just before the receipt is
+    /// written; a checkout that stopped being a clean R leaves the old candidate, its receipt
+    /// and both records as they were, and removes the prepared candidate.
+    #[test]
+    fn a_checkout_that_is_no_longer_r_stops_install_before_the_receipt() {
+        let scratch = TemporaryDirectory::new("macos-install-identity").unwrap();
+        let root = scratch.path();
+        tree(root, "old", "old receipt", Some("old record"));
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(staged.join("StickyMD")).unwrap();
+        fs::write(staged.join(MARKER), "new").unwrap();
+        let error = install(root, &staged, outputs(Some("new record")), || {
+            Err("macos-promote runs on a clean checkout of R".to_owned())
+        })
+        .unwrap_err();
+        assert!(error.contains("clean checkout"), "{error}");
+        assert_eq!(read(root), old());
+        assert!(!staged.exists());
+    }
+
+    /// M5 gate review B2: the promotion-check record is written after the receipt; when it
+    /// cannot be, the new candidate stands and the error says to promote again on R.
+    #[test]
+    fn a_promotion_check_that_cannot_be_written_leaves_the_new_candidate() {
+        let scratch = TemporaryDirectory::new("macos-install-check").unwrap();
+        let root = scratch.path();
+        tree(root, "old", "old receipt", None);
+        let staged = root.join("dist/.new");
+        fs::create_dir_all(staged.join("StickyMD")).unwrap();
+        fs::write(staged.join(MARKER), "new").unwrap();
+        // Something takes the record's place after the old record was retired.
+        let error = install(root, &staged, outputs(None), || {
+            fs::create_dir(root.join(PROMOTION_CHECK)).map_err(|error| error.to_string())
+        })
+        .unwrap_err();
+        assert!(
+            error.contains("the new candidate stands") && error.contains("promote again on R"),
+            "{error}"
         );
+        assert_eq!(read(root).0, "new");
+        assert_eq!(read(root).1, "new receipt");
     }
 
     #[test]
@@ -301,7 +393,7 @@ mod tests {
         fs::create_dir(root.join(RECEIPT)).unwrap();
         let staged = root.join("dist/.new");
         fs::create_dir_all(&staged).unwrap();
-        assert!(install(root, &staged, None, "new receipt").is_err());
+        assert!(install(root, &staged, outputs(None), || Ok(())).is_err());
         assert_eq!(
             fs::read_to_string(root.join(STAGING).join(MARKER)).unwrap(),
             "old"

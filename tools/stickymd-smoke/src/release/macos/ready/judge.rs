@@ -11,6 +11,7 @@ use super::receipts::{self, Wanted};
 use super::rows::{Class, ROWS};
 use super::source_tests::{self, Outcome};
 use crate::mac_ledger::record::{Built, Record};
+use crate::release::macos::promotion_check::{self, Check};
 
 /// The resolved candidate: the digest of its receipt, its two byte identities and its signing.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,6 +39,10 @@ pub(super) struct Inputs<'a> {
     /// shown to be the driver the run on R built; otherwise why not (review round 4, BLOCKER 1).
     pub driver: Result<&'a str, &'a str>,
     pub candidate: Read<&'a Candidate>,
+    /// The promotion-check record on R (#macos-release-artifact): it must name R and the receipt
+    /// the resolver read, or the package is NOT TESTED until the candidate is promoted again on
+    /// R (M5 gate review B2).
+    pub promotion: Read<&'a Check>,
     pub ledger: Read<&'a [Record]>,
     pub source_tests: Read<&'a source_tests::Receipt>,
     /// R's test binaries and doc-tested libraries, listed on R by `cargo metadata` apart from the
@@ -104,14 +109,17 @@ pub(super) fn ready(lines: &[Line]) -> bool {
 
 pub(super) fn judge(inputs: &Inputs<'_>) -> Vec<Line> {
     let package = match &inputs.candidate {
-        Read::Present(candidate) => line(
-            "package",
-            Verdict::Pass,
-            format!(
-                "the staged candidate matches receipt {} (signing AD_HOC)",
-                candidate.receipt_sha256
+        Read::Present(candidate) => match promoted_on_r(inputs, candidate) {
+            Ok(()) => line(
+                "package",
+                Verdict::Pass,
+                format!(
+                    "the staged candidate matches receipt {} (signing AD_HOC), promoted on R",
+                    candidate.receipt_sha256
+                ),
             ),
-        ),
+            Err(reason) => line("package", Verdict::NotTested, reason),
+        },
         Read::Missing(reason) => line("package", Verdict::NotTested, reason.clone()),
         Read::Invalid(reason) => line("package", Verdict::Fail, reason.clone()),
     };
@@ -360,6 +368,46 @@ fn download(inputs: &Inputs<'_>) -> Line {
             inputs.macos_major
         ),
     )
+}
+
+/// Whether the promotion's own re-checks ran on R for the receipt the resolver read (plan 11
+/// #macos-readiness-check, step 3): the record must name both, or why not.
+fn promoted_on_r(inputs: &Inputs<'_>, candidate: &Candidate) -> Result<(), String> {
+    let path = promotion_check::PATH;
+    match &inputs.promotion {
+        Read::Present(check) if check.release_source != inputs.release => Err(format!(
+            "the promotion-check record {path} says the promotion was checked on {}, not on R: promote the candidate again on R",
+            check.release_source
+        )),
+        Read::Present(check) if check.candidate_receipt_sha256 != candidate.receipt_sha256 => {
+            Err(format!(
+                "the promotion-check record {path} names another candidate receipt ({}): promote the candidate again on R",
+                check.candidate_receipt_sha256
+            ))
+        }
+        Read::Present(_) => Ok(()),
+        Read::Missing(reason) | Read::Invalid(reason) => Err(reason.clone()),
+    }
+}
+
+/// The promotion-check record as read: absent, its bytes, or why it could not be read. Every
+/// reason names the record, so the package line says what to redo.
+pub(super) fn read_promotion(found: Result<Option<Vec<u8>>, String>) -> Read<Check> {
+    let path = promotion_check::PATH;
+    match found {
+        Ok(None) => Read::Missing(format!(
+            "no promotion-check record {path}: promote the candidate again on R"
+        )),
+        Ok(Some(bytes)) => match promotion_check::parse(&bytes) {
+            Ok(check) => Read::Present(check),
+            Err(error) => Read::Invalid(format!(
+                "the promotion-check record {path} is unreadable ({error}): promote the candidate again on R"
+            )),
+        },
+        Err(error) => Read::Invalid(format!(
+            "the promotion-check record {path} cannot be read ({error})"
+        )),
+    }
 }
 
 /// The ledger and candidate both present, or the line saying which is not.
