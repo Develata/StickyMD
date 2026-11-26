@@ -258,6 +258,8 @@ fn resources_evidence_outside_the_vm_unfinished_old_or_inconsistent_is_refused()
             "\"schema_version\":8",
             "is not of schema 7, the one this reader knows",
         ),
+        // A VALID run with no real process (gate review D5).
+        ("\"pid\":4242", "\"pid\":0", "names no process"),
         // A run's status changed while the rows still say PASS.
         (
             "\"status\":\"VALID\"",
