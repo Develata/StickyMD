@@ -32,7 +32,8 @@ Codex 自评的 BLOCKER 共 27 项，去重后 23 项。其余 19 项逐项核�
   - 每条发现须同时标注两项：是否需要对手（honest-path / needs-adversary），以及是错误接受、过度拒绝还是其他；
   - 输出不超过约 400 行。
 - **运行结果。** 五次都以 0 退出，各 18–29 分钟。首尾 HEAD 都是 `82bf466`，五份都是完整的审查，不是确认回复。
-  - A、B、D、E 的 stderr 各有一行 `context compacted`。压缩发生在读代码途中，结论仍完整。
+  - A、B、D、E 的 stderr 各有一行 `context compacted`，即上下文在审查途中被压缩过。审查文字是完整的，但不能排除压缩丢掉了部分已读的代码，
+    所以这四个分区的覆盖可能比各自的“Not covered”写的更少。
   - C 的第一次启动因 `timeout` 的链接失效以 127 退出，不带时限重跑后完成。
 - 五份原文的 SHA-256 前缀：A `e4730e53`、B `568bd705`、C `cb57002d`、D `3732e910`、E `a949e623`。
 
@@ -40,36 +41,36 @@ Codex 自评的 BLOCKER 共 27 项，去重后 23 项。其余 19 项逐项核�
 
 | # | 来源 | 问题 | 核实 | 定级理由 |
 | --- | --- | --- | --- | --- |
-| 1 | A1 | 忽略测试的归类表还写着旧名：`source_tests/ignored.rs:125` 是 `math_action::tests::phase11b_performance_math_action_stays_linear_in_shifted_paragraphs`，而这个测试在 `192d7a3`（#27，Comrak 1.2 升级）中已改名为 `…_after_reference_definitions`（`crates/stickymd-render/src/math_action.rs:916`） | 已核实（`rg` 与 `git log -S`） | 收据中 `stickymd-render` 库目标的 `--list --ignored` 必然列出新名字，按 `11` 判定 3（“清单列为 ignored 的每个测试都须在核对程序的归类表中……否则为 `NOT TESTED`”）源码测试行为 `NOT TESTED`；它不可 waiver，26 个 P16 源码行随之不成立。现有测试只查表内唯一与显式运行的角色，不对照真实的忽略测试 |
-| 2 | A2 = E1 | 源码测试的目标发现、`--list`、主运行与显式运行都用默认构建目录（`source_tests/run.rs:269`、`:353`、`:417`、`:537`）；只有 `mac-gui` 驱动先清空 `target/macos-driver`（`:220`–`:234`） | 机制已核实：Cargo 对路径依赖按修改时间判断是否需要重建 | 只要构建目录中留着另一份源码编出、修改时间更新的产物（恢复或复制过的检出），旧测试程序就会被当作最新，其清单与结果自洽。修复轮 BLOCKER 1 对驱动的同类问题已按 honest-path 处理，这里同样处理 |
-| 3 | B2 | `macos-promote --release-source <R>` 只检查 R 包含在 `origin/main` 中（`release/macos/promote.rs:114` `check_release`），不检查 HEAD 是否为干净的 R | 已核实 | `11` 第 1116 行：“源码测试与受影响的门的通过结论只认 R 上的运行……macOS 是 #macos-release-gate 的‘R 上的源码测试’与晋升的重新校验”。在别的检出上做的晋升，`macos-ready` 无从分辨：它在 R 上只重验字节，不重做晋升独有的 attempt 查询、按 artifact id 下载与对比 USER 副本 |
+| 1 | A1 | 忽略测试的归类表还写着旧名：`source_tests/ignored.rs:125` 是 `math_action::tests::phase11b_performance_math_action_stays_linear_in_shifted_paragraphs`，而这个测试在 `192d7a3`（#27，Comrak 1.2 升级）中已改名为 `…_after_reference_definitions`（`crates/stickymd-render/src/math_action.rs:916`） | 已核实并实测：`git log -S` 找到改名的提交；`cargo test --locked -p stickymd-render --lib -- --list --ignored --format terse` 列出的是新名字 | 收据中 `stickymd-render` 库目标的 `--list --ignored` 必然列出新名字，按 `11` 判定 3（“清单列为 ignored 的每个测试都须在核对程序的归类表中……否则为 `NOT TESTED`”）源码测试行为 `NOT TESTED`；它不可 waiver，26 个 P16 源码行随之不成立。现有测试只查表内唯一与显式运行的角色，不对照真实的忽略测试 |
+| 2 | A2 = E1 | 源码测试的目标发现、`--list`、主运行与显式运行都用默认构建目录（`source_tests/run.rs:269`、`:353`、`:417`、`:537`）；只有 `mac-gui` 驱动先清空 `target/macos-driver`（`:220`–`:234`） | 已核实：规定命令 `source_tests.rs:169` 不带 `--target-dir`，运行器也不设 `CARGO_TARGET_DIR`（`run.rs` 只设 `CARGO_TERM_COLOR` 与卷报告）；Cargo 对路径依赖按修改时间判断是否需要重建（据 Codex 所引 Cargo 源码，未实测） | 只要构建目录中留着另一份源码编出、修改时间更新的产物（恢复或复制过的检出），旧测试程序就会被当作最新，其清单与结果自洽。修复轮 BLOCKER 1 对驱动的同类问题已按 honest-path 处理，这里同样处理 |
+| 3 | B2 | `macos-promote --release-source <R>` 只检查 R 包含在 `origin/main` 中（`release/macos/promote.rs:114` `check_release`），不检查 HEAD 是否为干净的 R | 已核实：入口 `promote.rs:303` 只调用 `check_release`、取晋升锁，再由 `checked_attempt`（`:268`）核对 GitHub 上 attempt 的来源与结论，全程不读本地 HEAD 与工作树 | `11` 第 1116 行：“源码测试与受影响的门的通过结论只认 R 上的运行……macOS 是 #macos-release-gate 的‘R 上的源码测试’与晋升的重新校验”。在别的检出上做的晋升，`macos-ready` 无从分辨：它在 R 上只重验字节，不重做晋升独有的 attempt 查询、按 artifact id 下载与对比 USER 副本 |
 | 4 | D2 = E5 | `mac-gui` 中，启动产品之前的错误（会话目录、`ditto` 复制、副本可执行文件或 bundle 清单不符）都经 `Ok(Err(error)) => row.check("execution", false, error)` 记成产品 FAIL（`mac_gui/runner.rs:170`），运行照样标 `finished`；`record` 只拒绝观察恰为 `not started` 的行（`mac_ledger/record/evidence.rs:124`） | 已核实 | 例如临时卷空间不够、`ditto` 失败，就能留下 W01、F01 等人工行在候选字节上的 FAIL。`judge.rs` 的人工行在收据与 waiver 之前先看任何身份下的 FAIL（`ready/judge.rs:255`），而 `revoke` 对程序结果只撤销 PASS，所以同一候选没有文档内的恢复办法，只能换候选。R03 已把同类错误判为“机器的、未测”（`runner.rs:166`），其余行没有 |
 
 ## 降级或不成立的 BLOCKER 声明
 
-“已核实”指我按所引位置读过代码，“未复现”指没有实际运行。降级的项仍建议修复，代价小的已标出。
+“已核实”指我按所引位置读过代码，“未核实”指只有 Codex 的原文；除特别注明外都没有实际运行。降级的项仍建议修复，代价小的已标出。
 
 | 来源 | 问题 | 核实 | 定级与理由 |
 | --- | --- | --- | --- |
-| A3 | 从备份恢复整个 `dist/evidence` 后，旧的 S06 PASS 重新成立 | 机制属实 | **不是 BLOCKER。** 这是对本地证据的回滚，锁与运行记录都在同一目录中，任何同目录设计都挡不住。建议把“证据目录被整体回滚”写进“不证明的前提”（改 plan，须你批准） |
+| A3 | 从备份恢复整个 `dist/evidence` 后，旧的 S06 PASS 重新成立 | 未核实（据 Codex 原文；锁、运行记录与收据同在 `dist/evidence` 下是已知设计） | **不是 BLOCKER。** 这是对本地证据的回滚，锁与运行记录都在同一目录中，任何同目录设计都挡不住。建议把“证据目录被整体回滚”写进“不证明的前提”（改 plan，须你批准） |
 | C1 = E2 | 账本缺锁时，一次失败的 `record` 先建锁，之后核对就读这份账本；核对的报错文字还建议手建空锁（`mac_ledger/run.rs:42`、`:132`、`:158`） | 机制属实 | **不是 BLOCKER。** 锁的作用是挡并发写，它证明不了账本是新的：从备份连锁一起恢复旧账本，结果相同。可作 NICE：账本已存在而锁不存在时，写端同样拒绝 |
 | B1 | 第二次解析与晋升并发时，可能打印已被替换的旧候选的结论；`macos-ready` 不取晋升锁 | 已核实（晋升锁在 `promote.rs:235`，核对不取） | SHOULD_FIX：要两条命令并发。代价小：核对在最后一次解析与输出期间持晋升锁的共享锁，并把源码身份的复查移到解析之后 |
-| B3 | `--system` 材料中不在词首的第二个 `ProductVersion:` 不计数（`ready/receipts.rs:98`） | 已核实 | SHOULD_FIX：`sw_vers > 文件` 写不出这种材料，要手工拼接。代价小 |
-| B4 | 包检查只查 `SIL-OFL-1.1.txt` 存在，不查内容 | 已核实 | SHOULD_FIX：这是发布输入的回归，文件在仓库中受审；契约只要求“附带相应声明”。是否钉正文摘要须你定 |
+| B3 | `--system` 材料中不在词首的第二个 `ProductVersion:` 不计数（`ready/receipts.rs:98` 按空白分词，只数以标签开头的词） | 已核实 | SHOULD_FIX：`sw_vers > 文件` 写不出这种材料，要手工拼接。代价小 |
+| B4 | 包检查只查 `SIL-OFL-1.1.txt` 存在，不查内容 | 已核实：打包时把仓库文件规范化后写入（`tools/stickymd-package/src/macos/package.rs:254`），解包检查只比对成员名单（`content::check_files`） | SHOULD_FIX：这是发布输入的回归，文件在仓库中受审；契约只要求“附带相应声明”。是否钉正文摘要须你定 |
 | C2 | 资源证据的 R01、R02 两行，账本只剩前一行也能读入（测试 `mac_ledger/producer_tests.rs` 明确断言单行可读） | 已核实 | SHOULD_FIX：要截断或拼接账本，原子写入不会产生。代价小：读完整本后，按证据摘要核对两行成对 |
-| C3 | 用 v0.2.0 的 `mac-ledger record` 导入未完成的检查点，现行门会采信其中的 PASS | 未复现 | SHOULD_FIX：要用旧版工具。修复需要记录版本标记（设计，须你定） |
-| C4 | `--ledger` 选中正式锁文件，并与核对并发，可替换正在使用的锁 | 未复现 | SHOULD_FIX：要误选锁文件且并发。代价小：保留路径中加入锁文件名 |
-| C5 | `--ledger dist/new/../link` 在建上级目录之后跟随符号链接 | 未复现 | SHOULD_FIX：要事先摆好指向账本的链接 |
-| C6 | `automated`、`resources`、`manual` 记录忽略未知字段（`mac_ledger/record/codec.rs:115`）；契约要求“每种记录恰有其字段” | 已核实 | SHOULD_FIX：要手改账本。属契约漂移，代价小 |
+| C3 | 用 v0.2.0 的 `mac-ledger record` 导入未完成的检查点，现行门会采信其中的 PASS | 未核实（据 Codex 原文） | SHOULD_FIX：要用旧版工具。修复需要记录版本标记（设计，须你定） |
+| C4 | `--ledger` 选中正式锁文件，并与核对并发，可替换正在使用的锁 | 未核实（据 Codex 原文） | SHOULD_FIX：要误选锁文件且并发。代价小：保留路径中加入锁文件名 |
+| C5 | `--ledger dist/new/../link` 在建上级目录之后跟随符号链接 | 未核实（据 Codex 原文） | SHOULD_FIX：要事先摆好指向账本的链接 |
+| C6 | `automated`、`resources`、`manual` 记录忽略未知字段（`mac_ledger/record/codec.rs:115` 起逐个取已知字段，不核对字段集合）；契约要求“每种记录恰有其字段” | 已核实 | SHOULD_FIX：要手改账本。属契约漂移，代价小 |
 | C7 | 名字段不合语法、摘要合法的镜像引用，按摘要得到身份 | 已核实（`record.rs:104` 只取摘要） | SHOULD_FIX：身份本来就由摘要决定，判定不变；契约字面要求名字不合语法时为“身份不明” |
 | D1 = E3 | `mac-logout` 对原 `.app` 取 bundle 摘要后复制，只复核副本的可执行文件（`mac_gui/logout/live.rs:268`，`mac_common/fixture.rs:31`），证据写的是原件的 bundle 摘要 | 已核实 | SHOULD_FIX：要输入的 bundle 在这次运行中被改动。但它与 `mac-gui` 主路径（`runner.rs:420` 复核副本清单）和 `mac-resources` 不一致，修复只需照抄两行，冻结前应修 |
 | D3 | 视图诊断的“完整”只看 `preview_frame.is_some()`，而绘制时尺寸不符的预览帧会画占位（`crates/stickymd-desktop/src/shell/render.rs:177`、`:243`） | 已核实 | SHOULD_FIX：报告的视图取自窗格布局，仍然正确；偏差只在“第一个真实帧”的时机，不改变资源行的判定 |
-| D4 | 采样时不核对窗口仍在屏 | 已核实 | SHOULD_FIX：契约没有这项要求，只有产品回归才触发；是否补进契约须你定 |
+| D4 | 采样时不核对窗口仍在屏 | 已核实：`mac_resources/runner.rs:393` 只对 Hidden 调用 `stays_hidden`，可见场景在采样时不查窗口 | SHOULD_FIX：契约没有这项要求，只有产品回归才触发；是否补进契约须你定 |
 | D5 | 第一次到中间一次的计数不查单调（`mac_resources/rows.rs:62` 只查中间一次到最后一次），`pid:0`、负的等待时长都可通过 | 已核实 | SHOULD_FIX：要伪造证据（同一进程的累计计数不会减少）。契约明文要求，代价小 |
-| D6 | 30 s 就绪期限在产品 `spawn` 之后才开始计时 | 已核实 | NICE：差距只有返回所需的时间 |
-| D7 | 时间戳在读完计数之后才取 | 未复现 | SHOULD_FIX（契约字面）：上界取自更长的实际窗口，仍偏保守，不产生错误的 PASS；最坏是一次本应作废的运行仍计入 |
+| D6 | 30 s 就绪期限在产品 `spawn` 之后才开始计时 | 已核实：`spawn` 在 `mac_resources/runner.rs:214`，计时起点 `started = Instant::now()` 在 `:343` | NICE：两者之间只隔一次函数返回（推断，未测） |
+| D7 | 时间戳在读完计数之后才取 | 未核实（据 Codex 原文） | SHOULD_FIX（契约字面）。以下是推断：上界取自更长的实际窗口，仍偏保守，不产生错误的 PASS；但一次本应作废的运行可能仍计入，下界也可能包含超过 60 s 的 CPU，造成错误的 FAIL（过度拒绝） |
 | D8 | R03 仍接受产品已不再使用的旧建议“请先用访达把 StickyMD.app 移到别处”，且提示文字只按子串检查 | 已核实（产品中已无此句；`mac_gui/tests.rs:1578` 用 `any` 核对） | SHOULD_FIX：产品文字另有自己的测试（`apps/stickymd-mac/src/paths.rs:307`）。代价小：删掉旧句 |
-| E4 | W12 的三条注销行可以来自同一次开机：账本不记 `boot_session` | 已核实 | SHOULD_FIX：契约要求“各在一次新开机的虚拟机中运行”，但恢复快照得到的会话状态与新开机等价。是否记录并比较 `boot_session`（改账本格式）须你定 |
+| E4 | W12 的三条注销行可以来自同一次开机：账本不记 `boot_session` | 已核实：证据写 `boot_session`（`mac_gui/logout/live.rs:305`），`record/evidence.rs` 只取 `case`，`record/codec.rs` 没有这个字段 | SHOULD_FIX：契约要求“各在一次新开机的虚拟机中运行”。恢复快照得到的会话状态与新开机等价，这一点是推断，未验证。是否记录并比较 `boot_session`（改账本格式）须你定 |
 
 ## 其余发现（SHOULD_FIX、NICE、NEEDS_VERIFICATION）
 
@@ -110,6 +111,28 @@ Codex 自评的 BLOCKER 共 27 项，去重后 23 项。其余 19 项逐项核�
 
 其中 B9（自动删除用户的便签）与 D13（诊断开启时产品可能 panic）虽不改变门的判定，但触及 `AGENTS.md` 的数据与稳定性禁令，建议与 BLOCKER 一起修。
 
+## 覆盖范围
+
+**各分区自述未审的部分**（据原文）：
+- 全部五次都没有构建、运行测试、启动虚拟机或触发 workflow，也没有读取实际的候选 ZIP、账本与 USER 收据。
+- A：没有实测运行器的并发交错，也没有取得两个宿主进程互斥、提示后退出的现场证据。
+- B：A、C、D、E 的实现只沿 B 的调用链看过；没有动态复现并发时序。
+- C：16 个文件都审过；没有在真实 APFS、虚拟机或候选上复现。
+- D：`mac_gui/latency/runner.rs` 与 `mac_gui/logout/live.rs` 只审到字节身份与结果归属，延迟模型与三种注销场景的业务断言没有完整审计。
+- E：没有穷举以下各项：
+  - `source_tests/output.rs` 的全部 libtest 文本形式；
+  - `mac_resources/rows.rs` 的数值边界；
+  - `translocation/live.rs` 的 Darwin 事件行为；
+  - SBOM 校验器的完整 SPDX 语义。
+
+  `#release-attachment-set` 只核对了 macOS 三件附件与两边就绪的关系，没有审 Windows readiness，也没有审远端六件附件的发布事务。
+
+**没有分配给任何分区的部分：**
+- `mac-gui` 中 W02–W12、K02、E01 各场景本身的断言（`mac_gui/scenarios.rs`、`hover.rs`、`editing.rs`、`lifecycle.rs` 等）。
+  它们决定一条 PASS 是否名副其实，但属于 Phase 16 的产品验收，不是门的判定逻辑。
+- `mac-latency` 的模型。
+- 平台构建输入指纹与沿用规则中，晋升与 `macos-ready` 不调用的部分（`release/platform_inputs*` 的其余代码；已在 #20、#21 审过）。
+
 ## 需要 Develata 决定
 
 1. **定级。** 是否接受上表的降级（19 项不算 BLOCKER）。
@@ -121,6 +144,8 @@ Codex 自评的 BLOCKER 共 27 项，去重后 23 项。其余 19 项逐项核�
    “R 上的晋升复核”记录，绑定 R 与候选收据的摘要，核对时读它。这改变 `11` #macos-release-artifact 的流程，属于须你批准的合同改动。
 4. **修复之后的复审。** 按“完整复审没有 BLOCKER 才冻结 R”的规则，本轮不满足。可以选：
    - 修完只审修复的差异，没有 BLOCKER 即冻结；
+   - 修完审修复的差异，同时补审上节“没有分配给任何分区的部分”中属于门的代码（沿用规则的其余部分）；
    - 再做一次完整的整门复审。
 
-   前几轮的经验是，每次完整复审都会有新的、越来越依赖对手的声明。
+   建议第二种：完整复审已经做过，按上述威胁模型确认的 BLOCKER 只有 4 项；而前几轮的经验是，每次完整复审都会带来新的、越来越依赖对手的声明。
+   代价是：本轮压缩过的四个分区如果漏看了什么，修复差异的审查也补不回来。
