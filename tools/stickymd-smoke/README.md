@@ -671,7 +671,7 @@ running and never stands for a FAIL. R03 cannot PASS until its probe runs on the
 a FAIL of R03 in the batch is a FAIL, otherwise it is `NOT_TESTED`
 ([M5 report](../../docs/report/2026-11-24-m5-macos-readiness-check.md)). A plain `mac-gui` row
 holds when one identity has a clean run even if another failed (the approved grouping rule);
-Manual and resource rows keep a recorded FAIL.
+Resource rows (R01, R02) follow the same grouping rule; Manual rows and R03 (in its batch) keep a recorded FAIL whatever another identity shows, and a resource row with a recorded FAIL cannot be waived.
 
 `--ledger` may not be a symbolic link, nor occupy the source-test receipt, its lock or its run
 record or the promotion-check record (which public evidence writers refuse too), nor be a lock
