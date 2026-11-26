@@ -18,7 +18,7 @@ members = [
 # tools/stickymd-smoke 是 std-only 开发验证 CLI，不是产品 runtime，也不进入发布包。
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 

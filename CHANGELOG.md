@@ -2,6 +2,16 @@
 
 All notable changes are recorded here.
 
+## 0.3.0 - unreleased
+
+- Prepare 0.3.0. From this version a release ships Windows x64 and macOS arm64 together (Phase 18); each platform's
+  release notes name its build source. Release notes and acceptance results are written before the source freeze.
+- macOS: the app copied straight into an Applications folder keeps its note in
+  `~/Library/Application Support/StickyMD/<app name>/note/`; anywhere else the note stays beside the app (Phase 18).
+- Copy semantics, the copy side strip, notices and the end-of-document room (Phase 17).
+- Comrak goes from 0.59 to 1.2.0. Display math inside a paragraph now renders as display math, and the `$` button
+  rewrites dollar and bracket math into the standard Markdown forms, reading the result back before it keeps it.
+
 ## 0.2.0 - 2026-11-18
 
 - Release 0.2.0: the shared application and desktop layers move out of the Windows program (Phase 15), a macOS host can be
