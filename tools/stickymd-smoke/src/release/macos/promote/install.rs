@@ -19,14 +19,24 @@ enum Step {
     RecordWritten,
 }
 
-/// The bytes at `path`, `None` only when nothing is there; any other error stops the caller
-/// before it changes anything.
+/// The bytes of the regular file at `path`, `None` only when nothing is there; a link (even a
+/// dangling one) or anything but a regular file, and any other error, stops the caller before
+/// it changes anything (fix-round review R3-5: the resolver refuses what this would skip).
 fn existing(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(format!(
+                "{} is not a regular file (a link or a directory); move it away",
+                path.display()
+            ));
+        }
+        Ok(_) => {}
     }
+    fs::read(path)
+        .map(Some)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
 /// What `install` writes: the reuse record (when the candidate was built on an ancestor), the
@@ -399,5 +409,45 @@ mod tests {
             "old"
         );
         assert!(staged.exists());
+    }
+
+    /// Fix-round review R3-5: a link at the receipt, reuse-record or promotion-check path, even
+    /// a dangling one, or a directory there, is an error before anything changes; it is neither
+    /// read through nor taken as absent.
+    #[test]
+    fn a_link_or_directory_at_an_evidence_path_stops_install_before_any_change() {
+        for (path, kind) in [
+            (REUSE_RECORD, "dangling"),
+            (RECEIPT, "link"),
+            (PROMOTION_CHECK, "link"),
+            (REUSE_RECORD, "directory"),
+        ] {
+            let scratch = TemporaryDirectory::new("macos-install-link").unwrap();
+            let root = scratch.path();
+            tree(root, "old", "old receipt", None);
+            let _ = fs::remove_file(root.join(path));
+            match kind {
+                "dangling" => {
+                    std::os::unix::fs::symlink(root.join("gone.json"), root.join(path)).unwrap()
+                }
+                "link" => {
+                    fs::write(root.join("elsewhere.json"), "old").unwrap();
+                    std::os::unix::fs::symlink(root.join("elsewhere.json"), root.join(path))
+                        .unwrap();
+                }
+                _ => fs::create_dir(root.join(path)).unwrap(),
+            }
+            let staged = root.join("dist/.new");
+            fs::create_dir_all(staged.join("StickyMD")).unwrap();
+            fs::write(staged.join(MARKER), "new").unwrap();
+            let error = install(root, &staged, outputs(None), || Ok(())).unwrap_err();
+            assert!(error.contains(path), "{path} {kind}: {error}");
+            assert_eq!(read(root).0, "old", "{path} {kind}");
+            assert!(
+                fs::symlink_metadata(root.join(path)).is_ok(),
+                "{path} {kind}"
+            );
+            assert!(staged.exists(), "{path} {kind}");
+        }
     }
 }
