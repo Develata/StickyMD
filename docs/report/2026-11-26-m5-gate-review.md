@@ -234,3 +234,53 @@ Develata 对四项都选了推荐的一项：
 2. 把陈旧的构建缓存写进 `11` 的“不证明的前提”；运行器第 3–5 步与驱动的清空目录保留，并一并设 `CARGO_BUILD_BUILD_DIR`。
 3. R3-2（独立的 `verify-reuse` 核对干净的 R）本轮修。
 4. 回收已合并的 `StickyMD-wt-fix-src-tests` worktree 及其分支，其中 `172f542` 上的演练收据随之删除。
+
+## 第二轮修复（2026-11-26）
+
+`419e4a5` 先写下这一轮的契约改动：
+- 陈旧构建缓存写为“不证明的前提”；
+- R1-1、R1-7、R2-1、R2-2，以及 R3-1 至 R3-4 各自的契约文字。
+
+修复分四组，合入 `fix/m5-gate-review`：
+- 源码测试与沿用规则：R1-1、R1-5、R1-7、R3-2、R3-3、R3-4；
+- 核对与晋升：R1-3、R1-4、R1-6、R1-8、R1-9、R1-11、R3-1、R3-5；
+- 账本：R2-1、R2-3、R2-5；
+- 证据生产者：R2-2、R2-7。
+
+每项先有坏样本，并做过删去守卫的检查。另外：
+- `93d5c03` 改正了 README 中资源行跨组 FAIL 的优先级（E8）。
+- `fb4ad6a` 对齐了矩阵的行号并引用新样本，改正了源码身份移到 `release/source_identity.rs` 后失效的链接，以及卷报告错位的引用（R1-12）。
+
+**验证**（本机 macOS 27.2 arm64，`fb4ad6a`）：
+- fmt 通过；clippy `-D warnings` 在八个 macOS 包与 `stickymd-smoke --target x86_64-pc-windows-msvc` 上都没有警告。
+- 八个包的 `cargo test --locked`：2143 个通过，0 个失败，33 个忽略。
+- `phase 00` 与 `phase 16` 通过。
+- `phase 18`：四个任务都 PASSED，收尾只因 P18-P04 的 `NOT TESTED` 而失败。
+- 运行器的真实演练（不是正式收据）：源码测试、同键互斥与 S06 都为 PASS。
+  - 收据：23 个目标，2143 个通过，33 个忽略，`problems` 为空，首尾都是干净的 `fb4ad6a`。
+  - 驱动命令以 `CARGO_BUILD_BUILD_DIR=target/macos-driver/build` 开头。
+- Windows 与 Linux 上的测试只由 CI 运行，包括 R3-2、R3-3、R3-4 的样本，以及只在 Windows 编译的几个 `reuse_tests`。
+
+**按 USER 决定 1（第二轮）**，这一轮不再做跨模型复审；CI 通过、合并之后，R 即可冻结。
+
+## 冻结 R 之后的跟进
+
+以下各项不阻塞本版，留作跟进：
+- **第一轮留下的：**
+  - B4 钉 OFL 正文的摘要；
+  - C3 账本记录的版本标记；
+  - D4 采样时核对窗口在屏；
+  - E4 记录并比较 `boot_session`；
+  - A3 把证据目录被整体回滚写进前提；
+  - 以及“其余发现”一节中没有在本轮修的各项。
+- **第二轮留下的：**
+  - R1-10 复核记录的空白与成员顺序；
+  - R2-4 启动之前的 panic 在检查点中记 FAIL；
+  - R2-6 菜单等待的下限；
+  - R3-6 浅检出；
+  - R3-7 排除目录中的 `.gitattributes`；
+  - 三个发布 workflow 仍以短名称 `origin/main` 调用 Git（在 CI 的新检出中没有同名的本地分支）。
+- **修复中发现的：**
+  - CI 的 macOS 作业不运行 `phase 18`，A1 的归类表核对目前只在本机运行 `phase 18` 时生效；
+  - `docs/release-checklist.md` 的 Windows 一步称 `verify-reuse` 会写下 `dist/evidence/release-reuse-windows-x64.json`，而这个命令只打印（本轮之前就如此）；
+  - `mac_ledger` 未要求 `automated` 行号必须有生产者（C6 的扩展）。
