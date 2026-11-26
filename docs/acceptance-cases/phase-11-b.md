@@ -150,7 +150,7 @@ is verified by [P00-A11](phase-00.md); this does not change this phase's manual 
   一次处理加提交前的再次处理，不含提交；不计时运行 3 轮后计时 100 轮，每轮先解析同一文档一次：
   按钮中位数不超过解析中位数的 10 倍，nearest-rank p95 `< 100 ms`，即最多 5 个样本可超出）与
   `crates/stickymd-render/src/math_action.rs:916` `phase11b_performance_math_action_stays_linear_after_reference_definitions`（附加诊断，
-  不属于 plan 07 的两项检查：23,717 个段首有引用定义的段落，按钮小于同一文档单次 Comrak 解析的 12 倍）由现有 Phase 11-B
+  不属于 plan 07 的两项检查：23,717 个段首有引用定义的段落，按钮小于同一文档单次 Comrak 解析的 14 倍；USER 2026-11-26 从 12 倍放宽，CI 的 Windows runner 实测 10.6–13.0 倍）由现有 Phase 11-B
   Release 基线任务运行；实测值连同所用提交与原始
   输出记录在[报告](../report/2026-11-12-math-button-equals-first.md)末节；Comrak 1.2 上的复测见
   [升级评估](../report/2026-11-24-comrak-1.2-upgrade.md)。
