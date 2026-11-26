@@ -549,6 +549,27 @@ fn one_resource_evidence_is_one_r01_and_one_r02_under_one_identity() {
     // The review's sample: R01's line alone, R02's FAIL lost.
     refused(&[gui.clone(), pair[0].clone()], "both P16-R01 and P16-R02");
     refused(&[pair[1].clone()], "both P16-R01 and P16-R02");
+    // Gate review round 2, R2-5: a third program result naming the same evidence is not of that
+    // run, whatever its row; a revocation naming the evidence is not a result.
+    refused(
+        &[
+            pair[0].clone(),
+            pair[1].clone(),
+            run("W02", "PASS", identity(), '9'),
+        ],
+        "not both P16-R01 and P16-R02",
+    );
+    // Or one alike in all but its row, standing in for R02.
+    refused(
+        &[pair[0].clone(), resource("W02", "PASS", '9')],
+        "recorded as P16-R01, P16-W02,",
+    );
+    let withdrawn = [
+        pair[0].clone(),
+        pair[1].clone(),
+        revoke("R01", Revoked::Evidence(hex('9'))),
+    ];
+    assert_eq!(read_all(&lines(&withdrawn)).unwrap(), withdrawn);
     // The two lines of one evidence under different identities or runs.
     type Change = (&'static str, fn(&mut Record));
     let changes: [Change; 7] = [
@@ -603,7 +624,7 @@ fn one_resource_evidence_is_one_r01_and_one_r02_under_one_identity() {
         *verdict = "FAIL".into();
     }
     let error = super::record::resource_pairs(&[pair[0].clone(), again]).unwrap_err();
-    assert!(error.contains("two lines of P16-R01"), "{error}");
+    assert!(error.contains("recorded as P16-R01, P16-R01,"), "{error}");
 }
 
 /// The ledger takes runs in any order: only the same evidence for a row twice is refused.

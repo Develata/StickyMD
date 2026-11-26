@@ -676,8 +676,8 @@ written: each record kind has exactly its fields, and program results and older 
 in a field set some writer of them wrote, so an unknown or misspelled member rejects the whole
 ledger rather than being dropped.
 The P16-R01 and P16-R02 lines of one `mac-resources` evidence are read only together, alike but
-for row and verdict; a ledger holding one without the other is refused (a `mac-gui --only` run
-still records one row).
+for row and verdict; a ledger holding one without the other, or another program result naming
+that evidence, is refused (a `mac-gui --only` run still records one row).
 
 
 The release workflow uses `workspace-version` too. `verify-workflow` reads one
