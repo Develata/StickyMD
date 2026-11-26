@@ -94,25 +94,17 @@ pub(super) fn downloads<'a>(
 /// `ProductVersion` label in the whole text, followed by one to three dot-separated numbers
 /// (review round 3, S7; review round 4, BLOCKER 5: a label at the end, cut off from its value,
 /// is still a label; fix round, BLOCKER 6: so is one with its value attached, as in
-/// `ProductVersion:28.0`). A format check of what was recorded, not a proof of the machine.
+/// `ProductVersion:28.0`; M5 gate review B3: the label is counted wherever it starts, so a
+/// quoted `>ProductVersion:` is one too). A format check of what was recorded, not a proof of
+/// the machine.
 pub(super) fn major_version(system: &str) -> Option<u32> {
     const LABEL: &str = "ProductVersion:";
-    let words: Vec<&str> = system.split_whitespace().collect();
-    let labels: Vec<usize> = words
-        .iter()
-        .enumerate()
-        .filter(|(_, word)| word.starts_with(LABEL))
-        .map(|(index, _)| index)
-        .collect();
-    let [label] = labels.as_slice() else {
+    let (_, rest) = system.split_once(LABEL)?;
+    if rest.contains(LABEL) {
         return None;
-    };
-    let attached = &words[*label][LABEL.len()..];
-    let version = if attached.is_empty() {
-        *words.get(label + 1)?
-    } else {
-        attached
-    };
+    }
+    // The value is the first word after the label, attached to it or not.
+    let version = rest.split_whitespace().next()?;
     let parts: Vec<&str> = version.split('.').collect();
     let numeric = (1..=3).contains(&parts.len())
         && parts

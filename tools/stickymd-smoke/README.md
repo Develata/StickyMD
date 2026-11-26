@@ -629,6 +629,25 @@ way the runner does (in the default build directory) and fails on any ignored te
 lacks and any entry no listing names, so a renamed, added or moved ignored test is classified
 before it merges. Off macOS the task is NOT_TESTED.
 
+The candidate is promoted on a clean checkout of R too:
+
+```sh
+cargo run --quiet -p stickymd-smoke --locked -- release macos-promote --run-id <run> --attempt <n> --release-source <R> --zip <downloaded ZIP>
+```
+
+`macos-promote` checks the source identity (HEAD is R, the checkout clean) before it takes its
+lock or downloads anything, and again just before it writes the receipt. After the receipt it
+writes `dist/evidence/release-promotion-macos.json`, naming R and the receipt's SHA-256.
+`macos-ready` reads that record: when it is missing, malformed, or names another commit or
+another receipt, the package and P16-P01 are `NOT_TESTED`. Promote again on R before
+`macos-ready`, even a candidate promoted earlier on another commit: the receipt names neither R
+nor a time, so the same attempt writes the same receipt and the USER records bound to its digest
+still stand. The last reading of `macos-ready` (the candidate, then the source identity) holds
+the promotion lock shared, so it fails while a promotion runs; with no lock file there must be
+no candidate either. A replaced staging directory is deleted only when it holds nothing but what
+a promotion writes; anything else (a note written beside the staged `.app`, say) keeps it, and
+its path is printed.
+
 The USER's records for a release go into the same ledger, bound to the candidate the resolver
 returns for R:
 
