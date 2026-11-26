@@ -14,7 +14,7 @@ use super::{
     staging::{self, Bytes, Candidate},
 };
 use crate::mac_common::{
-    fixture::{bundle_hash, contained_executable, copy_fixture},
+    fixture::{Expected, bundle_hash, contained_executable, copy_fixture},
     session::Session,
 };
 use std::{
@@ -38,6 +38,14 @@ struct AppHash {
 }
 
 impl AppHash {
+    fn expected(&self) -> Expected<'_> {
+        Expected {
+            executable: &self.executable,
+            bundle: &self.bundle,
+            inputs: self.inputs.as_deref(),
+        }
+    }
+
     fn bytes(&self) -> Bytes {
         Bytes {
             executable: self.executable.clone(),
@@ -413,10 +421,7 @@ fn one(
             "W11" | "W12" => super::lifecycle::DURABLE,
             _ => "",
         };
-        let executable = copy_fixture(&mut session, app, note, CONFIG, &hash.executable)?;
-        if bundle_hash(&session.path().join("StickyMD.app"))? != hash.bundle {
-            return Err("copied bundle manifest changed; refused before launch".into());
-        }
+        let executable = copy_fixture(&mut session, app, note, CONFIG, &hash.expected())?;
         let (pid, window) = launch(&mut session, &executable, false, id == "W10")?;
         row.trace.push(Trace {
             ms: input.backend.started.elapsed().as_millis() as u64,

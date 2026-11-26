@@ -286,7 +286,19 @@ fn coordinate(options: &Options) -> Result<(), String> {
     // Review round 3, B2: nothing in --out is replaced but this run's own checkpoint.
     crate::mac_common::output::prepare(&out, &super::written_here, &[])?;
     let mut session = Session::new()?;
-    fixture::copy_fixture(&mut session, &app, NOTE, CONFIG, &exe_hash)?;
+    // The copy is checked against the digests the evidence records before the product starts
+    // (gate review D1); a mismatch returns before the first checkpoint, so no evidence exists.
+    fixture::copy_fixture(
+        &mut session,
+        &app,
+        NOTE,
+        CONFIG,
+        &fixture::Expected {
+            executable: &exe_hash,
+            bundle: &bundle_hash,
+            inputs: inputs.as_deref(),
+        },
+    )?;
     let dir = session.path().to_path_buf();
     let fixture_exe = fixture::contained_executable(&dir.join("StickyMD.app"))?;
     let note = dir.join("note/note.md");

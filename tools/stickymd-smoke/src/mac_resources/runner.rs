@@ -10,7 +10,7 @@ use super::{
     view,
 };
 use crate::mac_common::{
-    fixture::{app_inputs, bundle_hash, contained_executable, copy_fixture},
+    fixture::{Expected, app_inputs, bundle_hash, contained_executable, copy_fixture},
     session::Session,
 };
 use std::path::Path;
@@ -201,14 +201,12 @@ fn prepare(
         app,
         fixture,
         &model::config(mode),
-        &evidence.app_hash,
+        &Expected {
+            executable: &evidence.app_hash,
+            bundle: &evidence.bundle_hash,
+            inputs: evidence.inputs.as_deref(),
+        },
     )?;
-    let copied = session.path().join("StickyMD.app");
-    if bundle_hash(&copied)? != evidence.bundle_hash || app_inputs(&copied)? != evidence.inputs {
-        return Err(
-            "the copied bundle is not the one this campaign measures; refused before launch".into(),
-        );
-    }
     // The product's opt-in view diagnostic reports the view its first complete frame shows.
     let report = session.path().join(view::REPORT);
     session.spawn(

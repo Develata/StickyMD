@@ -15,7 +15,8 @@ writes its timestamps, quits through SIGTERM and checks injected = recorded = ch
 Each key is paired with the first frame whose drawing started after the app saw it; stages are
 event to main thread, main thread to the start of drawing, and drawing through `present`. What
 follows `present` (commit, compositor, display) is not measured. Raw recordings are kept under
-`<out>/raw`; a cancel or a failed cleanup stops the campaign. Several `--app` values run
+`<out>/raw`; a cancel or a failed cleanup stops the campaign. Each round's copy must have the
+executable, bundle manifest and input fingerprint taken of its `--app` at the start. Several `--app` values run
 interleaved for A/B; run the same app twice for an A/A bound first, on an otherwise idle host.
 It needs Accessibility, PostEvent and an unwind build:
 
@@ -34,7 +35,8 @@ cargo run --quiet --locked -p stickymd-smoke -- mac-resources --help
 
 Supply a Release bundle. Each Source/Preview/Split run uses `ditto` to copy it into
 a fresh private program directory with a deterministic 20 KiB, 20-formula note.
-The copied executable hash must match the input. `CGWindowListCopyWindowInfo`
+The copy's executable, bundle manifest and product input fingerprint must match those the
+evidence records for the input, checked before the product starts. `CGWindowListCopyWindowInfo`
 checks the child's PID and a content-sized on-screen window, without titles or
 screen capture. This is window readiness, not proof of rendered formula correctness.
 The tool then warms up for 30 seconds, samples `proc_pid_rusage` V4 footprint,
@@ -1053,7 +1055,9 @@ run is for into the file; `mac-ledger record` takes it from there. It records OS
 VM/override/permission/display facts, fixed config, executable SHA-256, a sorted
 bundle-content manifest SHA-256 (including Info.plist; excluding xattrs), PID,
 fixture hash, timestamped requests, individual injected events, observations,
-checks and row verdicts. Copies are rehashed before launch. Stderr is retained as
+checks and row verdicts. Every copy (`mac-gui`, `mac-logout`, `mac-resources`, each
+`mac-latency` round) is checked before launch against the executable, bundle manifest and input
+fingerprint the evidence records. Stderr is retained as
 `<ID>-stderr.log`; F01 optionally writes `F01.ppm`. Use a new output directory per
 run to avoid confusing old screenshots/logs with the current JSON. Any FAIL exits
 1, and so does a run cut short; NOT_TESTED alone exits 0. A row aggregates FAIL first, then NOT_TESTED, then
@@ -1115,7 +1119,9 @@ NOT_TESTED; a seen wrong decision, answer or order fails even when a later fact 
 termination record counts only when the product had ended before the driver's cleanup began
 (else the exit may be the cleanup's own, NOT_TESTED).
 
-It writes `mac-gui.json` (schema 2) with the row `P16-W12-logout-<case>`, the boot session
+The private copy must have the executable, bundle manifest and input fingerprint the record
+names before the product starts; a copy that does not stops the case before its first record is
+written. It writes `mac-gui.json` (schema 2) with the row `P16-W12-logout-<case>`, the boot session
 (`kern.bootsessionuuid`), the coordinator, child and product PIDs and the last key's time, for
 `mac-ledger record`. The record is written with `finished:false` before anything starts and turns
 `finished:true` only after the case ran (the GUI part finished), every process of the fixture is
