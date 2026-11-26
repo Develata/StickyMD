@@ -1047,6 +1047,16 @@ fn the_major_version_needs_one_complete_product_version() {
         major_version("ProductVersion: 27.2 BuildVersion: 27C55 ProductVersion:"),
         None
     );
+    // M5 gate review B3: a label counts wherever it starts, not only at the start of a word, so
+    // a quoted or bracketed second copy is still a second label.
+    assert_eq!(
+        major_version("ProductVersion: 27.2\n>ProductVersion:28.0"),
+        None
+    );
+    assert_eq!(
+        major_version("ProductVersion: 27.2 (ProductVersion: 28.0)"),
+        None
+    );
 }
 
 /// Review round 4, BLOCKER 1: `--driver` counts only as the driver the run on R built; a file
