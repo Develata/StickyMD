@@ -1296,7 +1296,7 @@ fn a_success_first_seen_after_the_deadline_is_late() {
 fn translocation_checks_refuse_bad_samples() {
     use super::translocation::{
         EXIT_ONE, GENERIC_ADVICE, NOTE_ATTRIB, NOTE_EXTEND, NOTE_REVOKE, NOTE_WRITE, Observed,
-        TRANSLOCATED_ADVICE, Watched, judge,
+        TRANSLOCATED_PROMPT, Watched, judge,
     };
     let plist = "StickyMD.app/Contents/Info.plist";
     let tree = vec![
@@ -1571,26 +1571,26 @@ fn translocation_checks_refuse_bad_samples() {
         let check = row.checks.iter().find(|c| c.name == target).unwrap();
         assert_eq!(check.verdict, Verdict::NotTested, "{target}: {}", row.json());
     }
-    // Every part of the advice is the product's own words (`paths.rs`), after the prefix, so an
-    // advice the product no longer gives fails here (gate review D8); the generic one never
-    // reads as the move advice. Only the code counts, not the product's own tests below it.
+    // The whole prompt is one string literal of the product's code (`paths.rs`, not its tests
+    // below), read with its line continuations joined as Rust joins them, so a change of the
+    // product's wording fails here (gate review D8, round 2 R2-2); the generic advice never reads
+    // as the move advice.
     let (product, _) = include_str!("../../../../apps/stickymd-mac/src/paths.rs")
         .split_once("\n#[cfg(test)]\nmod tests")
         .expect("paths.rs keeps its tests in a trailing `mod tests`");
+    let mut joined = String::new();
+    let mut rest = product;
+    while let Some((before, after)) = rest.split_once("\\\n") {
+        joined.push_str(before);
+        rest = after.trim_start();
+    }
+    joined.push_str(rest);
     assert!(
-        product.contains(&format!(
-            "{}，{}",
-            super::translocation::PROMPT,
-            TRANSLOCATED_ADVICE[0]
-        )) && TRANSLOCATED_ADVICE.iter().all(|a| product.contains(a)),
-        "the product no longer gives this move advice; update TRANSLOCATED_ADVICE"
+        joined.contains(&format!("\"{TRANSLOCATED_PROMPT}\"")),
+        "the product no longer gives this prompt; update TRANSLOCATED_PROMPT"
     );
     assert!(product.contains(&format!("当前目录不可写，{GENERIC_ADVICE}。")));
-    assert!(
-        TRANSLOCATED_ADVICE
-            .iter()
-            .all(|a| !GENERIC_ADVICE.contains(a))
-    );
+    assert!(!TRANSLOCATED_PROMPT.contains(GENERIC_ADVICE));
     // The prompt on the first line passes too.
     let (v, row) = verdict(Observed {
         stderr:
@@ -1636,6 +1636,30 @@ fn translocation_checks_refuse_bad_samples() {
         (
             format!("当前目录不可写，或把整个 StickyMD 文件夹移到别处。{cause}"),
             Verdict::NotTested,
+        ),
+        // Gate review round 2, R2-2: the line is the product's whole sentence, character for
+        // character, so a sentence that holds both parts but says something else, or one with
+        // more after it, is not the prompt; the exact sentence passes, after a CRLF line too.
+        (
+            format!(
+                "当前目录不可写。以下两种办法均无效：请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，\
+                 或把整个 StickyMD 文件夹移到别处。{cause}"
+            ),
+            Verdict::NotTested,
+        ),
+        (
+            format!(
+                "当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，\
+                 或把整个 StickyMD 文件夹移到别处。（已忽略）{cause}"
+            ),
+            Verdict::NotTested,
+        ),
+        (
+            format!(
+                "a warning\r\n当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，\
+                 或把整个 StickyMD 文件夹移到别处。\r\n{cause}"
+            ),
+            Verdict::Pass,
         ),
     ] {
         assert_eq!(prompt(&stderr), expected, "{stderr}");

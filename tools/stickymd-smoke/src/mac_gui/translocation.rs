@@ -32,15 +32,12 @@ pub(super) const QUARANTINE_FLAGS: &str = "00c3";
 /// The start of the line of the product's prompt in a directory it cannot write (plan 05 keeps
 /// this prefix on macOS).
 pub(super) const PROMPT: &str = "当前目录不可写";
-/// The advice to move the app out, which a translocated bundle must get, in both its parts: the
-/// portable bundle's advice (plan 05; `apps/stickymd-mac/src/paths.rs`), to drag the app into
-/// Applications or move the whole StickyMD folder. The advice for a folder a development build
-/// cannot write, which a translocated bundle must not get. A unit test holds them to the
-/// product's sources.
-pub(super) const TRANSLOCATED_ADVICE: [&str; 2] = [
-    "请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}",
-    "或把整个 StickyMD 文件夹移到别处",
-];
+/// The prompt a translocated bundle must get, its whole line character for character: the
+/// prefix, then the portable bundle's advice to drag the app into Applications or move the whole
+/// StickyMD folder (plan 05 #startup-sequence; `apps/stickymd-mac/src/paths.rs`; gate review
+/// round 2, R2-2). Then the advice for a folder a development build cannot write, which a
+/// translocated bundle must not get. A unit test holds both to the product's source.
+pub(super) const TRANSLOCATED_PROMPT: &str = "当前目录不可写，请先把 StickyMD.app 拖进\u{201c}应用程序\u{201d}，或把整个 StickyMD 文件夹移到别处。";
 pub(super) const GENERIC_ADVICE: &str = "请将程序移动到有写权限的文件夹";
 /// runningboard's termination record for an exit with status 1 (the prompt's `exit(1)`): the
 /// third field is the raw wait status, `1 << 8`. A probe app in the macOS 27.2 VM exiting with 0
@@ -224,8 +221,7 @@ pub(super) fn judge(o: &Observed, row: &mut Row) {
         }
         return;
     }
-    let translocated_advice = prompt_line(&o.stderr)
-        .is_some_and(|line| TRANSLOCATED_ADVICE.iter().all(|a| line.contains(a)));
+    let translocated_advice = prompt_line(&o.stderr) == Some(TRANSLOCATED_PROMPT);
     let generic_advice = o.stderr.contains(GENERIC_ADVICE);
     let seen = o.window.is_some() || o.exited_early;
     let prompt = if o.stderr_unreadable.is_some() {
