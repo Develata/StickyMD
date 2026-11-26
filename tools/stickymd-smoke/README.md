@@ -670,13 +670,14 @@ holds when one identity has a clean run even if another failed (the approved gro
 Manual and resource rows keep a recorded FAIL.
 
 `--ledger` may not be a symbolic link, nor occupy the source-test receipt, its lock or its run
-record, nor be a lock file itself (a name ending in `.lock`, in any case): such a command reads
-and writes nothing. The ledger is read as strictly as it is written: each record kind has exactly
-its fields, and program results and older USER receipts only in a field set some writer of them
-wrote, so an unknown or misspelled member rejects the whole ledger rather than being dropped.
+record, nor be a lock file itself or lie under one's name (any path component ending in `.lock`, in
+any case): such a command reads and writes nothing. The ledger is read as strictly as it is
+written: each record kind has exactly its fields, and program results and older USER receipts only
+in a field set some writer of them wrote, so an unknown or misspelled member rejects the whole
+ledger rather than being dropped.
 The P16-R01 and P16-R02 lines of one `mac-resources` evidence are read only together, alike but
-for row and verdict; a ledger holding one without the other is refused (a `mac-gui --only` run
-still records one row).
+for row and verdict; a ledger holding one without the other, or another program result naming
+that evidence, is refused (a `mac-gui --only` run still records one row).
 
 
 The release workflow uses `workspace-version` too. `verify-workflow` reads one
@@ -1094,7 +1095,10 @@ the copy and its check, the fixture writes, the spawn itself; that row is NOT_TE
 failure after the spawn, a window that never appears included, is the product's FAIL) says
 `"finished":true`, and `mac-ledger record` refuses any other file, and
 any file with a row stopped by the shared stop or never started, and any older schema (whose
-drivers could mark such a run finished). `mac-gui --batch <name>` writes the acceptance batch the
+drivers could mark such a run finished). A driver built before that rule wrote an error before
+the spawn as an `execution` FAIL in a finished run; `record` refuses a row whose check opens with
+one of its fixed texts (`ditto failed: …`, `ditto exceeded 120 seconds`, `Copied executable
+SHA-256 changed`, `copied bundle manifest changed; refused before launch`). `mac-gui --batch <name>` writes the acceptance batch the
 run is for into the file; `mac-ledger record` takes it from there. It records OS,
 VM/override/permission/display facts, fixed config, executable SHA-256, a sorted
 bundle-content manifest SHA-256 (including Info.plist; excluding xattrs), PID,

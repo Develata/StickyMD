@@ -67,11 +67,12 @@ pub(in crate::mac_ledger) fn consistent_with(
 /// exactly one R01 and one R02 (plan 11 #phase-16-macos-host: one evidence gives both rows), the
 /// two alike in everything but row and verdict, as the importer writes them: one identity, the
 /// same bytes, evidence, run start and recording. A ledger holding only one of them (cut short
-/// or spliced) could otherwise let a lost FAIL be waived. A run of `mac-gui` may record one row.
+/// or spliced) could otherwise let a lost FAIL be waived. Every program result is grouped, so a
+/// third one naming that evidence, of any row, is refused too (gate review round 2, R2-5). A run
+/// of `mac-gui` may record one row; a revocation is not a result.
 pub(in crate::mac_ledger) fn resource_pairs(records: &[Record]) -> Result<(), String> {
-    // Each resource record, by its evidence digest; `consistent_with` already refused a row
-    // recorded twice from one evidence, so a complete group is one R01 and one R02.
-    let mut groups: std::collections::BTreeMap<&str, Vec<&Record>> =
+    // Each program result, by its evidence digest.
+    let mut groups: std::collections::BTreeMap<&str, Vec<(&str, &Record)>> =
         std::collections::BTreeMap::new();
     for record in records {
         if let Record::Automated {
@@ -79,36 +80,34 @@ pub(in crate::mac_ledger) fn resource_pairs(records: &[Record]) -> Result<(), St
             evidence_sha256,
             ..
         } = record
-            && RESOURCE_ROWS.contains(&row.as_str())
         {
-            groups.entry(evidence_sha256).or_default().push(record);
+            groups
+                .entry(evidence_sha256)
+                .or_default()
+                .push((row.as_str(), record));
         }
     }
     for (digest, group) in groups {
-        let [first, second] = group.as_slice() else {
-            return Err(format!(
-                "the mac-resources evidence {digest} is recorded as {} line(s), not both P16-R01 and P16-R02",
-                group.len()
-            ));
+        if !group.iter().any(|(row, _)| RESOURCE_ROWS.contains(row)) {
+            continue;
+        }
+        let [(first_row, first), (second_row, second)] = group.as_slice() else {
+            return Err(incomplete(digest, &group));
         };
+        if !matches!((*first_row, *second_row), ("R01", "R02") | ("R02", "R01")) {
+            return Err(incomplete(digest, &group));
+        }
         // Alike but for row and verdict: the second with the first's.
         let mut aligned = (*second).clone();
         if let (
             Record::Automated { row, verdict, .. },
             Record::Automated {
-                row: first_row,
                 verdict: first_verdict,
                 ..
             },
         ) = (&mut aligned, first)
         {
-            if row == first_row {
-                return Err(format!(
-                    "the mac-resources evidence {digest} is recorded as two lines of {}, not both P16-R01 and P16-R02",
-                    label(row)
-                ));
-            }
-            row.clone_from(first_row);
+            *row = (*first_row).to_owned();
             verdict.clone_from(first_verdict);
         }
         if aligned != **first {
@@ -118,4 +117,13 @@ pub(in crate::mac_ledger) fn resource_pairs(records: &[Record]) -> Result<(), St
         }
     }
     Ok(())
+}
+
+/// A resource evidence's group that is not its two rows, with the rows it holds.
+fn incomplete(digest: &str, group: &[(&str, &Record)]) -> String {
+    let rows: Vec<String> = group.iter().map(|(row, _)| label(row)).collect();
+    format!(
+        "the mac-resources evidence {digest} is recorded as {}, not both P16-R01 and P16-R02",
+        rows.join(", ")
+    )
 }
