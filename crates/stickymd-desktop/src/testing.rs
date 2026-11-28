@@ -286,7 +286,7 @@ impl WindowHost for FakeHost {
         );
         self.observed_frame.clone().unwrap_or_else(|| {
             self.applied_frame
-                .map(|outer| FrameFact { outer })
+                .map(FrameFact::exact)
                 .ok_or(FailureKind::Unavailable)
         })
     }

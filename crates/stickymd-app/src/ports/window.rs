@@ -47,9 +47,30 @@ impl TopmostFact {
     }
 }
 
+/// Where the window is, and how finely this host can place it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrameFact {
     pub outer: PhysicalRect,
+    /// The grid the host places frames on, in physical pixels (at least 1): a window asked to be
+    /// between two grid lines lands on one of them (plan 04 #window-action-receipts). AppKit puts a
+    /// window's origin on whole points, so on macOS it is the backing scale; Windows places any
+    /// pixel.
+    pub grid_px: u32,
+}
+
+impl FrameFact {
+    /// A frame on a host that places any physical pixel.
+    pub fn exact(outer: PhysicalRect) -> Self {
+        Self { outer, grid_px: 1 }
+    }
+
+    /// A frame on a host whose frames lie on a grid of `grid_px` physical pixels; 0 reads as 1.
+    pub fn on_grid(outer: PhysicalRect, grid_px: u32) -> Self {
+        Self {
+            outer,
+            grid_px: grid_px.max(1),
+        }
+    }
 }
 
 /// Today's hosts answer `show`, `hide`, `focus` and `set_topmost` within the same dispatch; the

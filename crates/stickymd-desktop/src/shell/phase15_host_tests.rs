@@ -221,9 +221,7 @@ fn phase15_a_drag_is_saved_once_the_window_is_observed_there() {
 }
 
 fn wrong_frame() -> Result<FrameFact, FailureKind> {
-    Ok(FrameFact {
-        outer: PhysicalRect::new(9, 9, 700, 700),
-    })
+    Ok(FrameFact::exact(PhysicalRect::new(9, 9, 700, 700)))
 }
 
 fn observations(app: &mut HeadlessApp) -> usize {
@@ -304,7 +302,7 @@ fn phase15_moved_and_resized_events_can_confirm_after_a_mismatch() {
     app.host
         .observe_answers
         .borrow_mut()
-        .push_back(Ok(FrameFact { outer: target })); // Resized
+        .push_back(Ok(FrameFact::exact(target))); // Resized
 
     let moved = WindowEvent::Moved(PhysicalPosition::new(1, 2));
     app.on_window_geometry(geometry_event(&moved).unwrap());
@@ -540,9 +538,7 @@ fn phase15_a_topology_change_during_a_drag_reports_nothing() {
         stickymd_app::config::DockEdge::Left
     );
 
-    app.host.observed_frame = Some(Ok(FrameFact {
-        outer: PhysicalRect::new(9, 9, 700, 700),
-    }));
+    app.host.observed_frame = Some(Ok(FrameFact::exact(PhysicalRect::new(9, 9, 700, 700))));
     // A focused window keeps its dock, so no collapse replaces this placement while it waits.
     app.dispatch_window_intent(WindowIntent::GuardsChanged {
         guards: WindowGuardSnapshot {

@@ -349,7 +349,7 @@ fn a_drag_is_written_only_after_its_frame_was_observed() {
     );
     let target = session.window_flow.as_ref().unwrap().state().frame();
     assert!(request(&seen).contains("last: true"), "{seen:?}");
-    let seen = observe(&mut session, Ok(FrameFact { outer: target }), 11);
+    let seen = observe(&mut session, Ok(FrameFact::exact(target)), 11);
     assert!(seen.is_empty(), "{seen:?}");
     assert_eq!(
         session.config.current().window.dock_edge,
